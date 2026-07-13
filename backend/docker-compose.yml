@@ -1,5 +1,9 @@
-# Local development dependencies. The backend itself runs on the host via
-# `make run` (or `go run ./cmd/server`) so it picks up your local .env.
+# Full local stack: PostgreSQL + the Go backend, both in Docker.
+# Run everything with:  docker compose up --build
+#
+# The backend container generates its JWT keys on first boot, seeds a bootstrap
+# admin from the ADMIN_* vars below, and applies DB migrations automatically —
+# so a fresh clone is up with a single command.
 services:
   postgres:
     image: postgres:16-alpine
@@ -8,8 +12,11 @@ services:
       POSTGRES_USER: anush_admin
       # Local-only password; production uses managed secrets, never this file.
       POSTGRES_PASSWORD: dev_password
+    # Host 5433 → container 5432. Uses 5433 on the host to avoid clashing with
+    # a local PostgreSQL that may already own 5432. The backend reaches the DB
+    # over the internal Docker network, so this only affects host-side access.
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,5 +25,44 @@ services:
       timeout: 5s
       retries: 10
 
+  backend:
+    build: .
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      PORT: "4000"
+      LOG_LEVEL: info
+      # Frontend dev-server origins allowed by CORS (Vite may pick 5173–5175).
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:5174,http://localhost:5175
+      # 'postgres' is the compose service hostname on the internal network.
+      DATABASE_URL: postgres://anush_admin:dev_password@postgres:5432/anush_lms?sslmode=disable
+      DATABASE_MAX_CONNS: "25"
+      DATABASE_MIN_CONNS: "2"
+      DATABASE_MAX_CONN_LIFETIME: 1h
+      # Keys are generated into this volume on first boot.
+      JWT_PRIVATE_KEY_PATH: /app/secrets/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /app/secrets/jwt_public.pem
+      JWT_ACCESS_TTL: 1h
+      JWT_REFRESH_TTL: "0"
+      JWT_ISSUER: anush-lms
+      BCRYPT_COST: "12"
+      AUTH_RATE_LIMIT_PER_MINUTE: "10"
+      # Bootstrap admin (change before any real deployment).
+      ADMIN_EMAIL: admin@anushcapitals.com
+      ADMIN_PASSWORD: ChangeMe_Str0ng!
+      ADMIN_FULL_NAME: Admin User
+    volumes:
+      - backend_secrets:/app/secrets
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
+  backend_secrets:
