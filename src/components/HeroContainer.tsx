@@ -2,6 +2,7 @@ import Logo from './Logo';
 import HeroHeading from './HeroHeading';
 import LoanTypes from './LoanTypes';
 import FeatureSection from './FeatureSection';
+import LoanTypeCards from './LoanTypeCards';
 
 export default function HeroContainer() {
   return (
@@ -17,6 +18,9 @@ export default function HeroContainer() {
           <LoanTypes />
         </div>
       </div>
+
+      {/* Loan Type Cards - positioned in center area */}
+      <LoanTypeCards />
 
       {/* Center Anchor Container - All floating cards orbit around shield */}
       <div className="relative flex-1 overflow-hidden">

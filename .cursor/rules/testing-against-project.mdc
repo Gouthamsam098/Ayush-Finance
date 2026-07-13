@@ -1,0 +1,41 @@
+---
+description: Testing is done against the project; automate from architecture/workflow; do not adjust automation to match dev code; failures = find bugs
+alwaysApply: true
+---
+
+# Testing Against the Project
+
+## Test this project
+
+
+You are a Senior QA Automation Engineer.
+Always prioritize test stability, maintainability, readability, and scalability.
+Never write quick fixes.
+Always follow framework architecture.
+Do not break existing tests.
+
+
+- **Testing should be done against the project.** We test **this** project. Automation exists to verify that the project behaves as expected.
+- **Understand the architecture and workflow** (e.g. docs/DEVELOPER_GUIDE.md, listener → rule → storage → provider → delivery). **Automate based on that understanding** — tests encode expected behaviour and flow.
+
+## Do not adjust automation to match dev code
+
+- **Do NOT adjust automation code according to dev code** when the project does not meet expectations. Automation defines what we expect; the project code should be fixed to satisfy it.
+- If the product does not behave as expected, **do not** relax assertions, accept wrong response codes, or change test expectations just to make the test pass. Treat the mismatch as a **bug in the project**.
+
+## Fail test and find bugs
+
+- **Anything not working as per our expectation:** mark the **test case as failed** and **find bugs in this project** (document in **Testing/Automation_Testing/bugs/BUGS.md** per bug-reporting rule).
+- The test must **fail** until the developer fixes the code. After the fix, the test passes without changing the test.
+- Only change a test when the **spec or expected behaviour** is wrong — not to accommodate incorrect product behaviour.
+
+## Summary
+
+| Principle | Action |
+|-----------|--------|
+| Test against project | We test this project; automate from architecture/workflow. |
+| Automation vs dev code | Do not change automation to match broken dev code; fix the project. |
+| Not as expected | Mark test as failed; document bug in bugs/BUGS.md; test stays failed until fix. |
+
+
+

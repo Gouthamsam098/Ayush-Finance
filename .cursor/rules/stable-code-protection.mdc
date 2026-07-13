@@ -1,0 +1,36 @@
+---
+description: Protect stable production code from unnecessary changes
+alwaysApply: true
+---
+
+# Stable Code Protection
+
+## Core Principle
+
+This project is **production-stable**. Every code change must be justified and impact-analysed.
+
+## Before Any Change
+
+1. **Read the entire file** before modifying — understand all callers and dependencies.
+2. **Trace the call chain** — who calls this function? What structs depend on this field?
+3. **Check DB schema alignment** — if the field doesn't exist in the DB, it shouldn't exist in Go.
+4. **Run affected tests** — `go test ./<package>/ -v -count=1` for every modified package.
+5. **Verify build** — `go build ./internal/... ./cmd/...` must pass clean.
+
+## Rules
+
+- **No speculative changes** — only change what is explicitly requested or required to fix a confirmed bug.
+- **No field/struct additions** without a matching DB column or explicit user request.
+- **No refactoring** of working code alongside a bug fix — separate concerns.
+- **No changing test assertions** to make them pass — fix the code, not the test.
+- **Minimal diff** — modify only the lines required. Preserve style, naming, and architecture.
+
+## Impact Checklist
+
+Before submitting any change, verify:
+
+- [ ] No new fields added to structs without DB backing
+- [ ] No existing function signatures changed
+- [ ] No test expectations weakened
+- [ ] All affected package tests pass
+- [ ] Build compiles clean

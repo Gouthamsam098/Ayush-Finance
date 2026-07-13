@@ -1,0 +1,122 @@
+package document
+
+import (
+	"io"
+	"net/http"
+	"strconv"
+
+	"github.com/anush-capitals/lms-backend/internal/domain"
+	"github.com/anush-capitals/lms-backend/internal/httpx"
+	"github.com/go-chi/chi/v5"
+)
+
+type Handler struct {
+	service *Service
+}
+
+func NewHandler(service *Service) *Handler {
+	return &Handler{service: service}
+}
+
+// Routes are mounted under /customers/{customerId}/documents by the router.
+func (h *Handler) Routes() chi.Router {
+	r := chi.NewRouter()
+	r.Post("/", h.upload)
+	r.Get("/", h.list)
+	r.Get("/{docId}/download", h.download)
+	r.Delete("/{docId}", h.delete)
+	return r
+}
+
+type documentResponse struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	FileName  string `json:"file_name"`
+	MimeType  string `json:"mime_type"`
+	SizeBytes int64  `json:"size_bytes"`
+	CreatedAt string `json:"created_at"`
+}
+
+func toResponse(d *domain.Document) documentResponse {
+	return documentResponse{
+		ID: d.ID, Type: string(d.Type), FileName: d.FileName,
+		MimeType: d.MimeType, SizeBytes: d.SizeBytes,
+		CreatedAt: d.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
+func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
+	customerID := chi.URLParam(r, "customerId")
+
+	// Cap the request body before parsing so an oversized upload cannot exhaust
+	// memory. +1 MiB slack over the file limit covers multipart overhead.
+	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxDocumentBytes+(1<<20))
+	if err := r.ParseMultipartForm(domain.MaxDocumentBytes + (1 << 20)); err != nil {
+		httpx.Error(w, r, domain.NewValidation("file exceeds the 5 MB limit or form is malformed", nil))
+		return
+	}
+
+	docType := domain.DocumentType(r.FormValue("type"))
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.Error(w, r, domain.NewValidation("a file is required under the 'file' field", nil))
+		return
+	}
+	defer file.Close()
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		httpx.Error(w, r, domain.NewValidation("could not read the uploaded file", nil))
+		return
+	}
+
+	doc, err := h.service.Upload(r.Context(), UploadInput{
+		CustomerID: customerID,
+		Type:       docType,
+		FileName:   header.Filename,
+		MimeType:   header.Header.Get("Content-Type"),
+		Content:    content,
+		UploadedBy: httpx.UserID(r.Context()),
+	})
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.Created(w, toResponse(doc))
+}
+
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	docs, err := h.service.List(r.Context(), chi.URLParam(r, "customerId"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	items := make([]documentResponse, 0, len(docs))
+	for _, d := range docs {
+		items = append(items, toResponse(d))
+	}
+	httpx.JSON(w, http.StatusOK, items)
+}
+
+func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
+	doc, err := h.service.Download(r.Context(), chi.URLParam(r, "docId"))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", doc.MimeType)
+	w.Header().Set("Content-Length", strconv.FormatInt(doc.SizeBytes, 10))
+	// inline so the browser can preview images/PDFs; filename for downloads.
+	w.Header().Set("Content-Disposition", "inline; filename=\""+doc.FileName+"\"")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(doc.Content)
+}
+
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
+	if err := h.service.Delete(r.Context(), chi.URLParam(r, "docId")); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
+}

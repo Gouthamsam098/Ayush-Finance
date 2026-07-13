@@ -1,0 +1,19 @@
+# Environment & secrets — NEVER commit
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+
+# Build artifacts
+/bin/
+/dist/
+*.exe
+*.out
+
+# Go
+/vendor/
+
+# OS / editor
+.DS_Store
+*.log

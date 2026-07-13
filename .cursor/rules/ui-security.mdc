@@ -1,0 +1,96 @@
+---
+alwaysApply: true
+---
+
+# UI Development – Security Rules
+
+When developing or modifying **any UI/frontend code** in this repository, you **MUST** follow these security rules. They apply to all work under `orbit-ui/` or any other UI layer that consumes backend APIs.
+
+---
+
+## 1. Secrets and sensitive configuration
+
+- **Never** hardcode API keys, passwords, tokens, or secret URLs in frontend code or in committed config that is shipped to the browser.
+- **Always** use environment variables for API base URL and other environment-specific config (e.g. `VITE_API_URL`). Document required env vars in `.env.example` only; never put real values there.
+- **Never** commit `.env` or `.env.local` that contain secrets. Ensure `.gitignore` includes them.
+- **Never** log passwords, tokens, or full API keys. Log only non-sensitive identifiers (e.g. user id, request id) when needed for debugging.
+
+---
+
+## 2. Authentication and tokens
+
+- **Treat the backend as the authority** for authentication and authorization. The UI must not implement its own auth logic (e.g. inventing tokens or bypassing login).
+- Store tokens (e.g. JWT) as instructed by the backend contract. Prefer **httpOnly, secure, SameSite cookies** if the backend supports them; if using **localStorage/sessionStorage**, document the risk (XSS can steal tokens) and do not add further sensitive data there.
+- **Never** send tokens in URLs (query or path). Use `Authorization` header or cookies.
+- On logout or session expiry, clear stored tokens and redirect to login. Do not leave tokens in storage after "log out".
+
+---
+
+## 3. User input and XSS prevention
+
+- **Never** use `dangerouslySetInnerHTML` (or equivalent) with **unvalidated user-supplied or external data**. If rich text is required, use a sanitization library (e.g. DOMPurify) with a strict policy and still avoid scriptable content where possible.
+- **Escape/sanitize** user-controlled data before rendering. Prefer framework defaults (e.g. React’s default escaping) and avoid constructing HTML or script from user input.
+- **Validate and constrain** input on the client (length, format, charset) for UX and defense-in-depth. Client-side validation **does not** replace server-side validation; the backend must enforce all security checks.
+- Use **`maxLength`**, **type="password"** for passwords, and **appropriate input types** (e.g. `email`, `number`) where applicable to reduce injection and misuse.
+
+---
+
+## 4. API calls and data handling
+
+- **Never** trust the client for authorization. Assume any API can be called by a malicious client; the backend must enforce permissions and quotas.
+- Send **only necessary data** in requests; do not expose internal identifiers or sensitive fields to the UI unless required for the feature.
+- Use **HTTPS** for all API and asset requests in production. Do not hardcode `http://` for production endpoints.
+- Handle API errors **without** leaking stack traces, internal hostnames, or backend paths to the end user. Show generic or user-friendly messages; log details server-side or in dev-only tooling.
+
+---
+
+## 5. Sensitive data in the UI
+
+- **Do not** display full passwords, API keys, or tokens in the UI (including in "show password" toggles for production secrets—prefer masking; for user passwords, follow product requirements).
+- **Do not** put sensitive data in **URLs** (query params, hash), **browser storage keys** that are obvious (e.g. `password`), or **analytics/tracking** payloads.
+- In forms, **clear** password fields after successful submit where appropriate and do not pre-fill secrets from storage.
+
+---
+
+## 6. Dependencies and build
+
+- **Do not** add dependencies that use `eval()` or similar on user-controllable input, or that have known critical/high vulnerabilities. Prefer well-maintained, widely used libraries.
+- Run **dependency audits** (e.g. `npm audit`) as part of development and fix or document accepted risks for high/critical findings.
+- **Do not** ship unnecessary permissions or capabilities (e.g. avoid broad `unsafe-inline` / `unsafe-eval` in CSP if you control headers; document CSP recommendations for deployment).
+
+---
+
+## 7. Error and debug behavior
+
+- **Never** show technical error details (stack traces, file paths, SQL, internal errors) to end users in production. Use generic messages (e.g. "Something went wrong. Please try again.") and log details elsewhere.
+- **Never** log **passwords**, **tokens**, or **PII** (e.g. full emails, account numbers) in console or log aggregation. Log only what is needed for debugging (e.g. non-sensitive request id, error code).
+
+---
+
+## 8. Security checklist before submitting UI changes
+
+Before considering a UI change complete, confirm:
+
+- [ ] No secrets or real credentials in code or committed config.
+- [ ] API base URL (and any secrets) come from environment variables.
+- [ ] No `dangerouslySetInnerHTML` (or equivalent) with user/external data without sanitization.
+- [ ] Passwords and tokens are not logged or exposed in URLs/UI.
+- [ ] Auth tokens are stored and sent as per backend contract (header/cookie, not URL).
+- [ ] User-facing errors do not leak stack traces or internal details.
+- [ ] New dependencies have been checked for known vulnerabilities.
+
+---
+
+## Summary
+
+| Area              | Do                                                                 | Don’t                                                                 |
+|-------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------|
+| Secrets           | Use env vars; document in .env.example                             | Hardcode API keys, passwords, tokens                                  |
+| Auth              | Use backend auth; store tokens per contract; clear on logout       | Put tokens in URLs; keep tokens after logout                          |
+| Input / XSS       | Escape output; validate/sanitize input; use safe defaults          | Use dangerouslySetInnerHTML with user data; trust client-only checks  |
+| API               | HTTPS in prod; minimal data; generic user errors                    | Expose internals in errors; send secrets in query/path                |
+| Sensitive data    | Mask secrets in UI; avoid URLs and analytics for secrets           | Show full passwords/tokens; log PII or secrets                        |
+| Dependencies      | Prefer safe, maintained libs; run audits                           | Add eval-on-user-input libs; ignore critical/high vulnerabilities      |
+| Errors / logging  | User-friendly messages; log only non-sensitive debug info           | Show stack traces to users; log passwords or tokens                   |
+
+If a change cannot satisfy these rules (e.g. product requirement to show a token), document the exception and the residual risk so the team can decide.

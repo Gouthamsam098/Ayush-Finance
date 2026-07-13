@@ -1,0 +1,237 @@
+---
+alwaysApply: true
+description: Bug fix protocol — root cause first, minimal changes, no fix without explicit approval
+---
+
+# Dev Bug Fix Rules
+
+## 🚫 Core Rule
+
+**Never fix a bug unless the user explicitly says to fix it.**
+
+- If you find a bug: **report** it (see `.cursor/rules/bug-reporting.mdc`), do **not** fix.
+- Document in `Testing/Automation_Testing/bugs/BUGS.md` or `Testing/Functional and Unit testing/bugs/BUGS.md` per bug-reporting rule.
+- Wait for explicit user approval before making any production code changes.
+
+---
+
+## 1️⃣ Understand Before Changing
+
+Always read the entire file before modifying.
+
+Search for:
+
+Where the function is used
+
+Related test cases
+
+Environment configs
+
+Explain root cause before suggesting a fix.
+
+Never change code without explaining:
+
+Why it is failing
+
+Why the fix works
+
+## 2️⃣ Root Cause First (No Guess Fixes)
+
+Do not apply patch-based guessing.
+
+Reproduce issue logically from:
+
+Logs
+
+Stack trace
+
+Error message
+
+If information is missing, ask for:
+
+Exact error
+
+Expected vs actual behavior
+
+Steps to reproduce
+
+## 3️⃣ Minimal & Safe Changes
+
+Modify only the required lines.
+
+Do not refactor unrelated code.
+
+Preserve:
+
+Existing architecture
+
+Coding style
+
+Naming conventions
+
+Avoid introducing new dependencies unless necessary.
+
+## 4️⃣ Backward Compatibility
+
+Ensure fix does not break:
+
+Existing APIs
+
+Existing test cases
+
+Public interfaces
+
+If breaking change is unavoidable:
+
+Clearly explain impact.
+
+## 5️⃣ Add/Update Tests
+
+For every bug fix:
+
+- Add at least: 1 positive test, 1 negative test, 1 edge case test.
+- If test already exists: Fix test only if it is incorrect. **Do NOT weaken assertions.**
+- Tests live under `Testing/Automation_Testing/` or `Testing/End2End_Automation/` (see automation-testing.mdc).
+- After fix: Run the previously failing test; it must pass **without changing the test**.
+
+## 6️⃣ Logging & Debugging
+
+Add meaningful logs (not excessive).
+
+Never log:
+
+Passwords
+
+Secrets
+
+Tokens
+
+Use existing logging framework only.
+
+## 7️⃣ Code Quality Rules
+
+Follow project lint rules.
+
+No hardcoded values.
+
+No commented dead code.
+
+No TODO left unresolved.
+
+Use constants instead of magic numbers.
+
+## 8️⃣ Performance & Security Check
+
+Before final answer, Cursor must verify:
+
+No O(n²) performance issue introduced.
+
+No null pointer risks.
+
+Input validation present.
+
+No SQL injection risk.
+
+No exposed secrets.
+
+## 9️⃣ Clear Explanation Format
+
+Every fix must follow this format:
+
+✅ Root Cause:
+<Explain issue>
+
+✅ Fix:
+<Explain change>
+
+✅ Why This Works:
+<Technical reasoning>
+
+✅ Side Effects:
+<Any impact>
+
+✅ Tests Added:
+<List test scenarios>
+
+## 🔟 If Multiple Files Are Affected
+
+List all impacted files first.
+
+Explain change file-by-file.
+
+Provide patch-style output.
+
+## 🚀 Advanced Cursor Behavior Rules (For Large Projects)
+When Fixing Bugs:
+
+Prefer reading call hierarchy first.
+
+Trace execution flow from entry point.
+
+Check config/env impact.
+
+Check recent commits logic (if available).
+
+NEVER Allow Cursor To:
+
+❌ Rewrite full file unnecessarily
+❌ Change working test cases
+❌ Introduce new patterns randomly
+❌ Assume framework behavior without checking docs
+❌ Use outdated library syntax
+
+---
+
+## 📧 Orbit Router — Project-Specific Rules
+
+### Flow & Architecture
+
+- **Flow:** SMTP → INGRESS → Storage → EGRESS (see `docs/DEVELOPER_GUIDE.md`).
+- **Zero-email-loss:** No email silently dropped. See `.cursor/rules/zero-email-loss.mdc`.
+- **SMTP codes:** 454 for transient errors (sender retries); 5xx only for permanent/invalid requests.
+
+### Before Fixing
+
+1. **Check BUGS.md** — `Testing/Automation_Testing/bugs/BUGS.md` or `Testing/Functional and Unit testing/bugs/BUGS.md` for known bugs and expected behavior.
+2. **Reference docs** — `docs/DEVELOPER_GUIDE.md`, `Testing/EXPECTED_ASSERTIONS_REFERENCE.md`, `Testing/Orbit Bridge Test cases.csv`.
+3. **Config** — `configs/appConfig.json`, `internal/config/config.go` (e.g. `max_message_size_mb`, listener, storage).
+
+### When Fixing Email Path Bugs
+
+- **INGRESS:** Rule failure → fall back to default; disk write failure → 454 (never 5xx for internal errors).
+- **EGRESS:** 4xx → deferred; 5xx → bounce; never delete silently.
+- **Listener:** Prefer returning 552/421 over closing the connection (e.g. size over limit).
+- **Zero-email-loss check:** Ensure the fix does not introduce paths where email is silently dropped.
+
+### Test Verification
+
+- **Automation:** `go test ./Testing/Automation_Testing/ -v -run <TestName> -count=1`
+- **E2E:** `go test ./Testing/End2End_Automation/ -v -run <TestName> -count=1`
+- **After fix:** Run the failing test; it must **pass without changing the test**.
+- **Regression:** Run related tests (e.g. `TestSMTPListener` for listener bugs, `TestIngressLayer` for ingress).
+- **Do NOT** relax assertions, accept wrong codes, or change test expectations to make a failing test pass.
+
+### Unit Tests for Respective Folder (Mandatory)
+
+**When any bug fix is made, run unit tests for the affected package/folder and ensure all pass.**
+
+| Fix Location | Run Command | Example |
+|--------------|-------------|---------|
+| `internal/listener/` | `go test ./internal/listener/ -v -count=1` | `listener_helpers_test.go`, `listener_emersion_test.go` |
+| `internal/delivery/` | `go test ./internal/delivery/ -v -count=1` | delivery unit tests |
+| `internal/storage/` | `go test ./internal/storage/ -v -count=1` | storage unit tests |
+| `internal/util/` | `go test ./internal/util/ -v -count=1` | fileops, retry, etc. |
+| `internal/config/` | `go test ./internal/config/ -v -count=1` | config unit tests |
+| `internal/ruleengine/` | `go test ./internal/ruleengine/ -v -count=1` | rule engine tests |
+
+- **Nothing must break.** All unit test cases in the respective folder must pass.
+- If the fix spans multiple packages, run unit tests for each affected package.
+
+### Bug Report First
+
+Before any fix, if the bug is not yet documented:
+
+1. Generate a structured bug report (see `bug-reporting.mdc`).
+2. Add to BUGS.md "Tests that must fail until fix" table.
+3. Get explicit user approval to fix.
+

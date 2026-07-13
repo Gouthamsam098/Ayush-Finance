@@ -1,0 +1,22 @@
+# Local development dependencies. The backend itself runs on the host via
+# `make run` (or `go run ./cmd/server`) so it picks up your local .env.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: anush_lms
+      POSTGRES_USER: anush_admin
+      # Local-only password; production uses managed secrets, never this file.
+      POSTGRES_PASSWORD: dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anush_admin -d anush_lms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

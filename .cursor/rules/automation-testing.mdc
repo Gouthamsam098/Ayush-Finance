@@ -1,0 +1,48 @@
+---
+description: Automation testing policy — assertions, failing tests, and bug recording
+alwaysApply: true
+---
+
+# Automation Testing Policy
+
+## 0. Where QA automation lives
+
+- **All** QA automation test cases must be written and maintained in **Testing/Automation_Testing/**.
+- **Do not** use or rely on **internal/e2e/** for automation verification. The internal/e2e package is not part of the QA automation suite.
+- When converting CSV layer functional test cases to automation, add tests only under **Testing/Automation_Testing/** and reference them in the CSV **Implemented_In** column.
+
+## 1. Expected assertions
+
+- Every automated test case must have **clear, valid expected assertions** derived from the scenario and **Testing/Orbit Bridge Test cases.csv** (Expected_Result column).
+- Assert only the **intended behaviour**; do not assert implementation details unless they are part of the spec.
+- Use **Testing/Orbit Bridge Test cases.csv** as the source of truth for scenario, input, and expected result when writing or updating tests.
+
+## 2. When a test case is not working as expected
+
+- **If any test case is not working as expected, let the test case fail; add assertions properly.** Do not relax or remove assertions to get a pass.
+- **Do NOT** relax the test (e.g. accept wrong response codes or skip assertions) just to make it pass.
+- **Do** keep the test asserting the **expected** behaviour only. The test should **fail** until the product bug is fixed.
+- **Do** add assertions properly so that a failure clearly indicates deviation from expected behaviour.
+- Only change the test if the **spec or expected behaviour** is wrong (e.g. RFC allows multiple valid responses and we decide to accept another one). Do not change the test to accept incorrect product behaviour.
+
+## 3. Recording failures (bugs)
+
+- **All** automation test failures that indicate product/server misbehaviour must be recorded in **Testing/Automation_Testing/bugs/** — see **bugs/BUGS.md** (consolidated) and **bugs/SMTP_Listener_failures.md** (chronological log).
+- For each failure record: **Test name**, **Test_ID (e.g. T-266)**, **Scenario**, **Expected** vs **Got**, and **date**. Add the test to the "Tests that must fail until fix" table in **bugs/BUGS.md**.
+- In **Orbit Bridge Test cases.csv**, mark the row as **Automation_Status** = `Fails_Until_BugFix` and set **Notes** to a short reason (e.g. "see bugs/BUGS.md").
+- When the bug is fixed, update **bugs/BUGS.md** and set the CSV back to `Automated` with Notes cleared (if applicable).
+
+## 4. Automated vs implemented
+
+- If a test case in the CSV is marked **Automated** but no corresponding test exists in the repo, either add the test (with proper assertions) or change **Automation_Status** to `Planned` and set **Notes** to "Not yet implemented; marked Automated in error."
+- When adding new automation, set **Implemented_In** to the exact test file and function name (e.g. `Testing/Automation_Testing/SMTP_Listner_test.go TestSMTPListener_T251_ConnectAndBanner_220`).
+
+## 5. Run commands (QA automation only)
+
+- Full QA automation suite: `go test ./Testing/Automation_Testing/ -v -count=1`
+- SMTP Listener only: `go test ./Testing/Automation_Testing/ -v -run TestSMTPListener -count=1`
+- Ingress next-layer: `go test ./Testing/Automation_Testing/ -v -run TestIngressLayer -count=1`
+
+**Note:** internal/e2e is not used for QA automation verification. All automation runs are from Testing/Automation_Testing.
+
+After running, any **failing** test that reflects product/listener/egress misbehaviour must be documented in **bugs/BUGS.md** (and bugs/SMTP_Listener_failures.md for listener failures) and the CSV updated as above.

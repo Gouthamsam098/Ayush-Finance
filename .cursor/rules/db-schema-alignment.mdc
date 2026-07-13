@@ -1,0 +1,33 @@
+---
+description: Go structs must match DB schema — no phantom fields
+globs: internal/**/*.go
+alwaysApply: false
+---
+
+# DB-Schema-Code Alignment
+
+Go struct fields must have a corresponding DB column. Fields without DB backing cause silent bugs.
+
+## Known Schema (source of truth: `configs/orbit.sql`)
+
+### rules table
+`id, client_id, rule_name, tag, priority, expression, enabled, created_at, updated_at, created_by`
+
+- **No `event` column** — event-based filtering is deferred to Phase 2.
+- `expression` maps to `Rule.When` (the expr-lang condition string).
+- `rule_name` maps to `Rule.ID` and `Rule.Name` (string identifier for logging).
+
+### routes table
+`id, client_id, provider_id, route_name, host, port, username, password, api_key, method, status, protocol_type, worker_size, buffer_size, is_default, tls_mode, created_at, updated_at, created_by`
+
+- `port` can be NULL — must scan into `sql.NullInt64`, not `int`.
+- `host` stores the full API URL for HTTP providers (e.g. `https://api.pepipost.com/v6/mail/send`).
+
+### rule_routes table
+`id, rule_id, client_id, provider_id, route_id, weight, enabled, created_at`
+
+## Rules
+
+- **Never add a struct field** that has no DB column unless it is computed at runtime (mark with `json:"-"`).
+- **Always check** `configs/orbit.sql` or run `DESCRIBE <table>` before adding/removing fields.
+- When loading from DB, scan **only** columns that exist in the query's SELECT.

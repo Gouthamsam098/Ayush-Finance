@@ -1,0 +1,261 @@
+---
+alwaysApply: true
+---
+---
+alwaysApply: true
+---
+
+# 🚀 ENTERPRISE PROJECT RULES – UI DEVELOPMENT ONLY
+
+You are working on this repository with STRICT architectural constraints.
+
+Backend is production-stable and LOCKED.
+
+---
+
+# 🚨 CRITICAL BACKEND PROTECTION RULE
+
+DO NOT modify, refactor, rename, restructure, optimize, or reformat ANY existing backend code.
+
+This includes but is not limited to:
+
+- Controllers
+- Services
+- Business logic
+- Entities / Models / DTOs
+- Database schema / migrations
+- Configuration files
+- Environment files
+- Existing workflows
+- CI/CD files
+- Build configurations
+- API contracts
+- Validation logic
+- Authentication flow
+- Logging logic
+- Exception handling
+- Dependency versions
+- Docker / Kubernetes files
+
+⚠ Backend workflow must remain 100% untouched.
+
+UI must adapt to backend — NOT vice versa.
+
+---
+
+# 🎯 YOUR SCOPE
+
+You are ONLY allowed to:
+
+1. Create a new orbit-ui/UI layer
+2. Consume existing APIs as-is
+3. Create new frontend folders and files
+4. Add UI-related dependencies only
+5. Use environment variables for API base URLs
+6. Create separate UI configuration
+7. Create documentation for frontend usage
+
+You are NOT allowed to:
+- Move backend files
+- Modify backend logic
+- Change API signatures
+- Introduce backend refactoring
+
+---
+
+# 🧠 INTELLIGENT TECH STACK SELECTION (MANDATORY)
+
+Before implementation:
+
+## STEP 1 – Analyze Repository
+
+You must identify:
+
+- Backend language (Java / Node / .NET / Python / Go etc.)
+- Framework (Spring Boot / Express / NestJS / ASP.NET etc.)
+- Architecture (Monolith / Microservices)
+- API type (REST / GraphQL / WebSocket)
+- Authentication mechanism
+- Deployment model
+- Target audience (Admin / Internal / Public app)
+
+Summarize findings.
+
+Wait for approval.
+
+---
+
+## STEP 2 – Select Best UI Stack Based on Project Context
+
+Default priority order:
+
+### Standard Enterprise Backend (Spring Boot / Node / .NET REST)
+→ React + TypeScript (Vite)
+
+### SEO-sensitive public application
+→ Next.js + TypeScript (SSR/SSG)
+
+### GraphQL-heavy system
+→ Next.js + Apollo Client
+
+### Large enterprise ecosystem (.NET-heavy org)
+→ React + TypeScript (preferred)
+→ Angular only if ecosystem already uses it
+
+### Internal Admin Dashboard
+→ React + TypeScript + Tailwind or Material UI
+
+### Lightweight internal tool
+→ Vite + React + TypeScript
+
+Non-negotiable:
+- TypeScript mandatory
+- Strict mode enabled
+- No plain JavaScript
+
+---
+
+# 🏗 FRONTEND ARCHITECTURE REQUIREMENTS
+
+Clean, scalable architecture required.
+
+## Folder Structure
+
+orbit-ui/
+│
+├── public/
+├── src/
+│   ├── api/          # API client layer
+│   ├── assets/
+│   ├── components/
+│   │   └── ui/
+│   ├── features/
+│   ├── hooks/
+│   ├── routes/
+│   ├── stores/
+│   ├── styles/
+│   ├── types/
+│   └── utils/
+│
+├── .env
+└── package.json
+
+Do NOT mix frontend code inside backend folders.
+
+---
+
+# 🔌 API CONSUMPTION RULES
+
+- Do NOT modify API response models
+- Do NOT assume fields that do not exist
+- Always inspect backend DTOs before consuming
+- Centralize API calls in `src/api`
+- Use typed API clients
+- Handle:
+  - Loading states
+  - Error states
+  - Retry logic
+  - Empty states
+- Do not hardcode URLs
+- Use environment variables
+
+Never hallucinate endpoints.
+
+---
+
+# 🎨 UI/UX STANDARDS
+
+- Fully responsive
+- Clean modern layout
+- Reusable components
+- No inline styles
+- Utility-based styling (Tailwind preferred) or Material UI
+- Accessibility compliant
+- Proper spacing system
+- Skeleton loaders
+- Error boundaries
+- Dark mode support (optional but preferred)
+
+---
+
+# 🔐 AUTHENTICATION HANDLING
+
+If backend provides authentication:
+
+- Integrate using existing endpoints
+- Do NOT modify token generation logic
+- Store tokens securely
+- Support refresh tokens if available
+- Implement route protection
+
+Do not redesign auth logic.
+
+---
+
+# 🧪 STABILITY RULES
+
+- Do not break existing build
+- Do not change backend dependency versions
+- Do not update backend configs
+- Frontend dependencies must remain isolated
+- No global configuration side effects
+
+---
+
+# 🧠 AI BEHAVIOR RULES
+
+- Never hallucinate APIs
+- Never guess business logic
+- If unclear → ask questions
+- Respect existing architecture decisions
+- Do not refactor backend even if messy
+- Prefer frontend adaptation over backend change
+- Always explain architectural decisions
+
+---
+
+# 📝 MANDATORY WORKFLOW
+
+1. Analyze backend
+2. Summarize API structure
+3. Propose UI stack choice with reasoning
+4. Propose frontend architecture
+5. Wait for approval
+6. Implement incrementally
+7. Validate API contracts before each feature
+8. Provide setup instructions
+9. Provide deployment instructions
+
+---
+
+# 🚦 IF YOU ARE ABOUT TO MODIFY BACKEND
+
+STOP IMMEDIATELY.
+
+Explain:
+- Why change is needed
+- What frontend workaround exists
+- Impact analysis
+
+Wait for explicit approval before proceeding.
+
+Backend modification without approval = Critical violation.
+
+---
+
+# 📦 DELIVERABLES REQUIRED
+
+- UI architecture proposal
+- Folder structure
+- Tech stack reasoning
+- API integration documentation
+- Complete frontend code
+- Local setup steps
+- Production build instructions
+
+---
+
+# FINAL RULE
+
+Backend is LOCKED.
+UI must integrate cleanly without affecting backend behavior.

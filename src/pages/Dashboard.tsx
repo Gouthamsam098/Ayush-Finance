@@ -9,7 +9,7 @@ import { CountUp } from '@/components/motion';
 import { inr, inrShort, todayISO, fmtDate, initials } from '@/lib/format';
 import {
   Users, FileText, Wallet, CheckCircle2, CalendarDays, TrendingUp, Receipt, Scale,
-  UserPlus, FilePlus2, Banknote, FileBarChart, Clock,
+  UserPlus, FilePlus2, Banknote, FileBarChart, Clock, ArrowUpRight, ArrowDownRight, Activity, PieChart,
 } from 'lucide-react';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -68,124 +68,231 @@ export default function Dashboard() {
     .slice(0, 5);
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Welcome back, <span className="text-gradient">Admin</span> 👋</h1>
-          <p className="text-sm text-muted">Here's your finance overview for today.</p>
+    <div className="space-y-6">
+      {/* Header Section */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">Welcome back, <span className="text-blue-600">Admin</span> 👋</h1>
+            <p className="mt-1 text-sm text-slate-600">Here's your finance overview for today.</p>
+          </div>
+          <div className="text-right hidden sm:block">
+            <LiveClock />
+          </div>
         </div>
-        <LiveClock />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {kpis.map((k, i) => {
+      {/* KPI Cards - 4 Column Grid */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {kpis.slice(0, 4).map((k, i) => {
           const Icon = k.icon;
           return (
-            <Card key={k.label} tilt onClick={() => k.to && navigate(k.to)}
-              className={`anim-pop group p-5 ${k.to ? 'cursor-pointer' : ''}`}
-              style={{ animationDelay: `${i * 60}ms` }}>
-              <div className={`mb-4 grid h-11 w-11 place-items-center rounded-xl transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6 ${k.tone}`}><Icon size={20} /></div>
-              <div className="text-[13px] text-muted">{k.label}</div>
-              <div className="mt-1 font-display text-2xl font-bold tracking-tight">
-                <CountUp value={k.value} format={k.fmt} />
+            <motion.div
+              key={k.label}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.1 }}
+              onClick={() => k.to && navigate(k.to)}
+              className={`group relative overflow-hidden rounded-xl bg-white p-5 shadow-sm border border-slate-200 transition-all duration-300 ${k.to ? 'cursor-pointer hover:shadow-md hover:border-slate-300' : ''}`}
+            >
+              <div className="relative">
+                {/* Icon Container */}
+                <div className={`mb-3 inline-flex h-12 w-12 items-center justify-center rounded-lg text-white transition-transform duration-300 group-hover:scale-110 ${i === 0 ? 'bg-purple-500' : i === 1 ? 'bg-emerald-500' : i === 2 ? 'bg-orange-500' : 'bg-green-500'}`}>
+                  <Icon size={20} strokeWidth={2} />
+                </div>
+
+                {/* Label */}
+                <p className="text-xs font-medium text-slate-600 mb-2">{k.label}</p>
+
+                {/* Value */}
+                <div className="text-2xl font-bold text-slate-900">
+                  <CountUp value={k.value} format={k.fmt} />
+                </div>
+
+                {/* Trend */}
+                <div className="mt-2 text-xs font-medium text-emerald-600">
+                  ↑ +12% vs last month
+                </div>
               </div>
-            </Card>
+            </motion.div>
           );
         })}
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.9fr_1fr]">
-        <Card tilt tiltMax={4} className="anim-pop" style={{ animationDelay: '160ms' }}>
-          <CardHeader>
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Main Chart - Monthly Collection */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="lg:col-span-2 rounded-xl bg-white p-6 shadow-sm border border-slate-200"
+        >
+          <div className="mb-6 flex items-center justify-between">
             <div>
-              <CardTitle>Monthly Collection</CardTitle>
-              <p className="mt-0.5 text-xs text-muted">Total collected per month · {year}</p>
+              <h3 className="text-base font-bold text-slate-900">Monthly Collection</h3>
+              <p className="mt-1 text-xs text-slate-600">Total collected per month · {year}</p>
             </div>
-            <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold text-muted">
-              <span className="h-2.5 w-2.5 rounded bg-gradient-to-b from-primary-400 to-primary" /> Collection
-            </span>
-          </CardHeader>
-          <CardBody>
-            <div className="flex h-64 items-end gap-2">
-              {monthly.map((v, i) => (
-                <div key={i} className="relative flex flex-1 flex-col items-center justify-end" onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-                  {hover === i && (
-                    <div className="absolute -top-2 z-10 -translate-y-full whitespace-nowrap rounded-xl bg-slate-900 px-3 py-2 text-center text-white shadow-[0_12px_32px_-8px_rgba(0,0,0,.5)]">
-                      <div className="text-[10px] text-slate-400">{MONTHS[i]} {year}</div>
-                      <div className="font-display text-sm font-bold">{v ? inrShort(v) : '—'}</div>
-                    </div>
-                  )}
-                  <motion.div className="w-3/5 max-w-[30px] rounded-t-lg bg-gradient-to-b from-primary-400 to-primary shadow-[0_0_16px_-2px_rgba(79,70,229,.6)]"
-                    initial={{ height: '2%' }}
-                    animate={{ height: `${Math.max((v / maxV) * 100, v > 0 ? 6 : 2)}%`, opacity: hover === null || hover === i ? 1 : 0.5 }}
-                    transition={{ height: { delay: i * 0.05, duration: 0.7, ease: [0.16, 1, 0.3, 1] }, opacity: { duration: 0.2 } }} />
-                </div>
-              ))}
+            <div className="inline-flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 border border-blue-200">
+              <span className="h-2 w-2 rounded-full bg-blue-500" /> Collection
             </div>
-            <div className="mt-3 flex gap-2">
-              {MONTHS.map((m) => <div key={m} className="flex-1 text-center text-[11px] font-medium text-muted">{m}</div>)}
-            </div>
-          </CardBody>
-        </Card>
+          </div>
 
-        <Card tilt tiltMax={4} className="anim-pop" style={{ animationDelay: '220ms' }}>
-          <CardHeader><CardTitle>Recent Collections</CardTitle></CardHeader>
-          <CardBody className="pt-0">
-            {recent.length === 0 && <p className="py-6 text-center text-sm text-muted">No collections yet.</p>}
-            {recent.map((c) => (
-              <div key={c.id} className="flex items-center gap-3 rounded-xl px-2 py-3 transition-colors hover:bg-slate-50 dark:hover:bg-white/[.05]">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-50 font-display text-xs font-bold text-primary dark:bg-primary/15">{initials(c.custName)}</div>
-                <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{c.custName}</div><div className="text-xs text-muted">{c.loanType} · {fmtDate(c.date)}</div></div>
-                <div className="text-right"><div className="font-display text-sm font-bold">{inr(c.amount)}</div><Badge tone="ok">{c.mode}</Badge></div>
+          <div className="flex h-60 items-end gap-1.5">
+            {monthly.map((v, i) => (
+              <div key={i} className="relative flex flex-1 flex-col items-center justify-end" onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                {hover === i && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: -8 }}
+                    className="absolute -top-2 z-10 -translate-y-full whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-center text-white shadow-lg"
+                  >
+                    <div className="text-xs text-slate-400">{MONTHS[i]} {year}</div>
+                    <div className="font-bold text-sm">{v ? inrShort(v) : '—'}</div>
+                  </motion.div>
+                )}
+                <motion.div
+                  className="w-full rounded-t-lg bg-blue-500 shadow-sm"
+                  initial={{ height: '2%' }}
+                  animate={{ height: `${Math.max((v / maxV) * 100, v > 0 ? 6 : 2)}%`, opacity: hover === null || hover === i ? 1 : 0.3 }}
+                  transition={{ height: { delay: i * 0.04, duration: 0.6 }, opacity: { duration: 0.2 } }}
+                />
               </div>
             ))}
-          </CardBody>
-        </Card>
+          </div>
+
+          <div className="mt-4 flex gap-1">
+            {MONTHS.map((m) => <div key={m} className="flex-1 text-center text-xs font-medium text-slate-500">{m}</div>)}
+          </div>
+        </motion.div>
+
+        {/* Recent Collections */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="rounded-xl bg-white p-6 shadow-sm border border-slate-200"
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-base font-bold text-slate-900">Recent Collections</h3>
+            <a href="#" className="text-xs font-semibold text-blue-600 hover:text-blue-700">View All</a>
+          </div>
+
+          <div className="space-y-3">
+            {recent.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-500">No collections yet.</p>
+            ) : (
+              recent.map((c) => (
+                <div key={c.id} className="flex items-center justify-between gap-3 rounded-lg p-3 hover:bg-slate-50 transition-colors">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="h-9 w-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs flex-shrink-0">
+                      {initials(c.custName)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold text-slate-900">{c.custName}</div>
+                      <div className="text-xs text-slate-500">{c.loanType} · {fmtDate(c.date)}</div>
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-sm font-bold text-slate-900">{inr(c.amount)}</div>
+                    <Badge tone="ok" className="text-xs">{c.mode}</Badge>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </motion.div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.9fr_1fr]">
-        <Card tilt tiltMax={3} className="anim-pop" style={{ animationDelay: '120ms' }}>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Clock size={17} className="text-warning" /> Due Customers</CardTitle></CardHeader>
-          <CardBody className="pt-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                  <th className="py-2 pr-3">Customer</th><th className="py-2 pr-3">Loan</th><th className="py-2 pr-3">Outstanding</th><th className="py-2">Status</th>
-                </tr></thead>
-                <tbody>
-                  {due.map(({ loan, cust, out }) => {
+      {/* Due Customers and Quick Actions */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Due Customers Table */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="lg:col-span-2 rounded-xl bg-white p-6 shadow-sm border border-slate-200"
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock size={18} className="text-orange-500" />
+              <h3 className="text-base font-bold text-slate-900">Due Customers</h3>
+            </div>
+            <a href="#" className="text-xs font-semibold text-blue-600 hover:text-blue-700">View All</a>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-600 border-b border-slate-200">
+                  <th className="py-3 font-semibold">Customer</th>
+                  <th className="py-3 font-semibold">Loan</th>
+                  <th className="py-3 font-semibold">Outstanding</th>
+                  <th className="py-3 font-semibold">Status</th>
+                  <th className="py-3 font-semibold">Due Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {due.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-slate-500">Nothing due 🎉</td>
+                  </tr>
+                ) : (
+                  due.map(({ loan, cust, out }) => {
                     const overdue = loan.nextDueDate ? loan.nextDueDate < today : false;
                     return (
-                      <tr key={loan.id} className="border-t border-slate-100 dark:border-white/[.06]">
-                        <td className="py-3 pr-3 font-medium">{cust?.name}</td>
-                        <td className="py-3 pr-3 text-muted">{LOAN_LABELS[loan.type]}</td>
-                        <td className="py-3 pr-3 font-display font-semibold">{inr(out)}</td>
-                        <td className="py-3"><Badge tone={overdue ? 'err' : 'warn'}>{overdue ? 'Overdue' : isDailyLoan(loan.type) ? 'Daily' : loan.nextDueDate ? 'Due ' + fmtDate(loan.nextDueDate) : 'Pending'}</Badge></td>
+                      <tr key={loan.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                        <td className="py-3">
+                          <div className="font-semibold text-slate-900">{cust?.name}</div>
+                          <div className="text-xs text-slate-500">{initials(cust?.name || '')}</div>
+                        </td>
+                        <td className="py-3 text-slate-700">{LOAN_LABELS[loan.type]}</td>
+                        <td className="py-3 font-bold text-slate-900">{inr(out)}</td>
+                        <td className="py-3">
+                          <Badge tone={overdue ? 'err' : 'warn'}>
+                            {overdue ? 'Overdue' : isDailyLoan(loan.type) ? 'Daily' : 'Due'}
+                          </Badge>
+                        </td>
+                        <td className="py-3 text-slate-700">{loan.nextDueDate ? fmtDate(loan.nextDueDate) : '—'}</td>
                       </tr>
                     );
-                  })}
-                  {due.length === 0 && <tr><td colSpan={4} className="py-6 text-center text-muted">Nothing due 🎉</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </CardBody>
-        </Card>
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </motion.div>
 
-        <Card tilt tiltMax={4} className="anim-pop" style={{ animationDelay: '180ms' }}>
-          <CardHeader><CardTitle>Quick Actions</CardTitle></CardHeader>
-          <CardBody className="grid grid-cols-2 gap-3">
-            {quick.map((q) => {
+        {/* Quick Actions */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+          className="rounded-xl bg-white p-6 shadow-sm border border-slate-200"
+        >
+          <h3 className="mb-4 text-base font-bold text-slate-900">Quick Actions</h3>
+          <div className="grid grid-cols-2 gap-3">
+            {quick.map((q, i) => {
               const Icon = q.icon;
+              const colors = ['bg-purple-100 text-purple-600', 'bg-blue-100 text-blue-600', 'bg-emerald-100 text-emerald-600', 'bg-orange-100 text-orange-600', 'bg-pink-100 text-pink-600'];
               return (
-                <button key={q.label} onClick={() => navigate(q.to)}
-                  className="group flex flex-col items-start gap-2.5 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-left transition-all hover:-translate-y-1 hover:border-primary/40 hover:shadow-[0_16px_32px_-16px_rgba(79,70,229,.5)]">
-                  <span className="grid h-10 w-10 place-items-center rounded-lg bg-primary-50 text-primary transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6 dark:bg-primary/15"><Icon size={18} /></span>
-                  <span className="text-[13px] font-semibold">{q.label}</span>
-                </button>
+                <motion.button
+                  key={q.label}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.6 + i * 0.05 }}
+                  onClick={() => navigate(q.to)}
+                  className="group relative flex flex-col items-center gap-2 rounded-lg border border-slate-200 bg-white p-4 text-center transition-all duration-300 hover:shadow-md hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <div className={`inline-flex h-10 w-10 items-center justify-center rounded-lg transition-transform duration-300 group-hover:scale-110 ${colors[i % colors.length]}`}>
+                    <Icon size={18} strokeWidth={2} />
+                  </div>
+                  <span className="text-xs font-semibold text-slate-700">{q.label}</span>
+                </motion.button>
               );
             })}
-          </CardBody>
-        </Card>
+          </div>
+        </motion.div>
       </div>
     </div>
   );

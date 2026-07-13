@@ -32,10 +32,12 @@ export default {
           '0%': { opacity: '0', transform: 'perspective(900px) translateY(28px) rotateX(12deg) scale(.94)' },
           '100%': { opacity: '1', transform: 'perspective(900px) translateY(0) rotateX(0) scale(1)' },
         },
+        'slide-in-right': { from: { transform: 'translateX(100%)' }, to: { transform: 'translateX(0)' } },
       },
       animation: {
         rise: 'rise .5s cubic-bezier(.16,1,.3,1) backwards',
         'pop-in': 'pop-in .6s cubic-bezier(.16,1,.3,1) backwards',
+        'slide-in-right': 'slide-in-right .3s cubic-bezier(.16,1,.3,1)',
       },
     },
   },

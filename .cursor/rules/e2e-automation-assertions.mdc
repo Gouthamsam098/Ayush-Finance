@@ -1,0 +1,79 @@
+---
+description: E2E automation — use AssertIngressEgressMappings for full INGRESS/EGRESS validation with expected vs actual
+alwaysApply: true
+---
+
+# E2E Automation Assertions
+
+## From next test cases: add AssertIngressEgressMappings
+
+**For all new E2E test cases** added to **Testing/End2End_Automation/Positive_work_flow_test.go**, you MUST use `AssertIngressEgressMappings` to enforce a single, consistent set of checks across all tests. This applies to every new positive flow test that validates SMTP → INGRESS → EGRESS OK.
+
+When adding or updating E2E test cases in **Testing/End2End_Automation/**, you MUST use full INGRESS and EGRESS mapping validation with **expected vs actual** for all mapping fields.
+
+## Required: AssertIngressEgressMappings
+
+Use the `AssertIngressEgressMappings` helper (in `test_helpers_test.go`) for every E2E test that validates the full flow (SMTP → INGRESS → EGRESS OK).
+
+### Example
+
+```go
+// After parsing ingress and egress logs:
+AssertIngressEgressMappings(t, "E2E-XXX", ingressParsed, egressParsed, reqIDFromResponse, IngressEgressExpected{
+    RuleName:     MockExpectedRuleNameX,
+    RulePriority: 0,  // or -1 to skip
+    RouteName:    MockExpectedRouteNameX,
+    RouteID:      MockExpectedRouteIDX,
+    Provider:     MockExpectedProviderX,
+    ClientID:     MockExpectedClientIDX,
+    ClientName:   MockExpectedClientNameX,
+    From:         testFromAddr,
+    To:           testToGmail,
+    Subject:      "Expected Subject",  // empty to skip
+    SMTPCode:     250,                 // 0 to skip
+})
+```
+
+## Mapping Fields to Validate
+
+| Layer   | Field        | Assertion format        |
+|---------|--------------|-------------------------|
+| INGRESS | rule_name    | expected vs actual      |
+| INGRESS | rule_priority| expected vs actual      |
+| INGRESS | route        | expected vs actual      |
+| INGRESS | route_id     | expected vs actual      |
+| INGRESS | provider     | expected vs actual      |
+| INGRESS | client_id    | expected vs actual      |
+| INGRESS | client_name  | expected vs actual      |
+| INGRESS | from         | expected vs actual      |
+| INGRESS | rcpt         | must contain recipient  |
+| EGRESS  | req_id       | traceability SMTP↔INGRESS↔EGRESS |
+| EGRESS  | route_name   | expected vs actual      |
+| EGRESS  | route_id     | expected vs actual      |
+| EGRESS  | provider     | expected vs actual      |
+| EGRESS  | client_id    | expected vs actual      |
+| EGRESS  | client_name  | expected vs actual      |
+| EGRESS  | from         | expected vs actual      |
+| EGRESS  | to           | expected vs actual      |
+| EGRESS  | subject      | expected vs actual      |
+| EGRESS  | smtp_code    | expected vs actual      |
+| EGRESS  | host         | non-empty               |
+| EGRESS  | response     | contains 250 Ok        |
+
+## Why
+
+- **Exact mapping validation**: Ensures rule → route → provider → client mapping is correct.
+- **Clear failures**: On mismatch, error shows `expected X, got Y` for each field.
+- **Consistency**: All E2E tests follow the same assertion pattern.
+
+## When to Use
+
+- **From next test cases (new E2E tests)**: Always use `AssertIngressEgressMappings` for positive flow tests. This enforces a single, consistent set of checks.
+- **Existing tests**: OK to keep current individual assertions; migrate to the helper when touching the test.
+- **Multi-recipient tests**: Use the helper per recipient or for the primary recipient; adapt expected values as needed.
+
+## Reference
+
+- Helper: `test_helpers_test.go` — `AssertIngressEgressMappings`, `IngressEgressExpected`
+- Example: `Positive_work_flow_test.go` — `TestE2E043_RuleHeaderFieldAccess`
+- CSV: `E2E_Test_Cases.csv` — Expected_Rule_Name, Expected_Route_Name, Expected_Provider, Expected_Client_ID

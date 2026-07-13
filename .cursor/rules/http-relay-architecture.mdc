@@ -1,0 +1,48 @@
+---
+alwaysApply: true
+---
+# HTTP Relay Architecture
+
+## Request Flow
+
+```
+Client (curl/app)
+  → POST /v1s/ssend (SendGrid format) or /v1s/nsend (Netcore format)
+  → Authentication (API key / Basic Auth / IP)
+  → Extract from/to from payload
+  → Rule evaluation (priority ASC, default fallback)
+  → Route lookup (route_id from rule_routes)
+  → Payload transformation (if incomingType != targetType)
+  → Forward to provider API
+  → Return response
+```
+
+## Provider Type Mapping
+
+| Provider Name | Internal Type | API Format |
+|--------------|---------------|------------|
+| pepipost | netcore | Netcore v6 (personalizations wrapper) |
+| netcore | netcore | Netcore v6 |
+| sendgrid | sendgrid | SendGrid v3 |
+
+`normalizeProviderType()` in `server.go` handles this mapping.
+
+## Payload Transformation
+
+- **Same type** (e.g. sendgrid → sendgrid): No transformation, pass-through.
+- **Cross type** (e.g. sendgrid → netcore): `transformer.go` converts format.
+  - Content types remapped: `text/html` → `html`, `text/plain` → `plain`.
+  - `personalizations` structure adapted between formats.
+
+## Authentication
+
+- Validated against `incoming_auth` table.
+- `allowed_ips = '*'` means wildcard (all IPs allowed).
+- `allowed_domains = '*'` means wildcard (all sender domains allowed).
+- IP check uses `wildcardIP` flag, domain check uses `wildcardDomain` flag.
+
+## Common Pitfalls
+
+- Sending flat `to` array to Pepipost API — it requires `personalizations` wrapper.
+- `from` domain must be verified in the provider account, not just in orbit-router config.
+- Route `port` can be NULL for HTTP providers — handled via `sql.NullInt64`.

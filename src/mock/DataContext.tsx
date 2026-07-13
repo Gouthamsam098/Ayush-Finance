@@ -1,5 +1,9 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useSelector } from 'react-redux';
 import { todayISO, isoLocal, addDays } from '@/lib/format';
+import { config } from '@/lib/config';
+import { customerApi } from '@/services/customerApi';
+import type { RootState } from '@/store';
 
 // ─────────────── Types ───────────────
 export type LoanType = 'DAILY_COLLECTION' | 'MONTHLY_INTEREST' | 'DAILY_INTEREST' | 'VEHICLE' | 'PROPERTY' | 'FLEXIBLE';
@@ -32,8 +36,13 @@ export const LOAN_LABELS: Record<LoanType, string> = {
 
 export interface Customer {
   id: string; code: string; name: string; fatherName?: string; mobile: string; altMobile?: string;
+  email?: string; dateOfBirth?: string;
   address?: string; city?: string; state?: string; pincode?: string; occupation?: string;
   monthlyIncome?: number; referenceName?: string; referenceMobile?: string; createdAt: string;
+  // KYC. On create/update we send the raw aadhaar/pan; on read the backend
+  // returns only masked values + presence flags (never the full number).
+  aadhaar?: string; pan?: string;
+  aadhaarMasked?: string; panMasked?: string; hasAadhaar?: boolean; hasPan?: boolean;
 }
 export interface Loan {
   id: string; loanNumber: string; customerId: string; type: LoanType; principal: number; rate: number;
@@ -109,6 +118,10 @@ interface DataShape {
   customers: Customer[]; loans: Loan[]; collections: Collection[]; expenses: Expense[]; documents: DocItem[];
   nextCode: () => string; nextLoanNo: () => string;
   addCustomer: (c: Omit<Customer, 'id' | 'code' | 'createdAt'>) => void;
+  /** Insert an already-created customer (from the API) into local state without a second API call. */
+  addCustomerRecord: (c: Customer) => void;
+  /** Replace an existing customer with an authoritative record (from the API) without a second call. */
+  updateCustomerRecord: (c: Customer) => void;
   updateCustomer: (id: string, c: Partial<Customer>) => void;
   deleteCustomer: (id: string) => void;
   addLoan: (l: Omit<Loan, 'id' | 'loanNumber' | 'interest' | 'status'>) => void;
@@ -137,7 +150,9 @@ export const useData = () => {
 };
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  const [customers, setCustomers] = useState<Customer[]>(seedCustomers);
+  // In API mode, customers come from the backend (start empty, load on mount).
+  // Loans/collections/etc. remain seeded until their backend phases land.
+  const [customers, setCustomers] = useState<Customer[]>(config.useApi ? [] : seedCustomers);
   const [loans, setLoans] = useState<Loan[]>(seedLoans);
   const [collections, setCollections] = useState<Collection[]>(seedCollections);
   const [expenses, setExpenses] = useState<Expense[]>(seedExpenses);
@@ -145,6 +160,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [codeSeq, setCodeSeq] = useState(1006);
   const [loanSeq, setLoanSeq] = useState(4006);
   const [rcptSeq, setRcptSeq] = useState(100010);
+
+  // Load customers from the backend in API mode. Keyed off the access token so
+  // the fetch runs AFTER login (the provider mounts before auth exists; a fetch
+  // at mount would 401). Re-runs whenever the token changes (login / restore).
+  const accessToken = useSelector((s: RootState) => s.auth.accessToken);
+  useEffect(() => {
+    if (!config.useApi || !accessToken) return;
+    customerApi.list().then(setCustomers).catch(() => { /* surfaced per-action */ });
+  }, [accessToken]);
 
   const value = useMemo<DataShape>(() => {
     const collectedFor = (loanId: string) => collections.filter((c) => c.loanId === loanId).reduce((s, c) => s + c.amount, 0);
@@ -182,11 +206,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
       nextCode: () => 'CUST-' + codeSeq,
       nextLoanNo: () => 'LN-' + loanSeq,
       addCustomer: (c) => {
+        if (config.useApi) {
+          // Server mints the code/id; prepend the authoritative record it returns.
+          customerApi.create(c).then((created) => setCustomers((s) => [created, ...s]));
+          return;
+        }
         setCustomers((s) => [{ ...c, id: uid(), code: 'CUST-' + codeSeq, createdAt: todayISO() }, ...s]);
         setCodeSeq((n) => n + 1);
       },
-      updateCustomer: (id, patch) => setCustomers((s) => s.map((c) => (c.id === id ? { ...c, ...patch } : c))),
+      addCustomerRecord: (c) => setCustomers((s) => [c, ...s.filter((x) => x.id !== c.id)]),
+      updateCustomerRecord: (c) => setCustomers((s) => s.map((x) => (x.id === c.id ? c : x))),
+      updateCustomer: (id, patch) => {
+        if (config.useApi) {
+          customerApi.update(id, patch).then((updated) =>
+            setCustomers((s) => s.map((c) => (c.id === id ? updated : c))));
+          return;
+        }
+        setCustomers((s) => s.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+      },
       deleteCustomer: (id) => {
+        if (config.useApi) {
+          // Backend cascades loans/collections/documents; mirror locally.
+          customerApi.remove(id).then(() => setCustomers((s) => s.filter((c) => c.id !== id)));
+          return;
+        }
         const loanIds = new Set(loans.filter((l) => l.customerId === id).map((l) => l.id));
         setCustomers((s) => s.filter((c) => c.id !== id));
         setLoans((s) => s.filter((l) => l.customerId !== id));

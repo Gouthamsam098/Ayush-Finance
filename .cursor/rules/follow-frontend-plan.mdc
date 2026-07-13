@@ -1,0 +1,15 @@
+---
+description: When working on Orbit Router frontend, read and follow the plan in .cursor/FRONTEND_PLAN.md
+globs: orbit-ui/**/*
+alwaysApply: false
+---
+
+# Frontend plan
+
+When working on the **Orbit Router frontend** (any file under `orbit-ui/`):
+
+1. **Read** `.cursor/FRONTEND_PLAN.md` first.
+2. **Follow** the phased workflow (Phase 2 implementation order, Phase 3 quality).
+3. **Do not** modify backend (`orbitbackend/`) or assume new API contracts.
+4. **Use** only `VITE_API_URL` for the API base; types must match backend DTOs in `docs/STEP1_BACKEND_ANALYSIS.md`.
+5. **Update** the plan’s status table when completing or adding tasks.

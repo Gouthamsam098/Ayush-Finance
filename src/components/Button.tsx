@@ -17,12 +17,12 @@ export default function Button({
   variant = 'primary',
   fullWidth = false,
 }: ButtonProps) {
-  const baseStyles = 'font-semibold rounded-lg transition-all duration-200 text-base py-3';
+  const baseStyles = 'font-semibold rounded-lg transition-all duration-200 text-base py-3 relative overflow-hidden';
 
   const variants = {
-    primary: 'bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50',
-    secondary: 'bg-white border border-slate-300 text-slate-900 hover:bg-slate-50',
-    ghost: 'text-emerald-600 hover:text-emerald-700',
+    primary: 'bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0',
+    secondary: 'bg-white border border-slate-300 text-slate-900 hover:bg-slate-50 hover:border-slate-400 shadow-sm hover:shadow-md',
+    ghost: 'text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-full',
   };
 
   return (

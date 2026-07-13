@@ -1,0 +1,86 @@
+# HTTP Relay Discussion Guidelines
+
+When discussing HTTP relay features or changes, follow these guidelines to get precise answers quickly.
+
+## When Asking About Performance
+
+Always specify:
+- **Expected throughput** (e.g., "200K req/sec")
+- **Latency requirement** (e.g., "< 10ms p99")
+- **Concurrency model** (e.g., "lock-free required")
+
+Example:
+```
+BAD:  "Will this be fast enough?"
+GOOD: "At 200K req/sec, will mutex cause contention? Need lock-free."
+```
+
+## When Asking About Weight Distribution
+
+Provide:
+- **Exact weights** (e.g., "70/30" or "40/35/25")
+- **Ordering requirement** (e.g., "higher weight first" or "interleaved")
+- **Batch size** (e.g., "per 100 messages")
+
+Example:
+```
+BAD:  "How does 70/30 work?"
+GOOD: "For 70/30 weights, should Route A (70%) deliver all 70 first, then Route B (30%) delivers 30? Per 100-message batch?"
+```
+
+## When Asking About Timeouts
+
+Distinguish between:
+- **Request timeout**: Max time for single request (client → orbit → provider → response)
+- **Shutdown timeout**: Max time to wait for in-flight requests during graceful shutdown
+- **Provider timeout**: Max time waiting for provider API response
+
+Example:
+```
+BAD:  "What's the timeout?"
+GOOD: "90 sec is request timeout (client-to-response). What's the shutdown wait limit for in-flight requests?"
+```
+
+## When Asking About Payload Handling
+
+Clarify:
+- **Pass-through vs splitting**: Does orbit-router split multi-recipient payloads or forward as-is?
+- **Format transformation**: Does orbit-router transform the payload or forward verbatim?
+
+Example:
+```
+BAD:  "How are multiple recipients handled?"
+GOOD: "For HTTP, should 3 recipients in personalizations be split into 3 provider calls (like SMTP), or forwarded as one call?"
+```
+
+## When Asking About Database
+
+Specify:
+- **New column vs existing**: Can we reuse existing columns or need schema change?
+- **Exact column name and usage**: Which column stores what for HTTP?
+
+Example:
+```
+BAD:  "Where do we store the API URL?"
+GOOD: "Can we use existing routes.host for full API URL (https://api.netcorecloud.com) instead of adding new column?"
+```
+
+## Standard Answer Format Expected
+
+When I provide examples, I will include:
+1. **Visual diagram** (ASCII or table)
+2. **Code snippet** (if implementation-related)
+3. **Performance characteristics** (throughput, latency)
+4. **Edge cases** (what happens at boundaries)
+
+## HTTP Relay Key Decisions (Reference)
+
+| Topic | Decision |
+|-------|----------|
+| Payload | Pass-through (no splitting) |
+| req_id | Same format as SMTP |
+| Weight distribution | Batch-sequential (higher weight first per 100) |
+| Request timeout | 90 sec |
+| Shutdown wait | 5 min max |
+| API key logging | NEVER (raw or hashed) |
+| DB schema | No changes (use existing columns) |

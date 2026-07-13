@@ -1,0 +1,26 @@
+---
+alwaysApply: false
+---
+# Rule Engine Internals
+
+## Evaluation Flow
+
+1. **Tier 1**: Load client-specific rules from cache (or DB on miss), evaluate in priority ASC order.
+2. **Tier 2**: If no client rule matches, try global rules (client_id IS NULL).
+3. **Tier 3**: Stale global defaults (expired cache, safety net).
+4. **Default fallback**: If no expression matches, use the rule with `is_default = 1`.
+
+## Key Behaviors
+
+- **Priority**: Lower number = higher priority (priority 1 wins over priority 999).
+- **No event filtering**: The `Event` field was removed. All rules are evaluated regardless of SMTP vs HTTP origin.
+- **Expression engine**: Uses `github.com/expr-lang/expr`. Expressions are compiled once, cached in `CompiledRuleSet`.
+- **Available expression variables**: `from_address`, `from_domain`, `from_local`, `to_address`, `to_domain`, `to_local`, `headers`, `remote_ip`, `helo`, `size`.
+- **Helper functions**: `StartsWith()`, `EndsWith()`, `Contains()`, `Matches()` (regex), `ToLower()`, `ToUpper()`, `Trim()`.
+- **Cache TTL**: Client rules cached 30 min. Singleflight prevents thundering herd on cache miss.
+
+## Common Pitfalls
+
+- Adding struct fields to `Rule` or `RuleContext` that have no DB column — causes scan errors or dead code.
+- Changing rule evaluation order — always priority ASC, default rule last.
+- Modifying `compileRuleSet()` without verifying all existing expressions still compile.

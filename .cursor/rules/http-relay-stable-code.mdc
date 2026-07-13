@@ -1,0 +1,42 @@
+---
+description: HTTP relay is production-stable — do not touch existing logic during bug fixes
+alwaysApply: true
+---
+
+# HTTP Relay — Stable Code Protection
+
+## Core Principle
+
+The HTTP relay layer is **100% stable and production-proven**. Bug fixes must be **additive** — do not modify, refactor, or restructure existing working logic.
+
+## Rules
+
+- **Do NOT touch existing logic.** If a bug fix requires changing existing code, first gain **complete understanding** of the codebase — read every caller, every dependency, every test. Do not assume.
+- **Additive fixes only.** Prefer adding new functions, new checks, or new fields over modifying existing ones.
+- **No signature changes.** Do not change existing function signatures, struct field order, or public API contracts.
+- **No refactoring alongside fixes.** A bug fix PR must contain only the fix — no "while I'm here" cleanups.
+- **No log format changes.** Existing `[HTTP_RELAY]`, `[HTTP_AUTH]`, `[HTTP_RULES]`, `[HTTP_TIMELOG]` log lines are parsed by downstream systems. Do not change their field order or delimiters.
+
+## Before Any HTTP Relay Change
+
+1. **Read the entire file** being modified — understand all functions and their callers.
+2. **Trace the full request flow**: `handleRequest → authenticate → processRelay → sendToProvider → logFinal → pushToFinalLogChan`.
+3. **Understand the auth flow**: `extractAPIKey → authenticateAPIKey → checkIPRestriction → isDomainAllowed`.
+4. **Understand the log pipeline**: `relayLogEntry → logFinal → pushToFinalLogChan → FinalLogEntry → Redis → ClickHouse`.
+5. **Run unit tests**: `go test ./internal/listener/http/ -v -count=1` and `go test ./internal/provider/http/ -v -count=1`.
+6. **Verify build**: `go build ./internal/... ./cmd/...`.
+
+## Files Covered
+
+| File | Purpose |
+|------|---------|
+| `internal/listener/http/server.go` | HTTP relay server, request handling, logging |
+| `internal/listener/http/auth.go` | API key auth, IP restriction, domain check |
+| `internal/listener/http/rules.go` | Rule evaluation, address extraction |
+| `internal/listener/http/distribution.go` | Weighted route distribution |
+| `internal/provider/http/provider.go` | Provider registry, relay request/response |
+| `internal/provider/http/netcore.go` | Netcore provider |
+| `internal/provider/http/sendgrid.go` | SendGrid provider |
+| `internal/provider/http/transformer.go` | Payload format transformation |
+| `internal/logwriter/logwriter.go` | Log pipeline (channel → Redis → ClickHouse) |
+| `internal/logwriter/types.go` | FinalLogEntry struct, format functions |

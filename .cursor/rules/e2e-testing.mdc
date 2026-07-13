@@ -1,0 +1,84 @@
+---
+description: E2E testing rule -- after any code change, rebuild and run both swaks tests, then verify INGRESS and EGRESS logs
+alwaysApply: false
+---
+# E2E Testing After Code Changes
+
+After ANY code change that touches the email flow (listener, storage, provider, worker pool, delivery, retry, config), you MUST:
+
+## 1. Rebuild
+
+```bash
+go build -o ./cmd/orbit-router ./cmd/main.go
+```
+
+## 2. Restart the server
+
+Kill existing process, then start fresh:
+
+```bash
+pkill -f "orbit-router"; sleep 1
+./cmd/orbit-router serve -c configs/appConfig.json
+```
+
+## 3. Run both swaks tests
+
+### Test 1: Single Recipient
+
+```bash
+swaks --server 127.0.0.1 --port 2525 \
+  --auth LOGIN --auth-user hdfc_smtp --auth-password 'hdfc_pass_123' \
+  --from smtp@qaauto.cpaasqa.site --to dineshadam649@gmail.com \
+  --header "Subject: Single RCPT Test" \
+
+
+  
+  --body "<p>Single recipient test email</p>" \
+  --header "Content-Type: text/html"
+```
+
+**Expected response**: `250 OK: req_id=<7-part-id>, 1 message queued`
+
+### Test 2: Multi-Recipient (3 RCPT TO)
+
+```bash
+swaks --server 127.0.0.1 --port 2525 \
+  --auth LOGIN --auth-user hdfc_smtp --auth-password 'hdfc_pass_123' \
+  --from smtp@qaauto.cpaasqa.site \
+  --to dineshadam649@gmail.com,testuser@hdfcbank.com,alerts@sbi.co.in \
+  --header "Subject: Multi RCPT Test" \
+  --body "<p>Multi recipient test email - 3 recipients</p>" \
+  --header "Content-Type: text/html"
+```
+
+**Expected response**: `250 OK: base_id=<7-part-id>, 3 messages queued`
+
+## 4. Verify INGRESS logs
+
+```bash
+grep "INGRESS" /tmp/orbit-router/orbit_router.log | tail -10
+```
+
+Check that:
+- Each recipient has a `[INGRESS] OK` line
+- req_id format is correct (7 parts for single, 8 parts with `-NNN` suffix for multi)
+- client_id, client_name, provider, route, route_id are all populated
+
+## 5. Verify EGRESS logs
+
+```bash
+grep "EGRESS" /tmp/orbit-router/orbit_router.log | tail -10
+```
+
+Check that:
+- Each accepted email has a corresponding `[EGRESS] OK`, `[EGRESS] FAILED`, `[EGRESS] BOUNCE`, or `[EGRESS] DEFERRED` line
+- req_id matches the INGRESS req_id
+- provider, route_name, route_id, worker_id, host are populated
+- smtp_code and response/error are present
+
+## 6. Both INGRESS and EGRESS must be verified
+
+Do NOT consider a test passed if only INGRESS is checked. The full flow is:
+SMTP IN -> INGRESS OK -> worker picks up -> EGRESS (OK/FAILED/BOUNCE/DEFERRED)
+
+If EGRESS logs are missing, investigate: check worker pool creation, file move to active, SMTP connection, and delivery logs.

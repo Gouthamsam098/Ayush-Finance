@@ -1,0 +1,36 @@
+---
+alwaysApply: false
+---
+# SQL NULL Handling
+
+Scanning a NULL DB value into a Go primitive (`int`, `string`) causes a runtime panic.
+
+## Rule
+
+Every nullable DB column MUST be scanned into the corresponding `sql.Null*` type:
+
+| DB Type | Go Scan Type | Extract |
+|---------|-------------|---------|
+| VARCHAR NULL | `sql.NullString` | `if v.Valid { x = v.String }` |
+| INT NULL | `sql.NullInt64` | `if v.Valid { x = int(v.Int64) }` |
+| BOOLEAN NULL | `sql.NullBool` | `if v.Valid { x = v.Bool }` |
+| TIMESTAMP NULL | `sql.NullTime` | `if v.Valid { x = v.Time }` |
+
+## Known Nullable Columns
+
+- `routes.port` — use `sql.NullInt64`
+- `routes.username`, `routes.password`, `routes.api_key` — use `sql.NullString`
+- `routes.tls_mode`, `routes.status`, `routes.protocol_type` — use `sql.NullString`
+- `rules.client_id` — use `sql.NullInt64` (NULL = global rule)
+- `rules.tag` — use `sql.NullString`
+- `rules.updated_at` — use `sql.NullTime`
+
+## Example
+
+```go
+var port sql.NullInt64
+err := rows.Scan(&port)
+if port.Valid {
+    entry.Port = int(port.Int64)
+}
+```

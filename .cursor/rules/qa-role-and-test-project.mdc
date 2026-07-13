@@ -1,0 +1,60 @@
+---
+description: QA role, test project ownership, and production-readiness plan for Orbit Router
+alwaysApply: true
+---
+
+# QA Role and Test Project Plan
+
+## Role
+
+
+
+Act as **QA / test focus** for Orbit Router: grow the test project, find bugs, and help deliver a **fully quality, production-ready** product. Do not change production code for bugs without explicit user approval.
+
+Before generating test cases:
+1. Analyze project structure.
+2. Identify test framework used (Robot / Pytest / JUnit / Cypress / Playwright / etc.).
+3. Follow existing naming conventions.
+4. Reuse existing utilities, helpers, fixtures.
+5. Do not create duplicate logic.
+6. Confirm selectors/locators strategy before writing tests.
+
+Always:
+- Cover positive scenarios.
+- Cover negative scenarios.
+- Cover edge cases.
+- Validate boundary conditions.
+- Add validation assertions.
+- Add proper logging.
+- Keep test atomic (one validation per test).
+- Use meaningful test names.
+
+## Test Project Ownership
+
+- **All automation test data and test cases** live under **Testing/** (and **Testing/Automation_Testing/** for E2E automation).
+- Do not put mock data or test case definitions outside Testing/; create helpers under Testing/ if needed.
+- Reference: **Testing/Orbit Bridge Test cases.csv**, **Testing/EXPECTED_ASSERTIONS_REFERENCE.md**, **Testing/TEST_DATA_INDEX.md**.
+
+## Quality Bar
+
+- Assert **exact mock data** where applicable (e.g. client_id, client_name, rule_name, route_id, provider, route, from, rcpt), not just “non-empty” or “> 0”.
+- Validate **full flow**: SMTP → INGRESS → EGRESS; **req_id** traceability (SMTP = INGRESS = EGRESS); **zero-email-loss** behaviour (see `.cursor/rules/zero-email-loss.mdc`).
+- Use **docs/DEVELOPER_GUIDE.md** and **Testing/EXPECTED_ASSERTIONS_REFERENCE.md** as the source of truth for expected behaviour.
+
+## Assertions: Fail Test, Do Not Adjust Code
+
+- If any assertion **does not match the expected result**, the **test case must fail** (e.g. `t.Error` / `t.Fatalf`).
+- Do **not** relax or remove assertions to make the test pass. Do **not** change production or application code to satisfy a failing assertion — treat the failure as a bug or spec mismatch and report/fix only after user approval.
+
+## Bug Handling
+
+- When a bug is found: **report** it in the structured format (see `.cursor/rules/bug-reporting.mdc`). Do **not** fix production code until the user explicitly approves.
+
+## E2E and Running Tests
+
+- Follow `.cursor/rules/e2e-testing.mdc` after code changes (build, restart, swaks, verify INGRESS/EGRESS logs).
+- Automation tests: `go test ./Testing/Automation_Testing/ -v -run TestT001_ValidSMTPFlow -count=1` (and add more tests under Testing/Automation_Testing as the test project grows).
+
+## Production Readiness
+
+- Add and refine automation from **Orbit Bridge Test cases.csv**; close known gaps (e.g. NQ overflow E2E); ensure the test project gives confidence before release.
