@@ -1,0 +1,9 @@
+# Keep files that MUST have Unix (LF) line endings from being converted to
+# CRLF on Windows checkouts — CRLF breaks shell scripts and Docker builds.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.dockerignore  text eol=lf
+docker-entrypoint.sh text eol=lf
+
+# Default: let git normalize text line endings automatically.
+* text=auto
