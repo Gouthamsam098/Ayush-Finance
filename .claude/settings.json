@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s http://localhost:5173/)",
+      "Bash(curl -s -o /dev/null -w \"main.tsx: HTTP %{http_code}\\\\n\" http://localhost:5173/src/main.tsx)",
+      "Bash(cp \"C:\\\\Users\\\\Goutham.P\\\\Downloads\\\\ChatGPT Image Jul 12, 2026, 11_44_08 PM.png\" \"d:\\\\anush-lms-ui\\\\anush-lms-ui\\\\src\\\\assets\\\\login-bg.png\")"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Goutham.P\\Downloads"
+    ]
+  }
+}

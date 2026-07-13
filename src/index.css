@@ -1,0 +1,203 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --surface: 255 255 255;
+  --surface2: 250 250 252;
+  --ink: 15 23 42;
+  --muted: 100 116 139;
+  --bg: 247 247 250;
+}
+.dark {
+  --surface: 22 22 29;
+  --surface2: 28 28 36;
+  --ink: 237 237 244;
+  --muted: 156 156 170;
+  --bg: 12 12 16;
+}
+
+* { -webkit-tap-highlight-color: transparent; }
+
+body {
+  @apply font-sans antialiased;
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+}
+
+/* Smooth, consistent interaction feel across the app without touching component logic */
+button, a, input, select, textarea {
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .15s ease, opacity .15s ease;
+}
+button:active { transform: translateY(0.5px); }
+
+/* Premium focus ring, keyboard-accessible */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(var(--bg)), 0 0 0 5px rgba(79,70,229,.45);
+  border-radius: 6px;
+}
+
+/* Glassmorphism utility for topbar / dialogs / overlays */
+.glass {
+  background: rgb(var(--surface) / 0.72);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+/* Floating animation for shield */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Thin, minimal, premium scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--muted) / 0.35) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--muted) / 0.3);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgb(var(--muted) / 0.5); background-clip: padding-box; }
+
+/* Skeleton shimmer */
+.skeleton {
+  @apply relative overflow-hidden bg-slate-200 dark:bg-slate-800 rounded-lg;
+}
+.skeleton::after {
+  content: '';
+  @apply absolute inset-0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.4s infinite;
+}
+.dark .skeleton::after {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Animation & 3D system — shared across every page
+   ══════════════════════════════════════════════════════════════ */
+
+/* ---- Keyframes ---- */
+@keyframes aurora {
+  0%,100% { transform: translate3d(0,0,0) scale(1); }
+  33%     { transform: translate3d(4%,-6%,0) scale(1.15); }
+  66%     { transform: translate3d(-5%,4%,0) scale(.92); }
+}
+@keyframes float-y {
+  0%,100% { transform: translateY(0) rotate(var(--rot,0deg)); }
+  50%     { transform: translateY(-18px) rotate(var(--rot,0deg)); }
+}
+@keyframes orbit {
+  from { transform: rotate(0deg) translateX(var(--orbit-r,120px)) rotate(0deg); }
+  to   { transform: rotate(360deg) translateX(var(--orbit-r,120px)) rotate(-360deg); }
+}
+@keyframes gradient-pan {
+  0%   { background-position:   0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position:   0% 50%; }
+}
+@keyframes glow-pulse {
+  0%,100% { opacity: .5; transform: scale(1); }
+  50%     { opacity: 1;  transform: scale(1.08); }
+}
+@keyframes sheen {
+  0%   { transform: translateX(-120%) skewX(-18deg); }
+  60%,100% { transform: translateX(220%) skewX(-18deg); }
+}
+@keyframes pop-in {
+  0%   { opacity: 0; transform: perspective(900px) translateY(28px) rotateX(12deg) scale(.94); }
+  100% { opacity: 1; transform: perspective(900px) translateY(0) rotateX(0) scale(1); }
+}
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---- Animated aurora / mesh background ---- */
+.aurora-bg { position: relative; isolation: isolate; }
+.aurora-bg::before,
+.aurora-bg::after {
+  content: '';
+  position: fixed;
+  z-index: -1;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+  will-change: transform;
+}
+.aurora-bg::before {
+  width: 46vw; height: 46vw; top: -12vw; right: -10vw;
+  background: radial-gradient(circle at 30% 30%, rgba(99,102,241,.55), rgba(79,70,229,.15) 60%, transparent 72%);
+  animation: aurora 18s ease-in-out infinite;
+}
+.aurora-bg::after {
+  width: 40vw; height: 40vw; bottom: -14vw; left: -8vw;
+  background: radial-gradient(circle at 60% 40%, rgba(16,185,129,.4), rgba(6,182,212,.12) 60%, transparent 72%);
+  animation: aurora 22s ease-in-out infinite reverse;
+}
+.dark .aurora-bg::before { background: radial-gradient(circle at 30% 30%, rgba(99,102,241,.4), rgba(79,70,229,.1) 60%, transparent 72%); }
+.dark .aurora-bg::after  { background: radial-gradient(circle at 60% 40%, rgba(16,185,129,.28), rgba(6,182,212,.08) 60%, transparent 72%); }
+
+/* ---- 3D tilt card (JS sets --rx / --ry / --gx / --gy) ---- */
+.tilt {
+  transform-style: preserve-3d;
+  transform: perspective(1000px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) translateZ(0);
+  transition: transform .18s cubic-bezier(.22,1,.36,1), box-shadow .3s ease;
+  will-change: transform;
+}
+.tilt-glow { position: relative; overflow: hidden; }
+.tilt-glow::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(320px circle at var(--gx,50%) var(--gy,50%), rgba(99,102,241,.16), transparent 60%);
+  opacity: 0; transition: opacity .3s ease; pointer-events: none;
+}
+.tilt-glow:hover::after { opacity: 1; }
+.tilt-raise { transition: transform .3s cubic-bezier(.22,1,.36,1), box-shadow .3s ease; }
+.tilt-raise:hover { transform: translateY(-4px); }
+
+/* ---- Utility animation classes ---- */
+.anim-float   { animation: float-y 6s ease-in-out infinite; }
+.anim-glow    { animation: glow-pulse 5s ease-in-out infinite; }
+.anim-pop     { animation: pop-in .6s cubic-bezier(.16,1,.3,1) backwards; }
+.anim-spin-slow { animation: spin-slow 26s linear infinite; }
+
+/* Moving gradient text / borders */
+.text-gradient {
+  background: linear-gradient(90deg, #6366F1, #06B6D4, #10B981, #6366F1);
+  background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  animation: gradient-pan 8s ease infinite;
+}
+
+/* Sheen sweep — add .sheen to any relative, overflow-hidden element */
+.sheen { position: relative; overflow: hidden; }
+.sheen::before {
+  content: '';
+  position: absolute; top: 0; left: 0; width: 40%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+  animation: sheen 4.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Respect reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .aurora-bg::before, .aurora-bg::after,
+  .anim-float, .anim-glow, .anim-spin-slow, .text-gradient, .sheen::before { animation: none !important; }
+  .tilt { transform: none !important; }
+}
