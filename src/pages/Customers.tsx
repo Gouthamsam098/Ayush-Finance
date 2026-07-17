@@ -8,7 +8,7 @@ import { useToast } from '@/components/ui/toast';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { inr, fmtDate, initials } from '@/lib/format';
+import { inr, inrShort, fmtDate, initials } from '@/lib/format';
 import { config } from '@/lib/config';
 import { validateCustomerForm, INDIAN_STATES, type FieldErrors } from '@/lib/customerValidation';
 import { customerApi } from '@/services/customerApi';
@@ -16,11 +16,19 @@ import { documentApi, type DocumentType } from '@/services/documentApi';
 import { ApiError } from '@/lib/api';
 import type { LoanType } from '@/mock/DataContext';
 import { LOAN_LABELS as LOAN_TYPE_LABELS } from '@/mock/DataContext';
+import { PageHeader, HeaderGhostButton, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import {
-  Search, Plus, Eye, Pencil, Trash2, Download, Users, UserCheck,
-  FileText, IndianRupee, AlertTriangle, User, MapPin, ShieldCheck, Upload,
+  type CustomerFilters, defaultFilters, factsFor, passesFilters,
+  countActive, numActive,
+} from '@/lib/customerFilters';
+import {
+  FilterCard, SegGroup, Seg, ToggleRow, NumFilterRow, CityPill, MatchPreview, drawerSelectCls,
+} from '@/components/ui/filter-kit';
+import {
+  Search, Plus, Eye, Pencil, Trash2, Download, Upload as UploadIcon, Users,
+  FileText, AlertTriangle, ArrowRight, AlertCircle, Clock, IndianRupee,
+  User, MapPin, ShieldCheck, Upload, SlidersHorizontal, Activity,
   CreditCard, Check, X, Car, Home, RotateCcw, ChevronLeft, ChevronRight,
-  type LucideIcon,
 } from 'lucide-react';
 
 type FormState = Partial<Customer>;
@@ -72,18 +80,18 @@ function apiErrorMessage(e: unknown, fallback: string): string {
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
-const filterSelectCls =
-  'h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition-all focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 dark:border-white/10 dark:bg-white/5 dark:text-slate-200';
-
 export default function Customers() {
   const d = useData();
   const toast = useToast();
   const [q, setQ] = useState('');
-  const [cityFilter, setCityFilter] = useState('');
-  const [kycFilter, setKycFilter] = useState('');      // '', 'VERIFIED', 'PENDING'
-  const [statusFilter, setStatusFilter] = useState(''); // '', 'ACTIVE', 'INACTIVE'
+  // Applied (live) filters drive the table; `draft` is edited in the drawer and
+  // committed on Apply so numeric inputs don't re-filter on every keystroke.
+  const [filters, setFilters] = useState<CustomerFilters>(defaultFilters);
+  const [draft, setDraft] = useState<CustomerFilters>(defaultFilters);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [form, setForm] = useState<FormState | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [view, setView] = useState<Customer | null>(null);
@@ -103,35 +111,50 @@ export default function Customers() {
     () => Array.from(new Set(d.customers.map((c) => c.city).filter(Boolean))).sort() as string[],
     [d.customers],
   );
+  const states = useMemo(
+    () => Array.from(new Set(d.customers.map((c) => c.state).filter(Boolean))).sort() as string[],
+    [d.customers],
+  );
 
-  // Derived KYC / activity state for a customer — used by both the filters and
-  // the table badges so they always agree.
+  // Derived KYC state for a customer — used by both the filters and the table
+  // badges so they always agree.
   const kycOf = (c: Customer): 'VERIFIED' | 'PENDING' =>
     c.hasAadhaar || c.hasPan || (c.address && c.city) ? 'VERIFIED' : 'PENDING';
-  const isActive = (c: Customer) => d.loans.some((l) => l.customerId === c.id && l.status === 'ACTIVE');
 
   const filtered = useMemo(() => {
     const t = q.toLowerCase().trim();
+    const today = new Date().toISOString().split('T')[0];
     return d.customers.filter((c) => {
       const matchesQuery = !t
         || c.name.toLowerCase().includes(t)
         || c.mobile.includes(t)
         || c.code.toLowerCase().includes(t)
         || (c.email?.toLowerCase().includes(t) ?? false);
-      const matchesCity = !cityFilter || c.city === cityFilter;
-      const matchesKyc = !kycFilter || kycOf(c) === kycFilter;
-      const matchesStatus = !statusFilter
-        || (statusFilter === 'ACTIVE' ? isActive(c) : !isActive(c));
-      return matchesQuery && matchesCity && matchesKyc && matchesStatus;
+      if (!matchesQuery) return false;
+      const facts = factsFor(c, d.loans, d.outstandingFor, kycOf(c), today);
+      return passesFilters(c, facts, filters);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.customers, d.loans, q, cityFilter, kycFilter, statusFilter]);
+  }, [d.customers, d.loans, q, filters]);
+
+  // Live count of how many customers the *draft* would match (drawer preview).
+  const draftMatchCount = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return d.customers.filter((c) => passesFilters(c, factsFor(c, d.loans, d.outstandingFor, kycOf(c), today), draft)).length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.customers, d.loans, draft]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const rows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const resetFilters = () => { setQ(''); setCityFilter(''); setKycFilter(''); setStatusFilter(''); setPage(1); };
-  const filtersActive = !!(q || cityFilter || kycFilter || statusFilter);
+
+  const activeFilterCount = countActive(filters);
+  const filtersActive = !!q || activeFilterCount > 0;
+  const resetFilters = () => { setQ(''); setFilters(defaultFilters()); setDraft(defaultFilters()); setPage(1); };
+  // Apply the drawer draft to the live filters.
+  const applyDraft = () => { setFilters(draft); setPage(1); setFilterOpen(false); };
+  // Open the drawer, seeding the draft from the currently-applied filters.
+  const openFilters = () => { setDraft(filters); setFilterOpen(true); };
 
   const openAdd = () => { setEditId(null); setKycKind('AADHAAR'); setLoanType('DAILY_COLLECTION'); setPendingDocs({}); setErrors({}); setDocErrors([]); setForm({ ...empty }); };
   const openEdit = (c: Customer) => {
@@ -233,259 +256,306 @@ export default function Customers() {
   };
 
   const loansOf = (id: string) => d.loans.filter((l) => l.customerId === id);
+  const today = new Date().toISOString().split('T')[0];
   const totalCustomers = d.customers.length;
-  const kycVerified = d.customers.filter((c) => c.hasAadhaar || c.hasPan || (c.address && c.city)).length;
   const activeCustomers = d.customers.filter((c) => loansOf(c.id).some((l) => l.status === 'ACTIVE')).length;
-  const pendingKyc = totalCustomers - kycVerified;
   const totalOutstanding = d.loans.reduce((sum, l) => sum + d.outstandingFor(l), 0);
-  const overdue = d.loans.filter((l) => l.nextDueDate && l.nextDueDate < new Date().toISOString().split('T')[0] && l.status === 'ACTIVE').length;
 
-  const stats: StatCard[] = [
-    { label: 'Total Customers', value: totalCustomers.toLocaleString('en-IN'), icon: Users, color: 'blue', trend: '+12% vs last month' },
-    { label: 'Active Customers', value: activeCustomers.toLocaleString('en-IN'), icon: UserCheck, color: 'emerald', trend: '+8% vs last month' },
-    { label: 'Pending KYC', value: pendingKyc.toLocaleString('en-IN'), icon: FileText, color: 'amber', trend: 'awaiting review' },
-    { label: 'Total Outstanding', value: inr(totalOutstanding), icon: IndianRupee, color: 'violet', trend: 'across all loans' },
-    { label: 'Overdue Customers', value: overdue.toLocaleString('en-IN'), icon: AlertTriangle, color: 'rose', trend: 'need follow-up' },
-  ];
+  // Customers with at least one overdue active loan — drives the red alert bar + chip.
+  const overdueCustomers = d.customers.filter((c) =>
+    loansOf(c.id).some((l) => l.status === 'ACTIVE' && l.nextDueDate && l.nextDueDate < today && d.outstandingFor(l) > 0),
+  );
+  const overdueLead = overdueCustomers[0];
+  const overdueLeadLoan = overdueLead
+    ? loansOf(overdueLead.id)
+        .filter((l) => l.status === 'ACTIVE' && l.nextDueDate && l.nextDueDate < today)
+        .sort((a, b) => d.outstandingFor(b) - d.outstandingFor(a))[0]
+    : undefined;
+
+  // Customers awaiting KYC — drives the "pending KYC" meta chip.
+  const pendingKycCustomers = d.customers.filter((c) => kycOf(c) === 'PENDING');
 
   return (
-    // Height is pinned to the viewport (minus the 64px header and main's
-    // padding) so the page itself never scrolls — only the table body does.
-    // 7rem ≈ header (4rem) + top/bottom padding (~3rem at lg).
-    <div className="flex flex-col gap-6 h-[calc(100dvh-7rem)]">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Customers</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage customer profiles, KYC and loan accounts</p>
-        </div>
-        <div className="flex items-center gap-2.5">
-          <button className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm transition-all hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
-            <Download size={16} /> Export
-          </button>
-          <button
-            onClick={openAdd}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:shadow-xl hover:shadow-blue-500/30 hover:brightness-110 active:scale-[.98]"
-          >
-            <Plus size={16} /> Add Customer
-          </button>
-        </div>
-      </div>
+    // Full-height column: dark header (full-bleed) + padded, scroll-managed body.
+    <div className="flex h-[100dvh] flex-col">
+      {/* Dark page header */}
+      <PageHeader
+        icon={<Users size={20} />}
+        title="Customers"
+        subtitle="Manage profiles, KYC and loan accounts"
+        actions={
+          <>
+            <HeaderGhostButton icon={<Download size={14} />}>Export</HeaderGhostButton>
+            <HeaderGhostButton icon={<UploadIcon size={14} />}>Import</HeaderGhostButton>
+            <HeaderPrimaryButton icon={<Plus size={14} />} onClick={openAdd}>Add customer</HeaderPrimaryButton>
+          </>
+        }
+      />
 
-      {/* Stat cards */}
-      <div className="grid shrink-0 grid-cols-2 gap-4 lg:grid-cols-5">
-        {stats.map((s, i) => (
-          <motion.div
-            key={s.label}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
-            whileHover={{ y: -3 }}
-            className={`relative overflow-hidden rounded-[20px] border p-5 shadow-sm backdrop-blur-xl transition-shadow hover:shadow-lg ${statCardBg[s.color]}`}
-          >
-            <div className={`mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl ${statIconBg[s.color]}`}>
-              <s.icon size={20} strokeWidth={2.2} />
-            </div>
-            <div className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{s.value}</div>
-            <div className="mt-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">{s.label}</div>
-            <div className={`mt-2 text-[11px] font-semibold ${statTrend[s.color]}`}>{s.trend}</div>
-          </motion.div>
-        ))}
-      </div>
+      {/* Overdue alert bar */}
+      {overdueLead && (
+        <button
+          onClick={() => setView(overdueLead)}
+          className="flex items-center gap-2.5 border-b-[0.5px] border-red-200 bg-red-50 px-5 py-2.5 text-left dark:border-red-500/20 dark:bg-red-500/10"
+        >
+          <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400">
+            <AlertTriangle size={14} />
+          </span>
+          <span className="flex-1 text-[13px] font-medium text-red-700 dark:text-red-300">
+            {overdueCustomers.length} customer{overdueCustomers.length > 1 ? 's' : ''} overdue
+            {overdueLeadLoan && (
+              <span className="ml-1.5 font-normal text-red-600/80 dark:text-red-400/80">
+                · {overdueLead.name} · {inr(d.outstandingFor(overdueLeadLoan))} outstanding
+                {overdueLeadLoan.nextDueDate ? ` · due ${fmtDate(overdueLeadLoan.nextDueDate)}` : ''}
+              </span>
+            )}
+          </span>
+          <span className="flex shrink-0 items-center gap-1 text-[13px] font-medium text-red-600 dark:text-red-400">
+            View loan <ArrowRight size={13} />
+          </span>
+        </button>
+      )}
 
-      {/* Table card — flexes to fill remaining height; only its body scrolls. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-slate-200/70 bg-white shadow-sm dark:border-white/10 dark:bg-surface">
-        {/* Filter toolbar */}
-        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-100 p-4 dark:border-white/[.06]">
-          <div className="relative min-w-[240px] flex-1">
-            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              value={q}
-              onChange={(e) => { setQ(e.target.value); setPage(1); }}
-              placeholder="Search by name, mobile, email or customer ID…"
-              className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50/60 pl-10 pr-4 text-sm placeholder-slate-400 outline-none transition-all focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 dark:border-white/10 dark:bg-white/5"
-            />
+      {/* Body */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-3.5 sm:px-4">
+        {/* Toolbar — result count + chips on the left, search/filter on the right */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Left: count + real chips */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[14px] text-muted">
+              Showing <strong className="font-semibold text-ink">{filtered.length}</strong> customer{filtered.length === 1 ? '' : 's'}
+            </span>
+            {overdueCustomers.length > 0 && (
+              <MetaTag tone="danger" icon={<AlertCircle size={13} />}>{overdueCustomers.length} overdue</MetaTag>
+            )}
+            {pendingKycCustomers.length > 0 && (
+              <MetaTag tone="warn" icon={<Clock size={13} />}>{pendingKycCustomers.length} pending KYC</MetaTag>
+            )}
+            <MetaTag tone="info" icon={<Users size={13} />}>{activeCustomers} active</MetaTag>
+            <MetaTag icon={<IndianRupee size={13} />}>{inrShort(totalOutstanding)} outstanding</MetaTag>
           </div>
-          <select
-            value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-            className={filterSelectCls}
-          >
-            <option value="">All Status</option>
-            <option value="ACTIVE">Active</option>
-            <option value="INACTIVE">Inactive</option>
-          </select>
-          <select
-            value={cityFilter}
-            onChange={(e) => { setCityFilter(e.target.value); setPage(1); }}
-            className={filterSelectCls}
-          >
-            <option value="">All Cities</option>
-            {cities.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select
-            value={kycFilter}
-            onChange={(e) => { setKycFilter(e.target.value); setPage(1); }}
-            className={filterSelectCls}
-          >
-            <option value="">All KYC</option>
-            <option value="VERIFIED">Verified</option>
-            <option value="PENDING">Pending</option>
-          </select>
-          <button
-            onClick={resetFilters}
-            disabled={!filtersActive}
-            className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-40 dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
-          >
-            <RotateCcw size={14} /> Reset
-          </button>
+
+          {/* Right: compact search + filters */}
+          <div className="flex items-center gap-2">
+            {/* Expandable search */}
+            <div
+              className={`flex items-center gap-2 rounded-lg border-[0.5px] transition-all duration-200 focus-within:border-indigo-500 ${
+                searchOpen || q
+                  ? 'w-56 border-slate-200/70 bg-white px-3 py-2.5 dark:border-white/[.06] dark:bg-surface'
+                  : 'w-9 justify-center border-transparent'
+              }`}
+            >
+              <button
+                onClick={() => setSearchOpen((o) => !o)}
+                aria-label="Search"
+                className={`shrink-0 ${searchOpen || q ? 'text-muted' : 'grid h-9 w-9 place-items-center rounded-lg border-[0.5px] border-slate-200/70 bg-white text-ink/70 hover:bg-slate-50 dark:border-white/[.06] dark:bg-surface dark:hover:bg-white/[.03]'}`}
+              >
+                <Search size={18} />
+              </button>
+              {(searchOpen || q) && (
+                <>
+                  <input
+                    autoFocus
+                    value={q}
+                    onChange={(e) => { setQ(e.target.value); setPage(1); }}
+                    placeholder="Search customers…"
+                    className="w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-muted"
+                  />
+                  {q && (
+                    <button onClick={() => { setQ(''); setPage(1); }} aria-label="Clear search" className="shrink-0 text-muted hover:text-ink">
+                      <X size={15} />
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={openFilters}
+              className={`relative inline-flex items-center gap-2 rounded-lg border-[0.5px] px-4 py-2.5 text-[14px] font-semibold transition-colors ${
+                activeFilterCount > 0
+                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-400/40 dark:bg-indigo-500/15 dark:text-indigo-300'
+                  : 'border-slate-200/70 bg-white text-ink/80 hover:bg-slate-50 dark:border-white/[.06] dark:bg-surface dark:hover:bg-white/[.03]'
+              }`}
+            >
+              <SlidersHorizontal size={16} /> Filters
+              {activeFilterCount > 0 && (
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-500 px-1.5 text-[11px] font-bold text-white">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+            {filtersActive && (
+              <button
+                onClick={resetFilters}
+                title="Reset all filters"
+                className="grid h-[42px] w-[42px] place-items-center rounded-lg border-[0.5px] border-slate-200/70 bg-white text-muted transition-colors hover:bg-slate-50 dark:border-white/[.06] dark:bg-surface dark:hover:bg-white/[.03]"
+              >
+                <RotateCcw size={16} />
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Scrollable table body (page stays static) */}
-        <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur dark:bg-white/[.04]">
-              <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                <th className="px-6 py-3.5">Customer</th>
-                <th className="px-6 py-3.5">Customer ID</th>
-                <th className="px-6 py-3.5">Mobile</th>
-                <th className="px-6 py-3.5">City</th>
-                <th className="px-6 py-3.5">Loans</th>
-                <th className="px-6 py-3.5">Outstanding</th>
-                <th className="px-6 py-3.5">KYC</th>
-                <th className="px-6 py-3.5">Status</th>
-                <th className="px-6 py-3.5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-white/[.05]">
-              {rows.map((c, i) => {
-                const cLoans = loansOf(c.id);
-                const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
-                const hasOverdue = cLoans.some((l) => l.nextDueDate && l.nextDueDate < new Date().toISOString().split('T')[0] && l.status === 'ACTIVE');
-                const kyc = kycOf(c);
-                return (
-                  <motion.tr
-                    key={c.id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: Math.min(i * 0.03, 0.3) }}
-                    className="group cursor-pointer transition-colors hover:bg-blue-50/40 dark:hover:bg-white/[.03]"
-                    onClick={() => setView(c)}
-                  >
-                    <td className="px-6 py-3.5">
-                      <div className="flex items-center gap-3">
-                        <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${avatarGradient(c.name)} text-xs font-bold text-white shadow-sm`}>
-                          {initials(c.name)}
+        {/* Table card — flexes to fill remaining height; only its body scrolls. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-[0.5px] border-slate-200/70 bg-white dark:border-white/[.06] dark:bg-surface">
+          <div className="min-h-0 flex-1 overflow-auto">
+            <table className="w-full text-[15px]">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-gradient-to-r from-indigo-50 via-slate-50 to-violet-50 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-slate-600 dark:from-indigo-500/[.12] dark:via-white/[.04] dark:to-violet-500/[.12] dark:text-slate-300">
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer</th>
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer ID</th>
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Mobile</th>
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">City</th>
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Loans</th>
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Outstanding</th>
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">KYC</th>
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Status</th>
+                  <th className="border-b border-slate-200 px-5 py-4 text-right dark:border-white/10">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-white/[.05]">
+                {rows.map((c, i) => {
+                  const cLoans = loansOf(c.id);
+                  const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
+                  const hasOverdue = cLoans.some((l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE');
+                  const kyc = kycOf(c);
+                  const activeLoan = cLoans.some((l) => l.status === 'ACTIVE');
+                  return (
+                    <motion.tr
+                      key={c.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: Math.min(i * 0.03, 0.3) }}
+                      className={`group cursor-pointer transition-colors hover:bg-indigo-50/50 dark:hover:bg-indigo-500/[.06] ${hasOverdue ? 'bg-red-500/[.03]' : 'odd:bg-slate-50/40 dark:odd:bg-white/[.015]'}`}
+                      onClick={() => setView(c)}
+                    >
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl text-sm font-bold text-white shadow-sm" style={{ background: `linear-gradient(135deg, ${avatarColor(c.name)}, ${avatarColor(c.name)}cc)` }}>
+                            {initials(c.name)}
+                            {(hasOverdue || kyc === 'PENDING') && (
+                              <span
+                                className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white dark:ring-surface"
+                                style={{ background: hasOverdue ? '#ef4444' : '#f59e0b' }}
+                              />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-[15px] font-semibold text-ink">{c.name}</div>
+                            <div className="truncate text-[13px] text-muted">{c.email || c.occupation || '—'}</div>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-slate-900 dark:text-white">{c.name}</div>
-                          <div className="truncate text-xs text-slate-500">{c.occupation || c.email || '—'}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-3.5 font-mono text-xs text-slate-500">{c.code}</td>
-                    <td className="px-6 py-3.5 text-slate-600 dark:text-slate-300">{c.mobile}</td>
-                    <td className="px-6 py-3.5 text-slate-600 dark:text-slate-300">{c.city || '—'}</td>
-                    <td className="px-6 py-3.5">
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
-                        <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-                        {cLoans.length} {cLoans.length === 1 ? 'Loan' : 'Loans'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <span className={`font-semibold ${hasOverdue ? 'text-rose-600' : 'text-slate-800 dark:text-slate-200'}`}>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[12px] font-medium text-slate-600 dark:bg-white/[.06] dark:text-slate-300">{c.code}</span>
+                      </td>
+                      <td className="px-5 py-4 text-[14px] font-medium text-ink/85 tabular-nums">{c.mobile}</td>
+                      <td className="px-5 py-4 text-[14px] text-ink/85">{c.city || '—'}</td>
+                      <td className="px-5 py-4">
+                        {cLoans.length > 0 ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-2.5 py-1 text-[12px] font-semibold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
+                            {cLoans.length} {cLoans.length === 1 ? 'loan' : 'loans'}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full border-[0.5px] border-slate-200 bg-slate-50 px-2.5 py-1 text-[12px] font-medium text-muted dark:border-white/[.08] dark:bg-white/[.03]">
+                            0 loans
+                          </span>
+                        )}
+                      </td>
+                      <td className={`px-5 py-4 text-[15px] font-bold tabular-nums ${outstanding > 0 && hasOverdue ? 'text-red-600 dark:text-red-400' : 'text-ink'}`}>
                         {inr(outstanding)}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3.5"><KycBadge status={kyc} /></td>
-                    <td className="px-6 py-3.5"><StatusBadge overdue={hasOverdue} active={cLoans.some((l) => l.status === 'ACTIVE')} /></td>
-                    <td className="px-6 py-3.5" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        <RowAction icon={<Eye size={15} />} title="View" onClick={() => setView(c)} hover="hover:bg-blue-100 hover:text-blue-600" />
-                        <RowAction icon={<Pencil size={15} />} title="Edit" onClick={() => openEdit(c)} hover="hover:bg-violet-100 hover:text-violet-600" />
-                        <RowAction icon={<Trash2 size={15} />} title="Delete" onClick={() => setConfirm(c)} hover="hover:bg-rose-100 hover:text-rose-600" />
-                      </div>
-                    </td>
-                  </motion.tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </td>
+                      <td className="px-5 py-4"><KycBadge status={kyc} /></td>
+                      <td className="px-5 py-4"><StatusBadge overdue={hasOverdue} active={activeLoan} /></td>
+                      <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex justify-end gap-1 opacity-60 transition-opacity group-hover:opacity-100">
+                          <RowAction icon={<Eye size={16} />} title="View" onClick={() => setView(c)} hover="hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-500/15" />
+                          <RowAction icon={<Pencil size={16} />} title="Edit" onClick={() => openEdit(c)} hover="hover:bg-violet-50 hover:text-violet-600 dark:hover:bg-violet-500/15" />
+                          <RowAction icon={<Trash2 size={16} />} title="Delete" onClick={() => setConfirm(c)} hover="hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15" />
+                        </div>
+                      </td>
+                    </motion.tr>
+                  );
+                })}
+              </tbody>
+            </table>
 
-          {/* Empty state */}
-          {rows.length === 0 && (
-            <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
-              <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-gradient-to-br from-blue-100 to-violet-100 text-blue-500 dark:from-blue-500/15 dark:to-violet-500/15">
-                <Users size={28} />
+            {/* Empty state */}
+            {rows.length === 0 && (
+              <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
+                <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-indigo-50 text-indigo-500 dark:bg-indigo-500/15">
+                  <Users size={28} />
+                </div>
+                <h3 className="text-base font-semibold text-ink">
+                  {filtersActive ? 'No matching customers' : 'No customers yet'}
+                </h3>
+                <p className="mt-1 max-w-xs text-sm text-muted">
+                  {filtersActive ? 'Try adjusting your search or filters.' : 'Add your first customer to get started.'}
+                </p>
+                {!filtersActive && (
+                  <button
+                    onClick={openAdd}
+                    className="mt-5 inline-flex items-center gap-2 rounded-lg bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-600"
+                  >
+                    <Plus size={16} /> Add first customer
+                  </button>
+                )}
               </div>
-              <h3 className="text-base font-semibold text-slate-900 dark:text-white">
-                {filtersActive ? 'No matching customers' : 'No customers yet'}
-              </h3>
-              <p className="mt-1 max-w-xs text-sm text-slate-500">
-                {filtersActive ? 'Try adjusting your search or filters.' : 'Add your first customer to get started.'}
+            )}
+          </div>
+
+          {/* Pagination footer */}
+          {filtered.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t-[0.5px] border-slate-200/70 bg-slate-50 px-5 py-3.5 dark:border-white/[.06] dark:bg-white/[.02]">
+              <p className="text-[14px] text-muted">
+                Showing <span className="font-semibold text-ink">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)}</span> of{' '}
+                <span className="font-semibold text-ink">{filtered.length}</span> customers
               </p>
-              {!filtersActive && (
+              <div className="flex items-center gap-1.5">
                 <button
-                  onClick={openAdd}
-                  className="mt-5 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition-all hover:brightness-110"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="grid h-9 w-9 place-items-center rounded-lg border-[0.5px] border-slate-200 bg-white text-muted transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-white/10 dark:bg-white/5"
                 >
-                  <Plus size={16} /> Add First Customer
+                  <ChevronLeft size={16} />
                 </button>
-              )}
+                {pageNumbers(currentPage, totalPages).map((p, idx) =>
+                  p === '…' ? (
+                    <span key={`e${idx}`} className="px-1 text-muted">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p as number)}
+                      className={`grid h-9 min-w-9 place-items-center rounded-lg px-2.5 text-[14px] font-semibold transition-colors ${
+                        p === currentPage
+                          ? 'bg-indigo-500 text-white shadow-sm shadow-indigo-500/30'
+                          : 'border-[0.5px] border-slate-200 bg-white text-ink/70 hover:bg-slate-50 dark:border-white/10 dark:bg-white/5'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ),
+                )}
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="grid h-9 w-9 place-items-center rounded-lg border-[0.5px] border-slate-200 bg-white text-muted transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-white/10 dark:bg-white/5"
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <select
+                  value={pageSize}
+                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                  className="ml-1 h-9 rounded-lg border-[0.5px] border-slate-200 bg-white px-2.5 text-[14px] text-muted outline-none dark:border-white/10 dark:bg-white/5"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n} / page</option>)}
+                </select>
+              </div>
             </div>
           )}
         </div>
-
-        {/* Pagination footer */}
-        {filtered.length > 0 && (
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-6 py-3.5 dark:border-white/[.06]">
-            <p className="text-sm text-slate-500">
-              Showing <span className="font-semibold text-slate-700 dark:text-slate-200">{(currentPage - 1) * pageSize + 1}</span>–
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{Math.min(currentPage * pageSize, filtered.length)}</span> of{' '}
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{filtered.length}</span> customers
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-40 dark:border-white/10 dark:bg-white/5"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              {pageNumbers(currentPage, totalPages).map((p, idx) =>
-                p === '…' ? (
-                  <span key={`e${idx}`} className="px-1 text-slate-400">…</span>
-                ) : (
-                  <button
-                    key={p}
-                    onClick={() => setPage(p as number)}
-                    className={`grid h-9 min-w-9 place-items-center rounded-xl px-2 text-sm font-semibold transition-all ${
-                      p === currentPage
-                        ? 'bg-gradient-to-r from-blue-600 to-violet-600 text-white shadow-md shadow-blue-500/25'
-                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:bg-white/5'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ),
-              )}
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-40 dark:border-white/10 dark:bg-white/5"
-              >
-                <ChevronRight size={16} />
-              </button>
-              <select
-                value={pageSize}
-                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                className="ml-1 h-9 rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-600 outline-none dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
-              >
-                {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n} / page</option>)}
-              </select>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Add / Edit — right-side slide-over */}
@@ -645,6 +715,127 @@ export default function Customers() {
         )}
       </Drawer>
 
+      {/* Filters — rich right-side slide-over (draft, applied on button) */}
+      <Drawer
+        open={filterOpen}
+        onClose={() => setFilterOpen(false)}
+        width="md"
+        icon={<SlidersHorizontal size={18} />}
+        title="Filter customers"
+        subtitle="Combine account, portfolio and profile criteria"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDraft(defaultFilters())}>Clear all</Button>
+            <Button onClick={applyDraft}>Apply filters</Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          {/* Sticky live match preview with ratio bar */}
+          <MatchPreview
+            matched={draftMatchCount}
+            total={d.customers.length}
+            activeCount={countActive(draft)}
+            itemLabel="customers"
+            onClear={() => setDraft(defaultFilters())}
+          />
+
+          {/* ── Portfolio ── */}
+          <FilterCard icon={<IndianRupee size={16} />} title="Portfolio" color="violet" active={numActive(draft.outstanding) || numActive(draft.loanCount) || draft.loanTypes.length > 0}>
+            <div className="space-y-3">
+              <NumFilterRow label="Total outstanding" unit="₹" value={draft.outstanding} onChange={(outstanding) => setDraft({ ...draft, outstanding })} />
+              <NumFilterRow label="Number of loans" value={draft.loanCount} onChange={(loanCount) => setDraft({ ...draft, loanCount })} />
+            </div>
+            <div className="mt-4">
+              <div className="mb-2 text-[12px] font-semibold text-muted">Holds loan type</div>
+              <div className="flex flex-wrap gap-2">
+                {LOAN_TYPE_OPTIONS.map((opt) => {
+                  const on = draft.loanTypes.includes(opt.value);
+                  return (
+                    <CityPill
+                      key={opt.value}
+                      active={on}
+                      onClick={() =>
+                        setDraft({
+                          ...draft,
+                          loanTypes: on ? draft.loanTypes.filter((t) => t !== opt.value) : [...draft.loanTypes, opt.value],
+                        })
+                      }
+                    >
+                      {opt.label}
+                    </CityPill>
+                  );
+                })}
+              </div>
+            </div>
+          </FilterCard>
+
+          {/* ── Account & KYC ── */}
+          <FilterCard icon={<ShieldCheck size={16} />} title="Account & KYC" color="emerald" active={!!draft.status || !!draft.kyc || draft.overdueOnly}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <div className="mb-2 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-muted">
+                  <Activity size={13} className="text-blue-500" /> Account
+                </div>
+                <SegGroup>
+                  <Seg active={draft.status === ''} onClick={() => setDraft({ ...draft, status: '' })}>All</Seg>
+                  <Seg active={draft.status === 'ACTIVE'} onClick={() => setDraft({ ...draft, status: 'ACTIVE' })} tone="emerald">Active</Seg>
+                  <Seg active={draft.status === 'INACTIVE'} onClick={() => setDraft({ ...draft, status: 'INACTIVE' })}>Inactive</Seg>
+                </SegGroup>
+              </div>
+              <div>
+                <div className="mb-2 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-muted">
+                  <ShieldCheck size={13} className="text-emerald-500" /> KYC
+                </div>
+                <SegGroup>
+                  <Seg active={draft.kyc === ''} onClick={() => setDraft({ ...draft, kyc: '' })}>All</Seg>
+                  <Seg active={draft.kyc === 'VERIFIED'} onClick={() => setDraft({ ...draft, kyc: 'VERIFIED' })} tone="emerald">Verified</Seg>
+                  <Seg active={draft.kyc === 'PENDING'} onClick={() => setDraft({ ...draft, kyc: 'PENDING' })} tone="amber">Pending</Seg>
+                </SegGroup>
+              </div>
+            </div>
+            <ToggleRow
+              active={draft.overdueOnly}
+              onToggle={() => setDraft({ ...draft, overdueOnly: !draft.overdueOnly })}
+              icon={<AlertTriangle size={16} />}
+              label="Overdue only"
+              hint="Customers with at least one past-due loan"
+              tone="danger"
+            />
+          </FilterCard>
+
+          {/* ── Profile ── */}
+          <FilterCard icon={<User size={16} />} title="Profile" color="blue" active={numActive(draft.income) || !!draft.city || !!draft.state || !!draft.occupation.trim()}>
+            <NumFilterRow label="Monthly income" unit="₹" value={draft.income} onChange={(income) => setDraft({ ...draft, income })} />
+            <div className="mt-3.5 grid grid-cols-2 gap-3">
+              <div>
+                <div className="mb-1.5 text-[12px] font-semibold text-muted">City</div>
+                <select value={draft.city} onChange={(e) => setDraft({ ...draft, city: e.target.value })} className={drawerSelectCls + ' w-full'}>
+                  <option value="">Any city</option>
+                  {cities.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="mb-1.5 text-[12px] font-semibold text-muted">State</div>
+                <select value={draft.state} onChange={(e) => setDraft({ ...draft, state: e.target.value })} className={drawerSelectCls + ' w-full'}>
+                  <option value="">Any state</option>
+                  {states.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="mt-3.5">
+              <div className="mb-1.5 text-[12px] font-semibold text-muted">Occupation contains</div>
+              <input
+                value={draft.occupation}
+                onChange={(e) => setDraft({ ...draft, occupation: e.target.value })}
+                placeholder="e.g. Driver, Business…"
+                className={drawerSelectCls + ' w-full'}
+              />
+            </div>
+          </FilterCard>
+        </div>
+      </Drawer>
+
       {/* View detail */}
       <Dialog open={!!view} onClose={() => setView(null)} title={view?.name ?? ''} subtitle={view?.code} wide>
         {view && (
@@ -699,43 +890,28 @@ export default function Customers() {
   );
 }
 
-// ─────────────── stat card styling ───────────────
-type StatColor = 'blue' | 'emerald' | 'amber' | 'violet' | 'rose';
-interface StatCard { label: string; value: string; icon: LucideIcon; color: StatColor; trend: string; }
+// ─────────────── meta chip ───────────────
+type MetaTone = 'danger' | 'warn' | 'info' | 'neutral';
+const metaToneCls: Record<MetaTone, string> = {
+  danger: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300',
+  warn: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300',
+  info: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-300',
+  neutral: 'border-slate-200/70 bg-white text-ink/70 dark:border-white/[.06] dark:bg-surface',
+};
+function MetaTag({ tone = 'neutral', icon, children }: { tone?: MetaTone; icon?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border-[0.5px] px-3 py-1.5 text-[12px] font-semibold ${metaToneCls[tone]}`}>
+      {icon}{children}
+    </span>
+  );
+}
 
-const statCardBg: Record<StatColor, string> = {
-  blue: 'border-blue-100 bg-gradient-to-br from-blue-50/80 to-white dark:border-blue-500/20 dark:from-blue-500/10 dark:to-transparent',
-  emerald: 'border-emerald-100 bg-gradient-to-br from-emerald-50/80 to-white dark:border-emerald-500/20 dark:from-emerald-500/10 dark:to-transparent',
-  amber: 'border-amber-100 bg-gradient-to-br from-amber-50/80 to-white dark:border-amber-500/20 dark:from-amber-500/10 dark:to-transparent',
-  violet: 'border-violet-100 bg-gradient-to-br from-violet-50/80 to-white dark:border-violet-500/20 dark:from-violet-500/10 dark:to-transparent',
-  rose: 'border-rose-100 bg-gradient-to-br from-rose-50/80 to-white dark:border-rose-500/20 dark:from-rose-500/10 dark:to-transparent',
-};
-const statIconBg: Record<StatColor, string> = {
-  blue: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
-  emerald: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
-  amber: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
-  violet: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
-  rose: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
-};
-const statTrend: Record<StatColor, string> = {
-  blue: 'text-blue-600 dark:text-blue-400',
-  emerald: 'text-emerald-600 dark:text-emerald-400',
-  amber: 'text-amber-600 dark:text-amber-400',
-  violet: 'text-violet-600 dark:text-violet-400',
-  rose: 'text-rose-600 dark:text-rose-400',
-};
-
-// Deterministic gradient per name so avatars are colourful but stable.
-const AVATAR_GRADIENTS = [
-  'from-blue-400 to-blue-600', 'from-violet-400 to-violet-600',
-  'from-emerald-400 to-emerald-600', 'from-amber-400 to-orange-500',
-  'from-rose-400 to-rose-600', 'from-cyan-400 to-blue-500',
-  'from-fuchsia-400 to-violet-600',
-];
-function avatarGradient(name: string): string {
+// Deterministic solid color per name so avatars are colourful but stable.
+const AVATAR_COLORS = ['#6366f1', '#ec4899', '#14b8a6', '#f97316', '#8b5cf6', '#f59e0b', '#0ea5e9', '#ef4444'];
+function avatarColor(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return AVATAR_GRADIENTS[h % AVATAR_GRADIENTS.length];
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
 // Page-number list with ellipses for the pagination footer.
@@ -758,8 +934,8 @@ function KycBadge({ status }: { status: 'VERIFIED' | 'PENDING' | 'REJECTED' }) {
     REJECTED: { cls: 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300', dot: 'bg-rose-500', label: 'Rejected' },
   }[status];
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${map.cls}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${map.dot}`} /> {map.label}
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold ${map.cls}`}>
+      <span className={`h-2 w-2 rounded-full ${map.dot}`} /> {map.label}
     </span>
   );
 }
@@ -771,8 +947,8 @@ function StatusBadge({ overdue, active }: { overdue: boolean; active: boolean })
       ? { cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', dot: 'bg-emerald-500', label: 'Active' }
       : { cls: 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300', dot: 'bg-slate-400', label: 'Inactive' };
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${map.cls}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${map.dot}`} /> {map.label}
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold ${map.cls}`}>
+      <span className={`h-2 w-2 rounded-full ${map.dot}`} /> {map.label}
     </span>
   );
 }
@@ -782,7 +958,7 @@ function RowAction({ icon, title, onClick, hover }: { icon: React.ReactNode; tit
     <button
       onClick={onClick}
       title={title}
-      className={`grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition-all ${hover}`}
+      className={`grid h-9 w-9 place-items-center rounded-lg border-[0.5px] border-slate-200/70 bg-white text-slate-500 transition-all dark:border-white/[.06] dark:bg-white/[.03] ${hover}`}
     >
       {icon}
     </button>

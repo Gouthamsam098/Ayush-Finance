@@ -2,76 +2,129 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Anush LMS is a React 18 + TypeScript + Vite front-end for a loan-management system (Anush Capitals). There is a companion `AGENTS.md` covering stack, routes, and file layout — this file focuses on the non-obvious architecture and domain rules.
+Anush LMS is a loan-management system for Anush Capitals: a **React 18 + TypeScript + Vite** front-end (repo root) and a **Go 1.26 + PostgreSQL** back-end (`backend/`). A companion `AGENTS.md` covers the front-end stack, routes, and file layout at a glance — this file focuses on the non-obvious architecture and domain rules that span multiple files.
+
+## Repository layout
+
+- **Front-end** — repo root (`src/`, `package.json`, `vite.config.ts`).
+- **Back-end** — `backend/` (Go module `github.com/anush-capitals/lms-backend`). Self-contained: its own `go.mod`, `Makefile`, `Dockerfile`, `docker-compose.yml`.
+
+Active development is on the `newui` branch.
 
 ## Commands
 
+Front-end (run from repo root):
 ```bash
 npm run dev       # Vite dev server on :5173, host exposed to LAN
-npm run build     # tsc -b (typecheck) then vite build → dist/
+npm run build     # tsc -b (typecheck) then vite build → dist/. The only real correctness gate.
+npm run lint      # eslint
 npm run preview   # serve the production build
 ```
+`npm run build` runs `tsc -b` first, so a type error fails the build. Run it before considering a front-end change done. There is no front-end test runner.
 
-There is **no test runner, linter, or formatter** configured. `npm run build` is the only correctness gate — it runs `tsc -b` first, so a type error fails the build. Run it before considering a change done.
+Back-end (run from `backend/`):
+```bash
+make run          # go run ./cmd/server — applies migrations on boot, serves :4000
+make build        # compile all binaries into ./bin
+make test         # go test ./...   (single package: go test ./internal/domain/ -run TestName -v)
+make vet          # go vet ./...
+make db-up        # start the Postgres container only
+make keys         # generate the RS256 JWT key pair into ./secrets (needed once before `make run`)
+make seed-admin   # create/rotate the bootstrap admin (needs ADMIN_EMAIL/ADMIN_PASSWORD/ADMIN_FULL_NAME)
+```
+Full local bring-up from scratch: `make deps && make keys && make db-up && make seed-admin && make run`.
 
-## Current state: front-end only, no backend
+### Docker (one-command full stack)
+From `backend/`: `docker compose up --build` starts Postgres **and** the backend. The backend container self-provisions via `docker-entrypoint.sh`: generates JWT keys on first boot, seeds the admin from `ADMIN_*` env vars in `docker-compose.yml`, and runs migrations. This is the path to hand a teammate. The compose file maps Postgres to host **5433** (to avoid clashing with a local Postgres on 5432); the backend still reaches it as `postgres:5432` on the internal network.
 
-Despite `axios` being a dependency and `vite.config.ts` proxying `/api` → `http://localhost:4000` (override with `VITE_API_URL`), **no API calls exist anywhere in the code.** All application data is in-memory and seeded on load.
+## Front-end / back-end integration — the feature flag
 
-- **`src/mock/DataContext.tsx`** is the single source of truth for all domain data (customers, loans, collections, expenses, documents) and every mutation. It is a React Context, not Redux. Access it via `useData()`. Data resets on every page reload; there is no persistence.
-- **Login (`src/pages/Login.tsx`) is a stub** — it accepts any credentials, dispatches a hardcoded `demo-token`, and navigates to `/`. The `AuthStage` machinery in `authSlice` (`PASSWORD_CHANGE`, `TOTP_SETUP`, `TOTP_REQUIRED`) and `preAuthToken` are defined but **never used**; they anticipate a future real auth flow.
+The front-end runs against **either** the in-memory mock **or** the real backend, switched by `VITE_USE_API` in `.env.local` (see `src/lib/config.ts`). This flag is the key to understanding data flow:
 
-When wiring a real backend, replace the `DataContext` method bodies (keep the `DataShape` interface as the contract) and the `setTimeout` in `Login.signIn`.
+- **`VITE_USE_API` unset/false** → everything lives in `src/mock/DataContext.tsx` (in-memory, seeded, resets on reload). `Login.tsx` accepts any credentials and dispatches a `demo-token`.
+- **`VITE_USE_API=true`** → wired features hit the Go backend through the `/api` proxy (`vite.config.ts` proxies `/api` → `http://localhost:4000`, override with `VITE_API_URL`). Currently **auth and customers (incl. documents)** are wired; loans/collections/expenses still use the mock even in API mode.
 
-## Two independent state systems
+`DataContext` is deliberately **API-aware behind the flag**: its `addCustomer`/`updateCustomer`/`deleteCustomer` call `customerApi` when the flag is on, otherwise mutate local state. Pages call `useData()` unchanged either way. When wiring a new feature to the backend, follow this pattern (add a `src/services/xApi.ts`, branch inside the relevant `DataContext` method on `config.useApi`) rather than rewriting pages.
 
-State is deliberately split:
+The API client (`src/lib/api.ts`) unwraps the backend's `{ success, data, error, meta }` envelope, attaches the Bearer token from `tokenStore`, and on a **401 forces re-login** (clears token, redirects to `/login`) — there is **no silent refresh** (see session model below). Backend field errors (snake_case) are mapped to form fields in the pages.
 
-- **Redux (`src/store/`)** holds *only* auth (`authSlice`). `ProtectedRoute` reads `auth.accessToken` to gate every route except `/login`. Use `useSelector`/`useDispatch` with the exported `RootState` / `AppDispatch` types.
-- **`DataContext`** holds *everything else* (all business entities + derived calculations). Do not move domain data into Redux — the split is intentional.
+## Two independent front-end state systems
+
+State is deliberately split — do not merge them:
+
+- **Redux (`src/store/`)** holds *only* auth (`authSlice`). `ProtectedRoute` reads `auth.accessToken` to gate every route except `/login`. In API mode the token value is a sentinel (`'api'`); the real JWT lives in `tokenStore` (localStorage). `DataContext`'s customer fetch is keyed off `auth.accessToken` so it runs *after* login, not at mount (mounting before auth would 401).
+- **`DataContext`** holds *everything else* (all business entities + derived calculations).
 
 Provider nesting (from `main.tsx`): `Redux Provider` → `DataProvider` → `ToastProvider` → `BrowserRouter` → `App`.
 
-## Loan domain model — the core complexity
+## Session model — hard 1-hour, no refresh
 
-`DataContext.tsx` encodes the business rules. Six `LoanType`s collapse into three economic behaviors — get this wrong and the money math is wrong:
+Deliberate design (backend `JWT_ACCESS_TTL=1h`, `JWT_REFRESH_TTL=0`): the access token **is** the whole session. At expiry the frontend gets a 401 and redirects to login — there is no silent renewal. Backend `JWTConfig.RefreshEnabled()` gates this; login omits `refresh_token` and returns `expires_in_seconds`; `/auth/refresh` always 401s while disabled. `src/lib/tokenStore.ts` stores only the access token. DB-backed rotating sessions are a possible future upgrade, not built.
 
-- **`isDailyLoan`** = `DAILY_COLLECTION` | `DAILY_INTEREST`. Interest is deducted upfront (stored as `deduction`); daily payments repay principal.
+## Loan domain model — the core complexity (both sides mirror it)
+
+Six `LoanType`s collapse into **three economic behaviors** — get this wrong and the money math is wrong. The rules live in `src/mock/DataContext.tsx` (frontend) and are mirrored exactly in `backend/internal/domain/loan.go` (verified by `loan_test.go`):
+
+- **daily loans** = `DAILY_COLLECTION` | `DAILY_INTEREST`. Interest deducted upfront (stored as `deduction`); daily payments repay principal.
   - `DAILY_COLLECTION` outstanding = `principal − collected` (principal shrinks as collected).
   - `DAILY_INTEREST` outstanding = `principal + totalDueForDaily` (interest-only; principal fixed, outstanding *rises* above principal when payments fall behind).
-- **`isMonthlyLike`** = `MONTHLY_INTEREST` | `VEHICLE` | `PROPERTY` | `FLEXIBLE`. A recurring interest cycle (30 days for all except `FLEXIBLE`, which uses its own `numDays` via `cycleDaysFor`). Outstanding = `principal + totalDueForMonthly`.
+- **monthly-like** = `MONTHLY_INTEREST` | `VEHICLE` | `PROPERTY` | `FLEXIBLE`. Recurring interest cycle (30 days for all except `FLEXIBLE`, which uses its own `numDays`). Outstanding = `principal + totalDueForMonthly`.
 
-Key derived helpers (all defined in `DataContext`, exposed through `useData()` or exported standalone):
-
+Key derived helpers (frontend `DataContext`, mirrored on backend `Loan`):
 - `elapsedDaysSinceLoan(loanDate)` — calendar days, Day 1 = loan date, uncapped.
 - `monthlyCyclesElapsed(loanDate, cycleDays)` — completed cycles (day 30 → 1, day 59 → 1, day 60 → 2).
-- `totalDueForDaily(loan)` — cumulative shortfall: `min(elapsed, term) × dailyAmount − collected`.
-- `totalDueForMonthly(loan)` — `completedCycles × interest − collected`.
 - `outstandingFor(loan)` — the type dispatch above; returns 0 for `CLOSED` loans (except `DAILY_COLLECTION`).
-- `nextDueForDaily(loan)` — day after last collection, clamped to loan term; `null` once principal fully repaid.
-- `interest = calcInterest(principal, rate) = round(principal × rate / 100)`. Recomputed automatically in `addLoan`/`updateLoan` whenever `principal` or `rate` changes.
+- `interest = calcInterest(principal, rate) = round(principal × rate / 100)`.
 
-When adding loan logic, extend these helpers rather than recalculating inline in pages, and preserve the three-behavior grouping.
+Extend these helpers rather than recalculating inline in pages, and preserve the three-behavior grouping. **If you change loan math on one side, change it on the other** — the two implementations must stay in lock-step.
 
-### ID / sequence generation
-`DataContext` mints human-readable codes from counters in state: customers `CUST-####` (from `codeSeq`), loans `LN-####` (`loanSeq`), receipts `RCPT-######` (`rcptSeq`). Deletes cascade — `deleteCustomer` also removes that customer's loans, collections, and documents; `deleteLoan` removes its collections.
+## Money is never a float
+
+- **Frontend**: rupees as plain numbers, formatted via `inr()` (`₹1,23,456`, Indian grouping) and `inrShort()` (`₹1.23 Cr` / `₹1.23 L`) from `@/lib/format`.
+- **Backend**: `domain.Paise` (int64, integer paise). Rupees appear **only** at the JSON boundary (parsed on input, `.Rupees()` on output). All DB money columns are `BIGINT` paise. Never introduce a float into balance math.
 
 ## Dates are string-based, local-time
 
-All dates are `YYYY-MM-DD` strings, **not** `Date` objects. Always parse via `s.split('-').map(Number)` and construct `new Date(y, m-1, d)` (local time) — never `new Date(isoString)`, which parses as UTC and shifts the day. `todayISO()` / `fmtDate()` / `isoLocal` follow this convention; match it.
+All dates are `YYYY-MM-DD` strings, **not** `Date` objects. Parse via `s.split('-').map(Number)` and construct `new Date(y, m-1, d)` (local time) — never `new Date(isoString)`, which parses as UTC and shifts the day. `todayISO()` / `fmtDate()` / `isoLocal` follow this; match it. Backend uses `time.Time` normalized to local midnight for the same reason.
 
-## Styling & UI conventions
+## Backend architecture
 
-- Tailwind with `darkMode: 'class'`. Dark mode is toggled by adding `.dark` to `<html>` directly in `AppShell` (`document.documentElement.classList.toggle('dark')`) — there is no theme context, and the setting does not persist.
-- Theme colors resolve through CSS variables in `src/index.css` (`--surface`, `--ink`, `--muted`, etc.) exposed to Tailwind as `surface`/`ink`/`muted`. Semantic palette: `primary` (indigo), `success`, `warning`, `danger`. Custom `rounded-card` (18px) and `shadow-card`/`soft`/`glow`.
-- Compose classes with `cn()` from `@/lib/utils` (clsx + tailwind-merge) so later utilities win over earlier ones.
-- Reusable primitives live in `src/components/ui/` (shadcn-style, hand-rolled). Toasts come from `useToast()` (`@/components/ui/toast`), not a library.
-- Money formatting: `inr()` (full `₹1,23,456`, Indian grouping) and `inrShort()` (`₹1.23 Cr` / `₹1.23 L`) from `@/lib/format`.
+Layered, dependencies injected from a single composition root (`internal/server/router.go`) — nothing reaches for globals:
 
-## Imports
+- `internal/feature/<name>/{repository,service,handler}.go` — `handler` (HTTP: parse/validate/shape) → `service` (business rules, validation) → `repository` (parameterised pgx SQL). Features: `auth`, `customer`, `document`.
+- `internal/domain/` — entities, `Paise` money, loan/customer/document rules, typed `Error` (stable code + client-safe message + HTTP status), validators.
+- `internal/{config,logger,crypto,database,httpx}` — env config (fail-fast, no hardcoded secrets), slog JSON logger (redacts sensitive keys), bcrypt + RS256 JWT, pgx pool + embedded migration runner, response envelope + middleware.
+- `cmd/{server,genkeys,seedadmin}` — API entry point, key generator, env-driven admin seeder.
 
-Use the `@/` alias for anything under `src/` (configured in both `tsconfig.json` and `vite.config.ts`). Avoid relative `../` paths.
+Response envelope for every endpoint: `{ success, data?, error?: {code,message,fields?}, meta? }`. Domain errors map to their declared HTTP status; anything else becomes a generic 500 (detail logged, never leaked). Handlers project entities to DTOs that **omit sensitive fields** (`password_hash`; Aadhaar/PAN returned **masked**, e.g. `XXXX-XXXX-1234`, never in full, never logged).
+
+### Migrations & schema
+`internal/database/migrations/*.up.sql` are **embedded** in the binary and applied idempotently on boot (each in its own transaction, tracked in `schema_migrations`). To change the schema, add a new numbered migration — never edit an applied one. Tables: `users, customers, loans, collections, expenses, documents, audit_log`. Soft deletes (`deleted_at`) throughout; deletes cascade. Human-readable codes (`CUST-####`, `LN-####`, `RCPT-######`) are minted from Postgres sequences. Document file bytes are stored in-DB as `bytea` (no object store); `audit_log` exists but is not yet written to.
+
+### Validation (industrial-standard, both sides)
+`backend/internal/domain/validate.go` is the source of truth; `src/lib/customerValidation.ts` mirrors it for instant inline feedback. Rules include Indian mobile (`^[6-9]\d{9}$`), PAN with holder-type char, **Aadhaar with Verhoeff checksum**, pincode, DOB age 18–100, and state validated against the official list (`internal/domain/india.go`, mirrored in the frontend `INDIAN_STATES`). Keep the two in sync when rules change. Validation has a **create vs update mode**: on update, KYC (Aadhaar/PAN) may be omitted and the stored value is preserved — the "at least one KYC" rule only applies on create.
+
+## Front-end styling & conventions
+
+- Tailwind with `darkMode: 'class'`. Dark mode toggles `.dark` on `<html>` directly in `AppShell` — no theme context, does not persist.
+- Theme colors resolve through CSS variables in `src/index.css` exposed to Tailwind as `surface`/`ink`/`muted`. Semantic palette: `primary` (indigo/blue), `success`, `warning`, `danger`. Brand accent is a **blue→violet gradient**. Custom `rounded-card` (18px), `shadow-card`/`soft`/`glow`.
+- Compose classes with `cn()` from `@/lib/utils` (clsx + tailwind-merge) so later utilities win.
+- Reusable primitives in `src/components/ui/` (shadcn-style, hand-rolled). `Dialog` = centered modal; `Drawer` = right-side slide-over (used for the customer add/edit form). Toasts via `useToast()` (`@/components/ui/toast`), not a library. Animations via Framer Motion.
+- Use the `@/` alias for anything under `src/` (configured in `tsconfig.json` and `vite.config.ts`). Avoid relative `../` paths.
 
 ## PDF reports
+`src/lib/pdfReport.ts` builds loan-ledger PDFs with jsPDF + jspdf-autotable via `buildLedgerReportPDF(ReportParams)`. Callers pass **already-formatted** display strings — the builder does no domain formatting. `LedgerDialog.tsx` is the primary consumer.
 
-`src/lib/pdfReport.ts` builds loan-ledger PDFs with jsPDF + jspdf-autotable via `buildLedgerReportPDF(ReportParams)`. Callers pass **already-formatted** display strings (dates, amounts) — the builder does no domain formatting itself. `LedgerDialog.tsx` is the primary consumer.
+## Working conventions (from .cursor/rules)
+
+Note: several files in `.cursor/rules/` were copied from another project (an "orbit" rules/routes engine) and describe tables/architecture that **do not exist here** — ignore their specifics. The genuinely-applicable principles:
+
+- **Stable code**: this is production-stable. Make only the change requested, minimal diff, no speculative fields, no refactoring bundled with fixes, don't weaken tests to make them pass. Run the affected package's tests + build before considering a change done.
+- **Schema alignment**: a Go struct field / DB write must correspond to a real column. Add the migration before the code that uses the column.
+- **Security**: secrets only via env (documented in `.env.example`, never committed); the backend is the auth authority; never log or expose passwords/tokens/PII; mask KYC; client validation never replaces server validation.
+
+## UI/UX design standards — MANDATORY
+
+**`DESIGN_RULES.md` (repo root) is binding for every user-facing change. Read it before building or editing any UI.** Act as a senior product architect + designer, not just an engineer: build **production-ready, premium** UI (Stripe / Linear / Mercury quality), never plain or template-looking. Think before coding (domain → users → hierarchy → journey → then code), and self-review against the Quality Gate (target ≥ 9.5/10 on visual design, UX, a11y, responsiveness, consistency) — iterate before returning code; never settle for the first pass.
+
+Every screen ships with: strong visual hierarchy, generous spacing, real KPI/cards/charts, empty + loading + error states, hover/focus states, responsive layout, subtle animations, and accessible contrast. **Non-negotiable here:** (1) **honesty over decoration** — never fabricate data to fill a UI (no fake trends/sparklines); (2) **theme tokens only** (`surface`/`ink`/`muted`/`primary`/`success`/`warning`/`danger` + `dark:`) so **light and dark mode both work** — never hardcode `bg-white`/`text-slate-900`; (3) **reuse the system** — `src/components/ui/` primitives, `cn()`, `@/lib/format`, Framer Motion, Lucide; (4) still a **minimal, `npm run build`-verified diff**, and never weaken money/KYC/validation rules for looks.

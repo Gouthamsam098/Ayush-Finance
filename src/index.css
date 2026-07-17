@@ -30,11 +30,25 @@
 
 * { -webkit-tap-highlight-color: transparent; }
 
+html { font-size: 16.5px; }           /* nudges every rem-based size up proportionally */
+
 body {
   @apply font-sans antialiased;
   background: rgb(var(--bg));
   color: rgb(var(--ink));
+  font-size: 0.9375rem;               /* ~15.5px base */
+  line-height: 1.55;
+  letter-spacing: -0.006em;           /* subtle tightening — the modern SaaS look */
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
 }
+
+/* Display font (Space Grotesk) — tighten for headings */
+.font-display { letter-spacing: -0.02em; }
+
+/* Tabular, aligned numerals for money & tables */
+.tabular-nums, table, .font-mono { font-variant-numeric: tabular-nums; }
 
 /* Smooth, consistent interaction feel across the app without touching component logic */
 button, a, input, select, textarea {

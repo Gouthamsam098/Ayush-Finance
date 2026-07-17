@@ -2,154 +2,200 @@ import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { logout } from '@/store/authSlice';
+import { useData } from '@/mock/DataContext';
+import { todayISO } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Users, FileText, Receipt, Wallet, BarChart3,
-  FolderOpen, Settings, Bell, Moon, Sun, Menu, X, LogOut } from 'lucide-react';
+  FolderOpen, Settings, ChevronsLeft, LogOut, Moon, Sun,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
-const NAV = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/customers', label: 'Customers', icon: Users },
-  { to: '/loans', label: 'Loans', icon: FileText },
-  { to: '/collections', label: 'Collections', icon: Receipt },
-  { to: '/expenses', label: 'Expenses', icon: Wallet },
-  { to: '/reports', label: 'Reports', icon: BarChart3 },
-  { to: '/documents', label: 'Documents', icon: FolderOpen },
-  { to: '/settings', label: 'Settings', icon: Settings },
+interface NavItem { to: string; label: string; icon: LucideIcon; badgeKey?: 'overdue' }
+interface NavSection { heading: string; items: NavItem[] }
+
+const NAV: NavSection[] = [
+  {
+    heading: 'Main',
+    items: [
+      { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { to: '/customers', label: 'Customers', icon: Users },
+      { to: '/loans', label: 'Loans', icon: FileText, badgeKey: 'overdue' },
+      { to: '/collections', label: 'Collections', icon: Receipt },
+    ],
+  },
+  {
+    heading: 'Finance',
+    items: [
+      { to: '/expenses', label: 'Expenses', icon: Wallet },
+      { to: '/reports', label: 'Reports', icon: BarChart3 },
+    ],
+  },
+  {
+    heading: 'System',
+    items: [
+      { to: '/documents', label: 'Documents', icon: FolderOpen },
+      { to: '/settings', label: 'Settings', icon: Settings },
+    ],
+  },
 ];
 
 export function AppShell() {
-  const [dark, setDark] = useState(false);
-  const [drawer, setDrawer] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const d = useData();
 
   const toggleTheme = () => {
-    setDark((d) => {
-      document.documentElement.classList.toggle('dark', !d);
-      return !d;
+    setDark((prev) => {
+      const next = !prev;
+      document.documentElement.classList.toggle('dark', next);
+      return next;
     });
   };
 
-  const sidebar = (
-    <aside className="relative flex h-full w-60 flex-col overflow-hidden bg-white border-r border-slate-200">
-      {/* Logo Section */}
-      <div className="flex items-center gap-3 px-5 py-5">
-        <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-bold text-lg shadow-md">
-          A
-        </div>
-        <div className="flex-1">
-          <div className="text-sm font-bold text-slate-900">Anush <span className="text-blue-600">Capitals</span></div>
-          <div className="text-xs text-slate-600">LOAN MANAGEMENT</div>
-        </div>
-        <button className="ml-auto lg:hidden text-slate-500 hover:text-slate-700" onClick={() => setDrawer(false)}>
-          <X size={18} />
-        </button>
-      </div>
-
-      {/* Navigation */}
-      <nav className="relative flex-1 space-y-1 px-3 py-4 overflow-y-auto">
-        {NAV.map(({ to, label, icon: Icon }, i) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            onClick={() => setDrawer(false)}
-            className={({ isActive }) =>
-              cn(
-                'group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 overflow-hidden',
-                isActive
-                  ? 'bg-blue-500 text-white shadow-lg shadow-blue-200/50'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              )
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <Icon size={18} strokeWidth={isActive ? 2.5 : 2} className="relative transition-all group-hover:scale-110" />
-                <span className="relative font-medium">{label}</span>
-              </>
-            )}
-          </NavLink>
-        ))}
-      </nav>
-
-      {/* Bottom Section */}
-      <div className="relative border-t border-slate-200 p-3 space-y-3">
-        {/* Upgrade Card */}
-        <div className="rounded-lg bg-gradient-to-br from-blue-50 to-blue-100 p-4 text-center border border-blue-200">
-          <div className="text-xs text-slate-600 mb-3">Grow your business</div>
-          <div className="text-xs font-bold text-slate-900 mb-3">with smart insights</div>
-          <button className="w-full text-xs font-bold text-blue-600 hover:text-blue-700 transition-colors">Upgrade Now</button>
-        </div>
-
-        {/* Logout Button */}
-        <button
-          onClick={() => {
-            dispatch(logout());
-            navigate('/login');
-          }}
-          className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 transition-all hover:text-red-600 hover:bg-red-50 group"
-        >
-          <LogOut size={18} className="group-hover:scale-110 transition-transform" />
-          <span>Logout</span>
-        </button>
-      </div>
-    </aside>
-  );
+  // Overdue loans drive the red badge on the Loans nav item.
+  const today = todayISO();
+  const overdueCount = d.loans.filter(
+    (l) => l.status === 'ACTIVE' && l.nextDueDate && l.nextDueDate < today && d.outstandingFor(l) > 0,
+  ).length;
+  const badgeFor = (key?: 'overdue') => (key === 'overdue' && overdueCount > 0 ? overdueCount : null);
 
   return (
-    <div className="aurora-bg flex h-dvh overflow-hidden">
-      <div className="hidden lg:block">{sidebar}</div>
-      {drawer && (
-        <>
-          <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm animate-[fadeIn_.2s_ease]" onClick={() => setDrawer(false)} />
-          <div className="fixed inset-y-0 left-0 z-50">{sidebar}</div>
-        </>
-      )}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 lg:px-6">
-          <button className="lg:hidden text-slate-600 hover:text-slate-900 transition-colors" onClick={() => setDrawer(true)}>
-            <Menu size={20} />
-          </button>
-
-          <div className="ml-auto flex items-center gap-4">
-            {/* Search Bar - Hidden on Mobile */}
-            <div className="hidden md:block">
-              <input
-                type="text"
-                placeholder="Search customers, loans, collections..."
-                className="w-64 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm placeholder-slate-500 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-              />
-            </div>
-
-            {/* Notification Button */}
-            <button className="relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-all hover:bg-slate-100 hover:text-blue-600 group">
-              <Bell size={18} strokeWidth={2} />
-              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-            </button>
-
-            {/* Theme Toggle */}
-            <button
-              onClick={toggleTheme}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-all hover:bg-slate-100 hover:text-blue-600"
-            >
-              {dark ? <Sun size={18} strokeWidth={2} /> : <Moon size={18} strokeWidth={2} />}
-            </button>
-
-            {/* User Profile */}
-            <div className="ml-2 flex items-center gap-3 border-l border-slate-200 pl-4">
-              <div className="text-right hidden sm:block">
-                <div className="text-xs font-bold text-slate-900">Admin</div>
-                <div className="text-xs text-slate-600">Super Admin</div>
-              </div>
-              <div className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center text-white font-bold text-sm">
-                A
-              </div>
-            </div>
+    <div className="flex h-dvh overflow-hidden bg-slate-50 dark:bg-[#080b14]">
+      {/* ── Sidebar ─────────────────────────────────────────── */}
+      <aside
+        className={cn(
+          'flex shrink-0 flex-col overflow-hidden bg-[#0c1220] transition-[width] duration-200 ease-[cubic-bezier(.4,0,.2,1)]',
+          collapsed ? 'w-[54px]' : 'w-[200px]',
+        )}
+      >
+        {/* Logo + collapse toggle */}
+        <div className="flex min-h-[58px] items-center gap-2.5 border-b border-white/[.07] px-2.5 py-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-indigo-500 text-sm font-semibold text-white">
+            A
           </div>
-        </header>
-        <main className="flex-1 overflow-y-auto bg-slate-50 p-6 lg:p-8">
+          {!collapsed && (
+            <div className="min-w-0 flex-1 overflow-hidden">
+              <div className="truncate text-sm font-semibold text-slate-50">Anush Capitals</div>
+              <div className="truncate text-[11px] text-slate-400">Loan Management</div>
+            </div>
+          )}
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[.04] text-slate-500 hover:text-slate-300"
+          >
+            <ChevronsLeft size={14} className={cn('transition-transform duration-200', collapsed && 'rotate-180')} />
+          </button>
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto px-[7px] py-2">
+          {NAV.map((section) => (
+            <div key={section.heading}>
+              {!collapsed && (
+                <div className="px-1.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  {section.heading}
+                </div>
+              )}
+              {section.items.map(({ to, label, icon: Icon, badgeKey }) => {
+                const badge = badgeFor(badgeKey);
+                return (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === '/'}
+                    title={collapsed ? label : undefined}
+                    className={({ isActive }) =>
+                      cn(
+                        'group relative mb-px flex items-center gap-2.5 rounded-lg px-[7px] py-[9px] transition-colors',
+                        collapsed && 'justify-center',
+                        isActive ? 'bg-indigo-500/[.18]' : 'hover:bg-white/[.05]',
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        {isActive && !collapsed && (
+                          <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-sm bg-indigo-500" />
+                        )}
+                        <Icon
+                          size={19}
+                          className={cn(
+                            'shrink-0 transition-colors',
+                            isActive ? 'text-indigo-300' : 'text-slate-400 group-hover:text-slate-200',
+                          )}
+                        />
+                        {!collapsed && (
+                          <span
+                            className={cn(
+                              'truncate text-[13px] transition-colors',
+                              isActive ? 'font-semibold text-indigo-100' : 'text-slate-300 group-hover:text-slate-100',
+                            )}
+                          >
+                            {label}
+                          </span>
+                        )}
+                        {badge != null && !collapsed && (
+                          <span className="ml-auto shrink-0 rounded-full bg-red-500 px-[5px] py-px text-[9px] font-semibold text-white">
+                            {badge}
+                          </span>
+                        )}
+                        {badge != null && collapsed && (
+                          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[#0c1220]" />
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
+
+        {/* Footer — user + logout */}
+        <div className="border-t border-white/[.07] px-[7px] py-2">
+          <div className="flex items-center gap-2 rounded-lg px-[3px] py-[5px]">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-[10px] font-semibold text-white">
+              AD
+            </div>
+            {!collapsed && (
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <div className="truncate text-[13px] font-semibold text-slate-100">Admin</div>
+                <div className="truncate text-[11px] text-slate-400">Super Admin</div>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={toggleTheme}
+            title={collapsed ? (dark ? 'Light mode' : 'Dark mode') : undefined}
+            className={cn(
+              'group mt-1 flex w-full items-center gap-2.5 rounded-lg px-[7px] py-2 text-slate-400 transition-colors hover:bg-white/[.05] hover:text-slate-200',
+              collapsed && 'justify-center',
+            )}
+          >
+            {dark ? <Sun size={19} className="shrink-0" /> : <Moon size={19} className="shrink-0" />}
+            {!collapsed && <span className="text-[13px]">{dark ? 'Light mode' : 'Dark mode'}</span>}
+          </button>
+          <button
+            onClick={() => { dispatch(logout()); navigate('/login'); }}
+            title={collapsed ? 'Logout' : undefined}
+            className={cn(
+              'group mt-px flex w-full items-center gap-2.5 rounded-lg px-[7px] py-2 text-slate-400 transition-colors hover:bg-red-500/10 hover:text-red-400',
+              collapsed && 'justify-center',
+            )}
+          >
+            <LogOut size={19} className="shrink-0" />
+            {!collapsed && <span className="text-[13px]">Logout</span>}
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Main content ────────────────────────────────────── */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="flex-1 overflow-y-auto">
           <Outlet />
         </main>
       </div>
