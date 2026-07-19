@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/anush-capitals/lms-backend/internal/crypto"
@@ -82,21 +83,27 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 		return nil, domain.NewUnauthorized("invalid or expired refresh token")
 	}
 
-	if _, err := s.repo.FindByID(ctx, claims.Subject); err != nil {
+	subjectID, err := strconv.ParseInt(claims.Subject, 10, 64)
+	if err != nil {
+		return nil, domain.NewUnauthorized("invalid or expired refresh token")
+	}
+
+	if _, err := s.repo.FindByID(ctx, subjectID); err != nil {
 		return nil, domain.NewUnauthorized("account is no longer active")
 	}
 
-	return s.issueTokens(claims.Subject)
+	return s.issueTokens(subjectID)
 }
 
 // CurrentUser loads the user identified by a validated access token subject.
-func (s *Service) CurrentUser(ctx context.Context, userID string) (*domain.User, error) {
+func (s *Service) CurrentUser(ctx context.Context, userID int64) (*domain.User, error) {
 	return s.repo.FindByID(ctx, userID)
 }
 
-func (s *Service) issueTokens(userID string) (*TokenPair, error) {
+func (s *Service) issueTokens(userID int64) (*TokenPair, error) {
 	now := s.now()
-	access, err := s.tokens.Generate(userID, crypto.AccessToken, now)
+	subject := strconv.FormatInt(userID, 10)
+	access, err := s.tokens.Generate(subject, crypto.AccessToken, now)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +114,7 @@ func (s *Service) issueTokens(userID string) (*TokenPair, error) {
 		return &TokenPair{AccessToken: access}, nil
 	}
 
-	refresh, err := s.tokens.Generate(userID, crypto.RefreshToken, now)
+	refresh, err := s.tokens.Generate(subject, crypto.RefreshToken, now)
 	if err != nil {
 		return nil, err
 	}

@@ -17,8 +17,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/server    ./cmd/server \
 FROM alpine:3.20
 WORKDIR /app
 
-# CA certs for any outbound TLS; wget is used by the compose healthcheck.
-RUN apk add --no-cache ca-certificates wget
+# CA certs for any outbound TLS; wget is used by the compose healthcheck;
+# tzdata so TZ=Asia/Kolkata resolves (the app works in IST calendar days).
+RUN apk add --no-cache ca-certificates wget tzdata
 
 COPY --from=build /out/server    /app/server
 COPY --from=build /out/genkeys   /app/genkeys

@@ -11,7 +11,7 @@ import (
 // Customer is the persisted customer entity. Optional fields are pointers so
 // they map cleanly to nullable columns and round-trip NULL rather than "".
 type Customer struct {
-	ID              string
+	ID              int64
 	Code            string
 	Name            string
 	FatherName      *string

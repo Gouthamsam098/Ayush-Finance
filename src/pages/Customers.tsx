@@ -93,7 +93,7 @@ export default function Customers() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [form, setForm] = useState<FormState | null>(null);
-  const [editId, setEditId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
   const [view, setView] = useState<Customer | null>(null);
   const [confirm, setConfirm] = useState<Customer | null>(null);
   const [kycKind, setKycKind] = useState<KycKind>('AADHAAR');
@@ -175,7 +175,7 @@ export default function Customers() {
 
   // Upload every file the user picked, for the document types relevant to the
   // chosen loan type. In API mode this hits the backend; mock mode is a no-op.
-  const uploadPendingDocs = async (customerId: string) => {
+  const uploadPendingDocs = async (customerId: number) => {
     if (!config.useApi) return;
     for (const type of docTypesForLoan(loanType)) {
       const file = pendingDocs[type];
@@ -255,7 +255,7 @@ export default function Customers() {
     setForm(null);
   };
 
-  const loansOf = (id: string) => d.loans.filter((l) => l.customerId === id);
+  const loansOf = (id: number) => d.loans.filter((l) => l.customerId === id);
   const today = new Date().toISOString().split('T')[0];
   const totalCustomers = d.customers.length;
   const activeCustomers = d.customers.filter((c) => loansOf(c.id).some((l) => l.status === 'ACTIVE')).length;
@@ -443,7 +443,6 @@ export default function Customers() {
                           </div>
                           <div className="min-w-0">
                             <div className="truncate text-[15px] font-semibold text-ink">{c.name}</div>
-                            <div className="truncate text-[13px] text-muted">{c.email || c.occupation || '—'}</div>
                           </div>
                         </div>
                       </td>

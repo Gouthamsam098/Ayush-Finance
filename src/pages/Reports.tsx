@@ -33,7 +33,7 @@ export default function Reports() {
     { key: 'expenses', label: 'Expenses', icon: Wallet },
   ];
 
-  const custName = (id: string) => d.customers.find((c) => c.id === id)?.name ?? '—';
+  const custName = (id: number) => d.customers.find((c) => c.id === id)?.name ?? '—';
 
   const exportCsv = () => {
     let rows: (string | number)[][] = [];

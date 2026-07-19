@@ -3,8 +3,14 @@ export const inrShort = (n: number) =>
   n >= 1e7 ? '₹' + (n / 1e7).toFixed(2) + ' Cr'
   : n >= 1e5 ? '₹' + (n / 1e5).toFixed(2) + ' L'
   : '₹' + Math.round(n).toLocaleString('en-IN');
-/** Fixed term (in days) for Daily Collection loans. */
+/** Fallback term (days) for a Daily Collection loan when principal/daily aren't
+ *  both known yet (e.g. an old record with no daily amount). Real term derives
+ *  from the money — see dailyCollectionTerm. */
 export const DAILY_TERM = 100;
+/** Daily Collection term = number of days to repay the full principal at the
+ *  chosen daily amount = ceil(principal ÷ daily). Returns 0 if daily is unset. */
+export const dailyCollectionTerm = (principal: number, daily: number) =>
+  daily > 0 ? Math.ceil(principal / daily) : 0;
 /** Format a Date as a local-calendar YYYY-MM-DD string (no UTC shift). */
 export const isoLocal = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

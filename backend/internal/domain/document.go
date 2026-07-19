@@ -39,8 +39,8 @@ func IsAllowedDocumentMIME(mime string) bool { return allowedDocMIME[mime] }
 // Document is a stored KYC file. Content holds the raw bytes; it is loaded only
 // when the file is downloaded, never when listing metadata.
 type Document struct {
-	ID         string
-	CustomerID string
+	ID         int64
+	CustomerID int64
 	Type       DocumentType
 	FileName   string
 	MimeType   string

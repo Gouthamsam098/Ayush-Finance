@@ -19,7 +19,7 @@ const monthLabel = (key: string) => { const [y, m] = key.split('-').map(Number);
 const monthsAgoISO = (n: number) => { const d = new Date(); d.setMonth(d.getMonth() - n); return isoLocal(d); };
 const yearsAgoISO = (n: number) => { const d = new Date(); d.setFullYear(d.getFullYear() - n); return isoLocal(d); };
 
-interface EForm { id?: string; date: string; category: string; subCategory: string; name: string; amount: string; mode: PayMode; remarks: string; }
+interface EForm { id?: number; date: string; category: string; subCategory: string; name: string; amount: string; mode: PayMode; remarks: string; }
 const blank = (): EForm => ({ date: todayISO(), category: EXPENSE_CATEGORIES[0], subCategory: '', name: '', amount: '', mode: 'CASH', remarks: '' });
 
 export default function Expenses() {

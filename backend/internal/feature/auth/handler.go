@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/anush-capitals/lms-backend/internal/domain"
@@ -113,14 +114,18 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 // userResponse is the public projection of a user. It deliberately omits
 // password_hash and any other sensitive field.
 type userResponse struct {
-	ID         string `json:"id"`
+	ID         int64  `json:"id"`
 	Email      string `json:"email"`
 	FullName   string `json:"full_name"`
 	MFAEnabled bool   `json:"mfa_enabled"`
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
-	userID := httpx.UserID(r.Context())
+	userID, err := strconv.ParseInt(httpx.UserID(r.Context()), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+		return
+	}
 	user, err := h.service.CurrentUser(r.Context(), userID)
 	if err != nil {
 		httpx.Error(w, r, err)

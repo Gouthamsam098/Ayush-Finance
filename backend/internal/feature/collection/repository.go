@@ -1,0 +1,222 @@
+// Package collection implements loan repayment recording (create, list per
+// loan, cross-loan daily feed, edit, soft-delete) across repository -> service
+// -> handler layers. The collected total is always SUM(amount) from this table
+// — never stored denormalised — so the loan's outstanding stays truthful.
+package collection
+
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"github.com/anush-capitals/lms-backend/internal/domain"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Repository provides collection data access. Every query is parameterised and
+// excludes soft-deleted rows.
+type Repository struct {
+	pool *pgxpool.Pool
+}
+
+func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+
+const collectionColumns = `
+	id, receipt_no, loan_id, date, amount, mode, kind, remarks, posted_by, created_at, updated_at`
+
+// Create inserts a payment, minting its RCPT-###### number from the sequence in
+// the same statement so the number is allocated atomically. Amount is stored as
+// whole rupees (see domain.Paise.DBRupees).
+func (r *Repository) Create(ctx context.Context, in domain.CollectionInput, postedBy *int64) (*domain.Collection, error) {
+	const query = `
+		INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, posted_by, posted_at)
+		VALUES ('RCPT-' || nextval('receipt_no_seq'), $1, $2, $3, $4, $5, $6, $7, now())
+		RETURNING ` + collectionColumns
+	row := r.pool.QueryRow(ctx, query,
+		in.LoanID, in.Date, in.Amount.DBRupees(), string(in.Mode), string(in.Kind), nilIfEmpty(in.Remarks), postedBy)
+	c, err := scanCollection(row)
+	if err != nil {
+		return nil, translateWriteError(err)
+	}
+	return c, nil
+}
+
+// FindByID returns a non-deleted collection or a NotFound error.
+func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.Collection, error) {
+	const query = `SELECT ` + collectionColumns + ` FROM collections WHERE id = $1 AND deleted_at IS NULL`
+	c, err := scanCollection(r.pool.QueryRow(ctx, query, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.NewNotFound("collection")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// ListByLoan returns every payment for a loan, newest first (the ledger).
+func (r *Repository) ListByLoan(ctx context.Context, loanID int64) ([]*domain.Collection, error) {
+	const query = `SELECT ` + collectionColumns + `
+		FROM collections WHERE loan_id = $1 AND deleted_at IS NULL
+		ORDER BY date DESC, id DESC`
+	return r.queryList(ctx, query, loanID)
+}
+
+// ListByDate returns every payment recorded on a given calendar day across all
+// loans (the daily collection feed). An zero date returns the most recent
+// payments overall.
+func (r *Repository) ListByDate(ctx context.Context, date string, limit int) ([]*domain.Collection, error) {
+	if date != "" {
+		const q = `SELECT ` + collectionColumns + `
+			FROM collections WHERE date = $1 AND deleted_at IS NULL
+			ORDER BY id DESC LIMIT $2`
+		return r.queryList(ctx, q, date, limit)
+	}
+	const q = `SELECT ` + collectionColumns + `
+		FROM collections WHERE deleted_at IS NULL
+		ORDER BY date DESC, id DESC LIMIT $1`
+	return r.queryList(ctx, q, limit)
+}
+
+// SumByLoan returns the collected total for a single loan, split into interest
+// and principal buckets (so interest-only loans can settle principal separately).
+func (r *Repository) SumByLoan(ctx context.Context, loanID int64) (domain.Collected, error) {
+	var interest, principal int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(amount) FILTER (WHERE kind = 'INTEREST'), 0),
+			COALESCE(SUM(amount) FILTER (WHERE kind = 'PRINCIPAL'), 0)
+		FROM collections WHERE loan_id = $1 AND deleted_at IS NULL`, loanID).
+		Scan(&interest, &principal)
+	if err != nil {
+		return domain.Collected{}, err
+	}
+	return domain.Collected{
+		Interest:  domain.PaiseFromDBRupees(interest),
+		Principal: domain.PaiseFromDBRupees(principal),
+	}, nil
+}
+
+// SumByLoans returns split collected totals keyed by loan ID for the given
+// loans, in one round-trip — used to render outstanding across a loan list
+// without an N+1 query.
+func (r *Repository) SumByLoans(ctx context.Context, loanIDs []int64) (map[int64]domain.Collected, error) {
+	out := make(map[int64]domain.Collected, len(loanIDs))
+	if len(loanIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT loan_id,
+			COALESCE(SUM(amount) FILTER (WHERE kind = 'INTEREST'), 0),
+			COALESCE(SUM(amount) FILTER (WHERE kind = 'PRINCIPAL'), 0)
+		FROM collections WHERE loan_id = ANY($1) AND deleted_at IS NULL
+		GROUP BY loan_id`, loanIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, interest, principal int64
+		if err := rows.Scan(&id, &interest, &principal); err != nil {
+			return nil, err
+		}
+		out[id] = domain.Collected{
+			Interest:  domain.PaiseFromDBRupees(interest),
+			Principal: domain.PaiseFromDBRupees(principal),
+		}
+	}
+	return out, rows.Err()
+}
+
+// Update rewrites an existing payment's editable fields (loan_id is immutable).
+func (r *Repository) Update(ctx context.Context, id int64, in domain.CollectionInput) (*domain.Collection, error) {
+	const query = `
+		UPDATE collections SET
+			date = $2, amount = $3, mode = $4, kind = $5, remarks = $6, updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING ` + collectionColumns
+	c, err := scanCollection(r.pool.QueryRow(ctx, query,
+		id, in.Date, in.Amount.DBRupees(), string(in.Mode), string(in.Kind), nilIfEmpty(in.Remarks)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.NewNotFound("collection")
+	}
+	if err != nil {
+		return nil, translateWriteError(err)
+	}
+	return c, nil
+}
+
+// SoftDelete marks a payment deleted; NotFound if missing or already deleted.
+func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE collections SET deleted_at = now(), updated_at = now()
+		 WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.NewNotFound("collection")
+	}
+	return nil
+}
+
+// ── scanning + helpers ──
+
+type rowScanner interface{ Scan(dest ...any) error }
+
+func (r *Repository) queryList(ctx context.Context, query string, args ...any) ([]*domain.Collection, error) {
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*domain.Collection
+	for rows.Next() {
+		c, err := scanCollection(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func scanCollection(row rowScanner) (*domain.Collection, error) {
+	var c domain.Collection
+	var mode, kind string
+	var amount int64
+	err := row.Scan(
+		&c.ID, &c.ReceiptNo, &c.LoanID, &c.Date, &amount, &mode, &kind,
+		&c.Remarks, &c.PostedBy, &c.CreatedAt, &c.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	c.Mode = domain.PayMode(mode)
+	c.Kind = domain.CollectionKind(kind)
+	c.Amount = domain.PaiseFromDBRupees(amount)
+	return &c, nil
+}
+
+func nilIfEmpty(s *string) *string {
+	if s == nil || strings.TrimSpace(*s) == "" {
+		return nil
+	}
+	t := strings.TrimSpace(*s)
+	return &t
+}
+
+// translateWriteError maps FK / check violations to friendly errors.
+func translateWriteError(err error) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "collections_loan_id_fkey"):
+		return domain.NewValidation("Loan does not exist", map[string]string{"loan_id": "Unknown loan"})
+	case strings.Contains(msg, "collections_amount_positive"):
+		return domain.NewValidation("Amount must be greater than 0", map[string]string{"amount": "Too small"})
+	case strings.Contains(msg, "collections_mode_valid"):
+		return domain.NewValidation("Invalid payment mode", map[string]string{"mode": "Unknown mode"})
+	}
+	return err
+}

@@ -22,6 +22,16 @@ func RupeesToPaise(rupees float64) Paise {
 // feed this back into calculations.
 func (p Paise) Rupees() float64 { return float64(p) / 100 }
 
+// DBRupees returns the amount as a whole-rupee integer for storage. Money in
+// this system is always whole rupees (validated at input), so this division is
+// exact — no paise are ever lost. The database therefore stores the human
+// rupee amount (₹1,00,000 → 100000), not paise. Internal math still uses Paise.
+func (p Paise) DBRupees() int64 { return int64(p) / 100 }
+
+// PaiseFromDBRupees converts a whole-rupee value read from the database back
+// into internal Paise. The inverse of DBRupees.
+func PaiseFromDBRupees(rupees int64) Paise { return Paise(rupees * 100) }
+
 // Add returns p + other.
 func (p Paise) Add(other Paise) Paise { return p + other }
 

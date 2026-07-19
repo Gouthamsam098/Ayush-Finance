@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useData, LOAN_LABELS, isDailyLoan, type Loan, type LoanType } from '@/mock/DataContext';
+import { useEffect, useMemo, useState } from 'react';
+import { useData, LOAN_LABELS, isDailyLoan, isEmiLoan, isInstalmentLoan, isInterestOnly, emiFor, upfrontDeduction, DAILY_COLLECTION_RETAINED_MONTHS, type Loan, type LoanType } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -10,9 +10,14 @@ import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader'
 import { inr, inrShort, fmtDate, todayISO, addDays, DAILY_TERM } from '@/lib/format';
 import { emptyNum, matchNum, numActive, type NumFilter } from '@/lib/customerFilters';
 import { FilterCard, SegGroup, Seg, NumFilterRow, MatchPreview } from '@/components/ui/filter-kit';
+import { StatCard } from '@/components/ui/stat-card';
+import { config } from '@/lib/config';
+import { ApiError } from '@/lib/api';
+import { loanApi } from '@/services/loanApi';
 import {
-  Search, Plus, FileText, Pencil, Trash2, CheckCircle2, SlidersHorizontal,
+  Search, Plus, FileText, Pencil, Trash2, CheckCircle2, SlidersHorizontal, MoreVertical,
   Wallet, AlertTriangle, CalendarClock, Layers, Lock, RotateCcw, ArrowUpDown, Activity, IndianRupee,
+  User, Calendar, Car, Phone, Calculator, Percent, X,
 } from 'lucide-react';
 import { LedgerDialog } from '@/components/LedgerDialog';
 
@@ -20,12 +25,22 @@ const TYPE_OPTS = (Object.keys(LOAN_LABELS) as LoanType[]).map((v) => ({ value: 
 
 // Type chip colors — tuned for a light canvas (from the approved design).
 const TYPE_META: Record<LoanType, { bg: string; fg: string; bd: string; dot: string }> = {
-  DAILY_COLLECTION: { bg: '#e7f6ef', fg: '#15803d', bd: '#c3ead6', dot: '#22c55e' },
-  MONTHLY_INTEREST: { bg: '#e8f0fe', fg: '#1d4ed8', bd: '#cadffb', dot: '#3b82f6' },
-  DAILY_INTEREST:   { bg: '#f3ebfd', fg: '#7c3aed', bd: '#e0cffb', dot: '#a855f7' },
-  VEHICLE:          { bg: '#fdf3e0', fg: '#b45309', bd: '#f5e0b8', dot: '#f59e0b' },
-  FLEXIBLE:         { bg: '#eceefe', fg: '#4f46e5', bd: '#d5d9fb', dot: '#818cf8' },
-  PROPERTY:         { bg: '#fdece2', fg: '#c2410c', bd: '#f7d5c1', dot: '#f97316' },
+  DAILY_COLLECTION:   { bg: '#e7f6ef', fg: '#15803d', bd: '#c3ead6', dot: '#22c55e' },
+  VEHICLE:            { bg: '#fdf3e0', fg: '#b45309', bd: '#f5e0b8', dot: '#f59e0b' },
+  PROPERTY:           { bg: '#fdece2', fg: '#c2410c', bd: '#f7d5c1', dot: '#f97316' },
+  DAILY_INTEREST:     { bg: '#f3ebfd', fg: '#7c3aed', bd: '#e0cffb', dot: '#a855f7' },
+  MONTHLY_INTEREST:   { bg: '#e0f2f1', fg: '#0f766e', bd: '#b8e0dc', dot: '#14b8a6' },
+  FLEXIBLE:           { bg: '#eceefe', fg: '#4f46e5', bd: '#d5d9fb', dot: '#818cf8' },
+};
+
+// One-line plain-English explanation of each product's economics.
+const TYPE_EXPLAINER: Record<LoanType, string> = {
+  DAILY_COLLECTION: '3 months of interest retained upfront (net = principal − 3× interest); daily instalments repay the full principal. Term = principal ÷ daily amount.',
+  VEHICLE: 'Vehicle-secured EMI. Full principal disbursed; repaid in equal monthly EMIs including interest.',
+  PROPERTY: 'Property-secured EMI. Full principal disbursed; repaid in equal monthly EMIs including interest.',
+  DAILY_INTEREST: 'Interest-only. Customer pays the interest amount every day; the principal stays until separately settled.',
+  MONTHLY_INTEREST: 'Interest-only. Customer pays the interest amount every month; the principal stays until separately settled.',
+  FLEXIBLE: 'Custom term — one interest cycle over the chosen number of days; principal settled at the end.',
 };
 
 /** Signed calendar days from today to a YYYY-MM-DD date (negative = past). */
@@ -36,7 +51,7 @@ const daysUntil = (iso: string) => {
 };
 
 interface LoanForm {
-  id?: string; customerId: string; type: LoanType; principal: string; rate: string; loanDate: string;
+  id?: number; customerId: string; type: LoanType; principal: string; rate: string; loanDate: string;
   contact: string; remarks: string; dailyAmount: string; numDays: string;
   vehicleNumber: string; vehicleBrand: string; vehicleName: string;
 }
@@ -44,6 +59,101 @@ const blank = (): LoanForm => ({
   customerId: '', type: 'DAILY_COLLECTION', principal: '', rate: '', loanDate: todayISO(),
   contact: '', remarks: '', dailyAmount: '', numDays: '30', vehicleNumber: '', vehicleBrand: '', vehicleName: '',
 });
+
+/** Per-field validation errors for the loan form. */
+type LoanErrors = Partial<Record<keyof LoanForm, string>>;
+
+/** Map the backend's snake_case field errors onto the form's camelCase fields. */
+const API_FIELD_TO_FORM: Record<string, keyof LoanForm> = {
+  customer_id: 'customerId', type: 'type', principal: 'principal', rate: 'rate',
+  loan_date: 'loanDate', num_days: 'numDays', contact: 'contact', remarks: 'remarks',
+  vehicle_number: 'vehicleNumber', vehicle_brand: 'vehicleBrand', vehicle_name: 'vehicleName',
+};
+function mapLoanApiErrors(e: unknown): LoanErrors {
+  if (!(e instanceof ApiError) || !e.fields) return {};
+  const out: LoanErrors = {};
+  for (const [k, msg] of Object.entries(e.fields)) {
+    const formKey = API_FIELD_TO_FORM[k];
+    if (formKey) out[formKey] = msg;
+  }
+  return out;
+}
+
+// ── Industrial-standard field limits ──
+const MAX_PRINCIPAL = 100_000_000;   // ₹10 crore sanity cap
+const MIN_PRINCIPAL = 100;           // ₹100 floor
+const MAX_RATE = 100;                // percent
+const MAX_EMI_MONTHS = 360;          // 30 years
+const MAX_FLEX_DAYS = 3650;          // ~10 years
+const MOBILE_RE = /^[6-9]\d{9}$/;    // Indian mobile
+const VEHICLE_RE = /^[A-Z]{2}[ -]?\d{1,2}[ -]?[A-Z]{0,3}[ -]?\d{1,4}$/i; // lenient Indian plate
+const MAX_REMARKS = 300;
+
+const isIntStr = (s: string) => /^\d+$/.test(s.trim());
+const isNumStr = (s: string) => /^\d+(\.\d+)?$/.test(s.trim());
+
+/** Validate the whole loan form to industrial standard. Returns per-field errors. */
+function validateLoanForm(f: LoanForm): LoanErrors {
+  const e: LoanErrors = {};
+  const P = Number(f.principal);
+  const R = Number(f.rate);
+  const emi = isEmiLoan(f.type);
+  const flex = f.type === 'FLEXIBLE';
+
+  // Customer
+  if (!f.customerId) e.customerId = 'Select a customer';
+
+  // Principal — whole rupees only (no paise/decimals).
+  if (!f.principal.trim()) e.principal = 'Principal is required';
+  else if (!isNumStr(f.principal)) e.principal = 'Enter a valid amount';
+  else if (!isIntStr(f.principal)) e.principal = 'Enter a whole rupee amount';
+  else if (P < MIN_PRINCIPAL) e.principal = `Minimum ${inr(MIN_PRINCIPAL)}`;
+  else if (P > MAX_PRINCIPAL) e.principal = `Cannot exceed ${inrShort(MAX_PRINCIPAL)}`;
+
+  // Rate — up to 2 decimals (0.25, 1.5, 12).
+  if (!f.rate.trim()) e.rate = 'Interest rate is required';
+  else if (!isNumStr(f.rate)) e.rate = 'Enter a valid rate';
+  else if (R <= 0) e.rate = 'Rate must be greater than 0';
+  else if (R > MAX_RATE) e.rate = `Rate cannot exceed ${MAX_RATE}%`;
+  else if (Math.round(R * 100) !== R * 100) e.rate = 'Rate can have at most 2 decimals';
+
+  // Tenure — EMI (months) / Flexible (days)
+  if (emi) {
+    if (!f.numDays.trim()) e.numDays = 'Tenure is required';
+    else if (!isIntStr(f.numDays)) e.numDays = 'Enter whole months';
+    else if (Number(f.numDays) < 1) e.numDays = 'At least 1 month';
+    else if (Number(f.numDays) > MAX_EMI_MONTHS) e.numDays = `Max ${MAX_EMI_MONTHS} months`;
+  } else if (flex) {
+    if (!f.numDays.trim()) e.numDays = 'Number of days is required';
+    else if (!isIntStr(f.numDays)) e.numDays = 'Enter whole days';
+    else if (Number(f.numDays) < 1) e.numDays = 'At least 1 day';
+    else if (Number(f.numDays) > MAX_FLEX_DAYS) e.numDays = `Max ${MAX_FLEX_DAYS} days`;
+  }
+
+  // Loan date — required, valid, not future, not absurdly old
+  if (!f.loanDate) e.loanDate = 'Loan date is required';
+  else {
+    const dd = daysUntil(f.loanDate);
+    if (Number.isNaN(dd)) e.loanDate = 'Invalid date';
+    else if (dd > 0) e.loanDate = 'Loan date cannot be in the future';
+    else if (dd < -3650) e.loanDate = 'Date is too far in the past';
+  }
+
+  // Contact — optional, but must be a valid mobile if provided
+  if (f.contact.trim() && !MOBILE_RE.test(f.contact.trim()))
+    e.contact = 'Enter a valid 10-digit mobile';
+
+  // Vehicle number — required for Vehicle loans, format-checked
+  if (f.type === 'VEHICLE') {
+    if (!f.vehicleNumber.trim()) e.vehicleNumber = 'Vehicle number is required';
+    else if (!VEHICLE_RE.test(f.vehicleNumber.trim())) e.vehicleNumber = 'Format e.g. KL-07-AB-1234';
+  }
+
+  // Remarks — optional, length-capped
+  if (f.remarks.trim().length > MAX_REMARKS) e.remarks = `Max ${MAX_REMARKS} characters`;
+
+  return e;
+}
 
 type Urgency = 'all' | 'overdue' | 'soon';
 type SortMode = 'urgency' | 'amount';
@@ -70,21 +180,108 @@ export default function Loans() {
   const [ledger, setLedger] = useState<Loan | null>(null);
   const [confirm, setConfirm] = useState<Loan | null>(null);
   const [closeTarget, setCloseTarget] = useState<Loan | null>(null);
+  const [menuFor, setMenuFor] = useState<number | null>(null); // row whose ⋮ menu is open
   const [urgency, setUrgency] = useState<Urgency>('all');
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<LoanFilters>(defaultLoanFilters);
   const [draft, setDraft] = useState<LoanFilters>(defaultLoanFilters);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [errors, setErrors] = useState<LoanErrors>({});
 
-  const custName = (id: string) => d.customers.find((c) => c.id === id)?.name ?? '—';
-  const interest = form ? Math.round(((Number(form.principal) || 0) * (Number(form.rate) || 0)) / 100) : 0;
-  const deduction = interest;
-  const netDisbursed = Math.max(0, (form ? Number(form.principal) || 0 : 0) - deduction);
-  const set = <K extends keyof LoanForm>(k: K, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
+  const custName = (id: number) => d.customers.find((c) => c.id === id)?.name ?? '—';
+  const set = <K extends keyof LoanForm>(k: K, v: string) => {
+    setForm((f) => (f ? { ...f, [k]: v } : f));
+    setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e)); // clear this field's error as the user edits
+  };
 
-  /** Effective next-due date for a loan (daily loans derive it from collections). */
-  const nextDueOf = (l: Loan): string | null =>
-    isDailyLoan(l.type) ? d.nextDueForDaily(l) : l.nextDueDate ?? null;
+  // ── Live loan preview — the single source of truth for every auto-calc shown
+  //    in the form. Mirrors backend/internal/domain/loan.go economics exactly. ──
+  const preview = useMemo(() => {
+    const principal = form ? Number(form.principal) || 0 : 0;
+    const rate = form ? Number(form.rate) || 0 : 0;
+    const type = form?.type ?? 'DAILY_COLLECTION';
+    const loanDate = form?.loanDate ?? todayISO();
+
+    const instalment = isInstalmentLoan(type);      // Daily Collection — upfront interest
+    const emi = isEmiLoan(type);                     // Vehicle / Property — flat-interest EMI
+    const interestOnly = isInterestOnly(type);       // Daily / Monthly Interest + Flexible
+    // Interest cadence in days: Daily=1, Flexible=entered days, else 30.
+    const cadenceDays = isDailyLoan(type) || type === 'DAILY_INTEREST' ? 1
+      : type === 'FLEXIBLE' ? (form ? Number(form.numDays) || 30 : 30)
+      : 30;
+
+    // Overall interest = round(principal × rate / 100), once. Upfront deduction:
+    // Daily Collection retains 3× interest; EMI / interest-only / Flexible take nothing.
+    const interest = Math.round((principal * rate) / 100);
+    const deduction = upfrontDeduction(type, interest);
+    const netDisbursed = Math.max(0, principal - deduction);
+
+    // Term, per-period amount, EMI.
+    //  • DAILY_COLLECTION: term FIXED 100 days; daily AUTO = principal ÷ 100.
+    //  • EMI (Vehicle/Property): tenure = entered months; EMI AUTO = (principal + interest) ÷ months.
+    //  • Flexible: user-entered day-count. Interest-only: OPEN-ENDED.
+    const months = form ? Number(form.numDays) || 0 : 0;
+    const emiAmount = emi ? emiFor(principal, interest, months) : 0;
+    const daily = type === 'DAILY_COLLECTION' ? (principal > 0 ? Math.round(principal / DAILY_TERM) : 0)
+      : emi ? emiAmount
+      : 0;
+    const term = type === 'DAILY_COLLECTION' ? (principal > 0 ? DAILY_TERM : 0)
+      : type === 'FLEXIBLE' ? months
+      : emi ? months
+      : 0;
+    const numDays = term;
+
+    // First due + maturity. Collection starts the DAY AFTER disbursement, so
+    // with `term` instalments the last one falls on start + term × cadence.
+    //  • Daily Collection: 1st = +1 day, last (100th) = start + 100 days.
+    //  • EMI: 1st = +30 days, last (nth) = start + term × 30 days.
+    //  • Flexible: single cycle ends at start + term days.
+    const firstDue = addDays(loanDate, cadenceDays); // daily +1, monthly +30, Flexible +N, EMI +30
+    const maturity = instalment && term > 0 ? addDays(loanDate, term * cadenceDays)  // daily: +term days
+      : emi && term > 0 ? addDays(loanDate, term * 30)                  // EMI: +term months
+      : null; // interest-only (incl. Flexible) → open-ended
+
+    // Expected total collection: Daily Collection repays principal; EMI repays
+    // principal + interest; interest-accruing (incl. Flexible) is open-ended → null.
+    const totalRepayable = instalment ? principal
+      : emi ? principal + interest
+      : null;
+
+    // Per-period figure label/value.
+    const perLabel = cadenceDays === 1 ? 'Per day' : emi ? 'EMI / month'
+      : type === 'MONTHLY_INTEREST' ? 'Per month'
+      : type === 'FLEXIBLE' ? `Every ${cadenceDays} days` : 'One cycle';
+    const perValue = interestOnly ? interest : instalment ? daily : emi ? emiAmount : interest;
+
+    // Effective annualized rate (display-only).
+    const annualPct = interestOnly
+      ? rate * (365 / cadenceDays)
+      : emi
+        ? (principal > 0 && months > 0 ? (interest / principal) * 100 * (12 / months) : 0)
+        : (() => {
+            const termDaysTotal = term * cadenceDays;
+            return principal > 0 && termDaysTotal > 0 ? (interest / principal) * 100 * (365 / termDaysTotal) : 0;
+          })();
+
+    return { principal, rate, interest, deduction, netDisbursed, numDays, emi, months, emiAmount, instalment, interestOnly, cadenceDays, startDate: loanDate, firstDue, maturity, totalRepayable, perLabel, perValue, annualPct, type, daily };
+  }, [form]);
+  const { interest, deduction, netDisbursed } = preview;
+
+  /** Effective next-due date — the live amount-based figure for EVERY loan type
+   *  (mirrors backend Loan.NextDue): advances only when instalments/periods are
+   *  actually funded, so overdue detection is truthful in both mock and API mode. */
+  const nextDueOf = (l: Loan): string | null => d.nextDueFor(l);
+
+  /** End/maturity date. Collection starts the day after disbursement, so the
+   *  last of `term` instalments lands on start + term × cadence. Interest-accruing
+   *  loans (Daily/Monthly Interest, Flexible) are open-ended → null. */
+  const endDateOf = (l: Loan): string | null => {
+    if (isInterestOnly(l.type)) return null; // includes Flexible (recurring interest, no fixed end)
+    if (isInstalmentLoan(l.type) && l.numDays) return addDays(l.loanDate, l.numDays); // daily: +term days
+    if (isEmiLoan(l.type) && l.numDays) return addDays(l.loanDate, l.numDays * 30);    // EMI: +term months
+    return null;
+  };
 
   /** Signed days until due; null when there is no upcoming due (completed/closed). */
   const dueInDaysOf = (l: Loan): number | null => {
@@ -139,38 +336,84 @@ export default function Loans() {
   const openFilters = () => { setDraft(filters); setFilterOpen(true); };
   const applyDraft = () => { setFilters(draft); setFilterOpen(false); };
 
-  const save = () => {
+  const save = async () => {
     if (!form) return;
-    if (!form.customerId) { toast('Select a customer', 'error'); return; }
-    if (!Number(form.principal) || (form.type !== 'DAILY_INTEREST' && !form.rate)) { toast('Principal and interest rate are required', 'error'); return; }
-    if (isDailyLoan(form.type) && !Number(form.dailyAmount)) { toast('Enter the daily collection amount', 'error'); return; }
-    if (form.type === 'FLEXIBLE' && !(Number(form.numDays) > 0)) { toast('Enter a valid number of days', 'error'); return; }
-    const monthly = form.type === 'MONTHLY_INTEREST' || form.type === 'VEHICLE' || form.type === 'PROPERTY';
+    // Industrial-standard validation — every field asserted before save.
+    const found = validateLoanForm(form);
+    if (Object.keys(found).length > 0) {
+      setErrors(found);
+      toast('Please fix the highlighted fields', 'error');
+      return;
+    }
+    setErrors({});
+    const instalment = isInstalmentLoan(form.type);
+    const interestOnly = isInterestOnly(form.type);
+    const emi = isEmiLoan(form.type);
+    const principalNum = Number(form.principal);
+    const monthsNum = Number(form.numDays);
+    const cadenceDays = isDailyLoan(form.type) || form.type === 'DAILY_INTEREST' ? 1 : 30;
+    const autoInterest = Math.round((principalNum * Number(form.rate)) / 100);
+    // Term:
+    //  • DAILY_COLLECTION: fixed 100-day term.  • EMI: tenure in months.
+    //  • Flexible: entered days.  • Interest-only: open-ended (no term).
+    const term = form.type === 'DAILY_COLLECTION' ? DAILY_TERM
+      : form.type === 'FLEXIBLE' ? monthsNum
+      : emi ? monthsNum
+      : undefined;
+    // dailyAmount = per-period amount: auto principal÷100 for Daily Collection,
+    // auto EMI for Vehicle/Property, auto interest for interest-only.
+    const dailyAmount = form.type === 'DAILY_COLLECTION' ? Math.round(principalNum / DAILY_TERM)
+      : emi ? emiFor(principalNum, autoInterest, monthsNum)
+      : interestOnly ? autoInterest
+      : undefined;
     const payload = {
-      customerId: form.customerId, type: form.type, principal: Number(form.principal), rate: form.type === 'DAILY_INTEREST' ? 0 : Number(form.rate),
+      customerId: Number(form.customerId), type: form.type, principal: principalNum, rate: Number(form.rate),
       loanDate: form.loanDate, contact: form.contact || undefined, remarks: form.remarks || undefined,
-      dailyAmount: isDailyLoan(form.type) ? Number(form.dailyAmount) : undefined,
-      numDays: form.type === 'FLEXIBLE' ? Number(form.numDays) : isDailyLoan(form.type) ? DAILY_TERM : undefined,
-      nextDueDate: form.type === 'FLEXIBLE' ? addDays(form.loanDate, Number(form.numDays))
-        : isDailyLoan(form.type) ? addDays(form.loanDate, 1)
-        : monthly ? addDays(form.loanDate, 30) : undefined,
+      dailyAmount,
+      numDays: term,
+      nextDueDate: form.type === 'FLEXIBLE' ? addDays(form.loanDate, monthsNum)
+        : instalment || interestOnly || emi ? addDays(form.loanDate, cadenceDays) : undefined,
       vehicleNumber: form.type === 'VEHICLE' ? form.vehicleNumber : undefined,
       vehicleBrand: form.type === 'VEHICLE' ? form.vehicleBrand : undefined,
       vehicleName: form.type === 'VEHICLE' ? form.vehicleName : undefined,
     };
-    if (form.id) { d.updateLoan(form.id, payload); toast('Loan updated'); }
-    else { d.addLoan(payload); toast('Loan created'); }
+    // In API mode call the backend directly and AWAIT it so failures surface
+    // (the server derives all money math and validates the date/fields). Only
+    // toast success and close the form when the write actually succeeds.
+    if (config.useApi) {
+      try {
+        if (form.id) {
+          const updated = await loanApi.update(form.id, payload);
+          d.updateLoanRecord(updated);
+          toast('Loan updated');
+        } else {
+          const created = await loanApi.create(payload);
+          d.addLoanRecord(created);
+          toast('Loan created');
+        }
+      } catch (e) {
+        setErrors(mapLoanApiErrors(e));
+        toast(e instanceof ApiError ? e.message : 'Failed to save loan', 'error');
+        return; // keep the form open so the user can correct it
+      }
+    } else {
+      if (form.id) { d.updateLoan(form.id, payload); toast('Loan updated'); }
+      else { d.addLoan(payload); toast('Loan created'); }
+    }
     setForm(null);
   };
 
-  const editLoan = (l: Loan) => setForm({
-    id: l.id, customerId: l.customerId, type: l.type, principal: String(l.principal), rate: String(l.rate), loanDate: l.loanDate,
-    contact: l.contact ?? '', remarks: l.remarks ?? '', dailyAmount: String(l.dailyAmount ?? ''), numDays: String(l.numDays ?? 30),
-    vehicleNumber: l.vehicleNumber ?? '', vehicleBrand: l.vehicleBrand ?? '', vehicleName: l.vehicleName ?? '',
-  });
+  const editLoan = (l: Loan) => {
+    setErrors({});
+    setForm({
+      id: l.id, customerId: String(l.customerId), type: l.type, principal: String(l.principal), rate: String(l.rate), loanDate: l.loanDate,
+      contact: l.contact ?? '', remarks: l.remarks ?? '', dailyAmount: String(l.dailyAmount ?? ''), numDays: String(l.numDays ?? 30),
+      vehicleNumber: l.vehicleNumber ?? '', vehicleBrand: l.vehicleBrand ?? '', vehicleName: l.vehicleName ?? '',
+    });
+  };
+  const openCreate = () => { setErrors({}); setForm(blank()); };
 
-  const dailyEnd = form && isDailyLoan(form.type) ? addDays(form.loanDate, DAILY_TERM) : null;
-  const GRID = 'grid grid-cols-[1.4fr_1.3fr_1fr_0.9fr_1.1fr_1.2fr_150px] items-center gap-4';
+  const GRID = 'grid grid-cols-[1.55fr_1.2fr_1fr_0.95fr_1.2fr_1.05fr_1fr_92px] items-center gap-4';
 
   return (
     <div className="flex min-h-full flex-col">
@@ -179,7 +422,7 @@ export default function Loans() {
         icon={<Layers size={20} />}
         title="Loans"
         subtitle={`${stats.count} loans across ${TYPE_OPTS.length} types · automatic interest`}
-        actions={<HeaderPrimaryButton icon={<Plus size={14} />} onClick={() => setForm(blank())}>Create Loan</HeaderPrimaryButton>}
+        actions={<HeaderPrimaryButton icon={<Plus size={14} />} onClick={openCreate}>Create Loan</HeaderPrimaryButton>}
       />
 
       <div className="flex flex-1 flex-col gap-4 p-3.5 sm:px-5">
@@ -246,10 +489,11 @@ export default function Loans() {
           <div>Borrower</div>
           <div>Loan</div>
           <div>Principal</div>
-          <div>Interest</div>
+          <div>Instalment</div>
+          <div>Collected</div>
           <div>Outstanding</div>
-          <div>Next due</div>
-          <div className="text-right">Actions</div>
+          <div>End date</div>
+          <div className="text-right">Status</div>
         </div>
 
         {/* Rows */}
@@ -257,14 +501,23 @@ export default function Loans() {
           {rows.map((l) => {
             const t = TYPE_META[l.type];
             const dd = dueInDaysOf(l);
-            const nd = nextDueOf(l);
+            const endDate = endDateOf(l);
             const closed = l.status !== 'ACTIVE';
+            // Live repayment figures for this row (all real, never fabricated).
+            const rowCollected = d.collectedFor(l.id);
+            const totalPayable = isInstalmentLoan(l.type) ? l.principal
+              : isEmiLoan(l.type) || l.type === 'FLEXIBLE' ? l.principal + l.interest
+              : 0; // interest-only is open-ended — no fixed total, no bar
+            const collectedPct = totalPayable > 0 ? Math.min(100, Math.round((rowCollected / totalPayable) * 100)) : 0;
+            const perSuffix = l.type === 'FLEXIBLE' ? '' : isDailyLoan(l.type) || l.type === 'DAILY_INTEREST' ? '/day' : '/mo';
             return (
               <div
                 key={l.id}
-                className={`${GRID} group rounded-[14px] border-[0.5px] border-slate-200/90 bg-white px-5 py-4 transition-all hover:-translate-y-px hover:border-slate-300 hover:shadow-[0_6px_20px_rgba(30,39,64,.08)] dark:border-white/[.07] dark:bg-surface dark:hover:border-white/[.14] ${closed ? 'opacity-70' : ''}`}
+                className={`${GRID} group rounded-[14px] border-[0.5px] border-slate-200/90 bg-white px-5 py-4 transition-all hover:-translate-y-px hover:border-slate-300 hover:shadow-[0_6px_20px_rgba(30,39,64,.08)] dark:border-white/[.07] dark:bg-surface dark:hover:border-white/[.14] ${
+                  menuFor === l.id ? 'relative z-40' : ''
+                } ${closed && menuFor !== l.id ? 'opacity-70' : ''}`}
               >
-                {/* Borrower */}
+                {/* Borrower — hover reveals the ⋮ actions menu */}
                 <div className="flex min-w-0 items-center gap-3">
                   <div
                     className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl border"
@@ -272,12 +525,39 @@ export default function Loans() {
                   >
                     <span className="h-3 w-3 rounded-full" style={{ background: t.dot }} />
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="truncate text-[15px] font-semibold text-ink">{custName(l.customerId)}</div>
-                    {closed && (
-                      <span className="mt-[3px] inline-block rounded-full border-[0.5px] border-slate-200 bg-slate-100 px-2 py-px text-[10.5px] font-semibold text-slate-500 dark:border-white/10 dark:bg-white/10 dark:text-slate-300">
-                        Closed
-                      </span>
+                  </div>
+                  <div className="relative shrink-0">
+                    <button
+                      onClick={() => setMenuFor(menuFor === l.id ? null : l.id)}
+                      title="Actions" aria-label="Loan actions"
+                      className={`grid h-8 w-8 place-items-center rounded-lg text-muted transition-all hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.08] ${
+                        menuFor === l.id ? 'bg-slate-100 opacity-100 dark:bg-white/[.08]' : 'opacity-0 group-hover:opacity-100 max-lg:opacity-100'
+                      }`}
+                    >
+                      <MoreVertical size={16} />
+                    </button>
+                    {menuFor === l.id && (
+                      <>
+                        {/* click-outside catcher */}
+                        <div className="fixed inset-0 z-40" onClick={() => setMenuFor(null)} />
+                        <div className="absolute left-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900">
+                          <MenuItem icon={<FileText size={14} />} label="Statement" onClick={() => { setMenuFor(null); setLedger(l); }} />
+                          <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { setMenuFor(null); editLoan(l); }} />
+                          {l.status === 'ACTIVE' ? (
+                            <MenuItem icon={<CheckCircle2 size={14} />} label="Close loan" onClick={() => {
+                              setMenuFor(null);
+                              const outstanding = d.outstandingFor(l);
+                              if (outstanding > 0) { toast(`Cannot close — outstanding balance of ${inr(outstanding)} remains`, 'error'); return; }
+                              setCloseTarget(l);
+                            }} />
+                          ) : (
+                            <MenuItem icon={<RotateCcw size={14} />} label="Reopen loan" onClick={() => { setMenuFor(null); d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }} />
+                          )}
+                          <MenuItem danger icon={<Trash2 size={14} />} label="Delete" onClick={() => { setMenuFor(null); setConfirm(l); }} />
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
@@ -291,47 +571,52 @@ export default function Loans() {
                 {/* Principal */}
                 <div className="text-[14.5px] tabular-nums text-ink/75">{inr(l.principal)}</div>
 
-                {/* Interest */}
-                <div className="text-[14.5px] font-semibold tabular-nums text-[#15803d] dark:text-emerald-400">{inr(l.interest)}</div>
+                {/* Instalment (per-period amount) */}
+                <div className="tabular-nums">
+                  <span className="text-[14.5px] font-semibold text-ink">{l.dailyAmount ? inr(l.dailyAmount) : '—'}</span>
+                  {l.dailyAmount ? <span className="text-[11px] text-muted">{perSuffix}</span> : null}
+                </div>
+
+                {/* Collected + mini progress */}
+                <div className="min-w-0">
+                  <div className="text-[14.5px] font-semibold tabular-nums text-[#15803d] dark:text-emerald-400">{inr(rowCollected)}</div>
+                  {totalPayable > 0 && (
+                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-white/[.08]">
+                      <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: `${collectedPct}%` }} />
+                    </div>
+                  )}
+                </div>
 
                 {/* Outstanding */}
                 <div className="text-[15.5px] font-bold tabular-nums text-ink">{inr(d.outstandingFor(l))}</div>
 
-                {/* Next due + urgency */}
+                {/* End date + urgency */}
                 <div>
                   <div className="text-[14px] tabular-nums text-ink/75">
-                    {nd ? fmtDate(nd) : closed ? '—' : <span className="font-semibold text-success">Completed</span>}
+                    {endDate ? fmtDate(endDate) : isInterestOnly(l.type) ? <span className="text-muted">Open-ended</span> : '—'}
                   </div>
                   {dd != null && <DueBadge days={dd} />}
                 </div>
 
-                {/* Actions */}
-                <div className="flex items-center justify-end gap-1 opacity-60 transition-opacity group-hover:opacity-100">
-                  <button
-                    onClick={() => setLedger(l)}
-                    title="View report"
-                    className="flex items-center gap-1.5 whitespace-nowrap rounded-[9px] border-[0.5px] border-slate-200/80 bg-slate-50 px-[11px] py-[7px] text-[12.5px] font-semibold text-ink/70 transition-colors hover:bg-slate-100 hover:text-indigo-600 dark:border-white/[.08] dark:bg-white/[.04] dark:hover:bg-white/[.08]"
-                  >
-                    <FileText size={14} /> Report
-                  </button>
-                  {l.status === 'ACTIVE' ? (
-                    <IconBtn
-                      title="Close loan"
-                      onClick={() => {
-                        const outstanding = d.outstandingFor(l);
-                        if (outstanding > 0) { toast(`Cannot close — outstanding balance of ${inr(outstanding)} remains`, 'error'); return; }
-                        setCloseTarget(l);
-                      }}
-                    >
-                      <CheckCircle2 size={16} />
-                    </IconBtn>
-                  ) : (
-                    <IconBtn title="Reopen loan" onClick={() => { d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }}>
-                      <RotateCcw size={16} />
-                    </IconBtn>
-                  )}
-                  <IconBtn title="Edit" onClick={() => editLoan(l)}><Pencil size={16} /></IconBtn>
-                  <IconBtn danger title="Delete" onClick={() => setConfirm(l)}><Trash2 size={16} /></IconBtn>
+                {/* Status — Overdue (red) if an active loan's due date has passed,
+                    else Active (green) / Closed (grey). */}
+                <div className="flex justify-end">
+                  {(() => {
+                    const overdue = !closed && dd != null && dd < 0;
+                    // Closed = settled (indigo), Overdue = red, Active = green.
+                    const tone = closed
+                      ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
+                      : overdue
+                        ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+                        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300';
+                    const dot = closed ? 'bg-indigo-500' : overdue ? 'bg-red-500' : 'bg-emerald-500';
+                    return (
+                      <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11.5px] font-bold ${tone}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+                        {closed ? 'Closed' : overdue ? 'Overdue' : 'Active'}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -428,77 +713,133 @@ export default function Loans() {
         </div>
       </Drawer>
 
-      {/* Create / Edit loan */}
-      <Dialog open={!!form} onClose={() => setForm(null)} title={form?.id ? 'Edit loan' : 'Create loan'} subtitle={form && !form.id ? `New number: ${d.nextLoanNo()}` : undefined} wide
-        footer={<><Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button><Button onClick={save}>{form?.id ? 'Save changes' : 'Create loan'}</Button></>}>
+      {/* Create / Edit loan — card-based drawer */}
+      <Drawer
+        open={!!form}
+        onClose={() => setForm(null)}
+        width="xl"
+        icon={<Layers size={18} />}
+        title={form?.id ? 'Edit loan' : 'Create loan'}
+        subtitle={form && !form.id ? `New loan number: ${d.nextLoanNo()}` : 'Update loan details'}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setSummaryOpen(true)}>
+              <Calculator size={15} /> Preview summary
+            </Button>
+            <Button onClick={save}>{form?.id ? 'Save changes' : 'Create loan'}</Button>
+          </>
+        }
+      >
         {form && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Select label="Customer *" value={form.customerId} onChange={(e) => set('customerId', e.target.value)}
-              options={[{ value: '', label: 'Select customer…' }, ...d.customers.map((c) => ({ value: c.id, label: `${c.name} (${c.code})` }))]} />
-            <Select label="Loan type *" value={form.type} onChange={(e) => set('type', e.target.value)} options={TYPE_OPTS} />
-            <Input label="Principal amount *" type="number" value={form.principal} onChange={(e) => set('principal', e.target.value)} />
-            {form.type !== 'DAILY_INTEREST' && (
-              <>
-                <Input label="Interest rate (%) *" type="number" step="0.01" value={form.rate} onChange={(e) => set('rate', e.target.value)} />
-                <div>
-                  <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Interest amount (auto)</span>
-                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-2.5 text-sm font-display font-bold">
-                    <Lock size={13} className="text-muted" /> {inr(interest)}
-                  </div>
-                </div>
-              </>
-            )}
-            {form.type === 'DAILY_COLLECTION' && (
-              <>
-                <div>
-                  <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Deduction (auto)</span>
-                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-2.5 text-sm font-display font-bold">
-                    <Lock size={13} className="text-muted" /> {inr(deduction)}
-                  </div>
-                  <div className="mt-1 text-[10px] text-muted">Interest deducted upfront</div>
-                </div>
-                <div>
-                  <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Net disbursed (auto)</span>
-                  <div className="flex items-center gap-2 rounded-xl border border-success/30 bg-success-50 dark:bg-success/10 px-3.5 py-2.5 text-sm font-display font-bold text-success">
-                    <Lock size={13} /> {inr(netDisbursed)}
-                  </div>
-                  <div className="mt-1 text-[10px] text-muted">Principal − Deduction (given to customer)</div>
-                </div>
-              </>
-            )}
-            <Input label="Loan date" type="date" value={form.loanDate} onChange={(e) => set('loanDate', e.target.value)} />
+          <div className="space-y-4">
+            {/* 1 — Borrower & product */}
+            <FormCard icon={<User size={16} />} title="Borrower & product" color="blue">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Select label="Customer *" value={form.customerId} onChange={(e) => set('customerId', e.target.value)} error={errors.customerId}
+                  options={[{ value: '', label: 'Select customer…' }, ...d.customers.map((c) => ({ value: String(c.id), label: `${c.name} (${c.code})` }))]} />
+                <Select label="Loan type *" value={form.type} onChange={(e) => set('type', e.target.value)} options={TYPE_OPTS} />
+              </div>
+              {/* type explainer chip */}
+              <div className="mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-[12px]"
+                style={{ background: TYPE_META[form.type].bg, color: TYPE_META[form.type].fg }}>
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: TYPE_META[form.type].dot }} />
+                {TYPE_EXPLAINER[form.type]}
+              </div>
+            </FormCard>
 
-            {isDailyLoan(form.type) && (
-              <Input label={form.type === 'DAILY_INTEREST' ? 'Daily interest amount *' : 'Daily collection amount *'} type="number" value={form.dailyAmount} onChange={(e) => set('dailyAmount', e.target.value)} />
-            )}
-            {form.type === 'DAILY_COLLECTION' && (
-              <>
+            {/* 2 — Amounts & interest */}
+            <FormCard icon={<IndianRupee size={16} />} title="Amounts & interest" color="emerald">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input label="Principal amount *" type="number" placeholder="0" value={form.principal} onChange={(e) => set('principal', e.target.value)} error={errors.principal} />
+                <Input label={preview.emi ? 'Interest rate (% overall) *' : 'Interest rate (%) *'} type="number" step="0.01" placeholder="0" value={form.rate} onChange={(e) => set('rate', e.target.value)} error={errors.rate} />
+                {preview.emi && (
+                  <Input label="Tenure (months) *" type="number" min="1" placeholder="e.g. 12" value={form.numDays} onChange={(e) => set('numDays', e.target.value)} error={errors.numDays} />
+                )}
+                {form.type === 'FLEXIBLE' && (
+                  <Input label="Number of days *" type="number" min="1" placeholder="e.g. 30" value={form.numDays} onChange={(e) => set('numDays', e.target.value)} error={errors.numDays} />
+                )}
+              </div>
+
+              {/* auto-calc chips */}
+              <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                {preview.interestOnly ? (
+                  <>
+                    <CalcChip label={`${preview.perLabel} interest (auto)`} value={inr(preview.interest)} hint={`${form.rate || 0}% of principal`} />
+                    <CalcChip label="Principal disbursed" value={inr(netDisbursed)} tone="success" hint="Full amount given" />
+                  </>
+                ) : preview.emi ? (
+                  <>
+                    <CalcChip label="Interest (overall)" value={inr(interest)} hint={`${form.rate || 0}% of principal`} />
+                    <CalcChip label="EMI / month (auto)" value={inr(preview.emiAmount)} hint={`(principal + interest) ÷ ${preview.months || 0}`} />
+                    <CalcChip label="Total payable" value={inr(preview.principal + interest)} hint="principal + interest" />
+                    <CalcChip label="Disbursed" value={inr(netDisbursed)} tone="success" hint="Full principal given" />
+                  </>
+                ) : (
+                  <>
+                    <CalcChip label={isDailyLoan(form.type) ? 'Interest / month (auto)' : 'Interest (auto)'} value={inr(interest)} />
+                    {isDailyLoan(form.type) && <CalcChip label="Daily collection (auto)" value={inr(preview.daily)} hint={`principal ÷ ${DAILY_TERM}`} />}
+                    {preview.instalment && <CalcChip label="Deduction (auto)" value={inr(deduction)} hint={isDailyLoan(form.type) ? `${DAILY_COLLECTION_RETAINED_MONTHS} months × interest, upfront` : 'Deducted upfront'} />}
+                    <CalcChip label="Net disbursed" value={inr(netDisbursed)} tone="success" hint="Given to customer" />
+                  </>
+                )}
+              </div>
+            </FormCard>
+
+            {/* 3 — Schedule */}
+            <FormCard icon={<Calendar size={16} />} title="Schedule" color="violet">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input label="Loan date" type="date" value={form.loanDate} onChange={(e) => set('loanDate', e.target.value)} error={errors.loanDate} />
                 <div>
-                  <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Loan period (fixed)</span>
-                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-2.5 text-sm font-semibold">
-                    <Lock size={13} className="text-muted" /> 100 days
+                  <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Term (auto)</span>
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-semibold dark:border-white/[.08] dark:bg-white/[.04]">
+                    <Lock size={13} className="text-muted" />
+                    {preview.interestOnly
+                      ? 'Open-ended (until settled)'
+                      : preview.numDays > 0
+                        ? `${preview.numDays} ${isDailyLoan(form.type) ? 'days' : preview.emi ? 'months' : 'days'}`
+                        : preview.emi ? 'Enter tenure' : 'Enter principal'}
                   </div>
                 </div>
-                <p className="sm:col-span-2 text-xs text-muted">{inr(deduction)} interest is deducted upfront; the customer receives {inr(netDisbursed)}. Daily collection repays the full principal ({inr(form ? Number(form.principal) || 0 : 0)}) over 100 days{dailyEnd ? ` — ends ${fmtDate(dailyEnd)}` : ''}.</p>
-              </>
-            )}
-            {form.type === 'FLEXIBLE' && (
-              <Input label="Number of days *" type="number" min="1" placeholder="e.g. 10" value={form.numDays} onChange={(e) => set('numDays', e.target.value)} />
-            )}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2.5">
+                <CalcChip label="Start date" value={fmtDate(preview.startDate)} />
+                <CalcChip
+                  label={preview.interestOnly ? 'First due' : preview.maturity ? 'End date' : 'First due'}
+                  value={preview.interestOnly ? fmtDate(preview.firstDue) : fmtDate(preview.maturity ?? preview.firstDue)}
+                />
+              </div>
+            </FormCard>
+
+            {/* 4 — Vehicle details (VEHICLE only) */}
             {form.type === 'VEHICLE' && (
-              <>
-                <Input label="Vehicle number *" value={form.vehicleNumber} onChange={(e) => set('vehicleNumber', e.target.value)} />
-                <Input label="Vehicle brand" value={form.vehicleBrand} onChange={(e) => set('vehicleBrand', e.target.value)} />
-                <Input label="Vehicle name" value={form.vehicleName} onChange={(e) => set('vehicleName', e.target.value)} />
-              </>
+              <FormCard icon={<Car size={16} />} title="Vehicle details" color="amber"
+                hint="Collateral information for the vehicle loan.">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Input label="Vehicle number *" placeholder="KL-07-AB-1234" value={form.vehicleNumber} onChange={(e) => set('vehicleNumber', e.target.value)} error={errors.vehicleNumber} />
+                  <Input label="Vehicle brand" placeholder="Maruti" value={form.vehicleBrand} onChange={(e) => set('vehicleBrand', e.target.value)} />
+                  <Input label="Vehicle name" placeholder="Ertiga" value={form.vehicleName} onChange={(e) => set('vehicleName', e.target.value)} />
+                </div>
+              </FormCard>
             )}
-            <Input label="Contact number" value={form.contact} onChange={(e) => set('contact', e.target.value)} />
-            <div className="sm:col-span-2"><Input label="Remarks" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></div>
+
+            {/* 5 — Contact & notes */}
+            <FormCard icon={<Phone size={16} />} title="Contact & notes" color="blue"
+              hint="Optional reference details.">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input label="Contact number" placeholder="10-digit mobile" value={form.contact} onChange={(e) => set('contact', e.target.value)} error={errors.contact} />
+                <Input label="Remarks" placeholder="Any notes about this loan" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} error={errors.remarks} />
+              </div>
+            </FormCard>
+
           </div>
         )}
-      </Dialog>
+      </Drawer>
 
-      {ledger && <LedgerDialog loan={ledger} onClose={() => setLedger(null)} />}
+      {/* Loan summary popup */}
+      <LoanSummaryPopup open={summaryOpen} onClose={() => setSummaryOpen(false)} p={preview} customer={form ? custName(Number(form.customerId)) : '—'} />
+
+      {ledger && <LedgerDialog loan={ledger} onClose={() => setLedger(null)} statementOnly />}
 
       <Dialog open={!!confirm} onClose={() => setConfirm(null)} title="Delete loan?" subtitle={confirm ? `${confirm.loanNumber} · ${custName(confirm.customerId)}` : ''}
         footer={<><Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
@@ -542,55 +883,227 @@ function DueBadge({ days }: { days: number }) {
   );
 }
 
-/** Compact stat card that doubles as an urgency filter (Total / Overdue / Due soon). */
-function StatCard({
-  label, value, active, onClick, accent, icon,
-}: {
-  label: string; value: string; sub?: string; active?: boolean; onClick?: () => void;
-  accent: string; icon: React.ReactNode; isText?: boolean;
-}) {
-  const clickable = !!onClick;
+/** Borderless icon action button used on each loan row. */
+/** One row of the ⋮ actions dropdown on a loan row. */
+function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
     <button
       onClick={onClick}
-      disabled={!clickable}
-      className={`group relative flex items-center gap-3 overflow-hidden rounded-xl border bg-white px-3.5 py-3 text-left transition-all dark:bg-surface ${
-        active ? '' : 'border-slate-200/90 dark:border-white/[.07]'
-      } ${clickable ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-[0_8px_20px_-10px_rgba(30,39,64,.2)]' : 'cursor-default'}`}
-      style={{
-        borderColor: active ? accent : undefined,
-        boxShadow: active ? `0 0 0 2px ${accent}26` : '0 1px 2px rgba(30,39,64,.04)',
-      }}
+      className={`flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-semibold transition-colors ${
+        danger
+          ? 'text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10'
+          : 'text-ink/80 hover:bg-slate-50 hover:text-indigo-600 dark:hover:bg-white/[.05] dark:hover:text-indigo-400'
+      }`}
     >
-      {active && (
-        <span className="pointer-events-none absolute inset-0" style={{ background: `linear-gradient(135deg, ${accent}14, transparent 60%)` }} />
-      )}
-      {/* icon chip */}
-      <span
-        className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white transition-transform duration-200 group-hover:scale-105"
-        style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}
-      >
-        {icon}
-      </span>
-      <div className="relative min-w-0">
-        <div className="font-display text-xl font-bold leading-none text-ink">{value}</div>
-        <div className="mt-1 truncate text-[12px] font-medium text-muted">{label}</div>
-      </div>
+      {icon} {label}
     </button>
   );
 }
 
-/** Borderless icon action button used on each loan row. */
-function IconBtn({ children, danger, title, onClick }: { children: React.ReactNode; danger?: boolean; title: string; onClick: () => void }) {
+// ─────────────── loan form pieces ───────────────
+type FormCardColor = 'blue' | 'emerald' | 'violet' | 'amber';
+const formCardIcon: Record<FormCardColor, string> = {
+  blue: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400',
+  emerald: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
+  violet: 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400',
+  amber: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400',
+};
+const formCardAccent: Record<FormCardColor, string> = {
+  blue: 'before:bg-blue-500', emerald: 'before:bg-emerald-500', violet: 'before:bg-violet-500', amber: 'before:bg-amber-500',
+};
+
+/** Self-documenting section card for the loan form: icon + title + hint. */
+function FormCard({ icon, title, hint, color, children }: { icon: React.ReactNode; title: string; hint?: string; color: FormCardColor; children: React.ReactNode }) {
   return (
-    <button
-      title={title}
-      onClick={onClick}
-      className={`grid h-[34px] w-[34px] place-items-center rounded-[9px] transition-colors hover:bg-slate-100 dark:hover:bg-white/[.08] ${
-        danger ? 'text-red-500 hover:text-red-600' : 'text-muted hover:text-indigo-600 dark:hover:text-indigo-400'
-      }`}
+    <section
+      className={`relative overflow-hidden rounded-2xl border-[0.5px] border-slate-200/70 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,.04)] dark:border-white/[.06] dark:bg-surface2
+        before:absolute before:inset-y-0 before:left-0 before:w-1 ${formCardAccent[color]}`}
     >
+      <div className="mb-3.5 flex items-center gap-2.5">
+        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${formCardIcon[color]}`}>{icon}</span>
+        <div className="min-w-0">
+          <h4 className="text-[14px] font-bold tracking-tight text-ink">{title}</h4>
+          {hint && <p className="text-[11.5px] text-muted">{hint}</p>}
+        </div>
+      </div>
       {children}
-    </button>
+    </section>
+  );
+}
+
+/** A read-only auto-calculated value chip. */
+function CalcChip({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: 'success' }) {
+  return (
+    <div className={`rounded-xl border-[0.5px] px-3 py-2.5 ${
+      tone === 'success'
+        ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-500/10'
+        : 'border-slate-200/70 bg-slate-50 dark:border-white/[.06] dark:bg-white/[.03]'
+    }`}>
+      <div className="flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wide text-muted">
+        <Lock size={10} /> {label}
+      </div>
+      <div className={`mt-0.5 font-display text-[16px] font-bold tabular-nums ${tone === 'success' ? 'text-emerald-600 dark:text-emerald-400' : 'text-ink'}`}>{value}</div>
+      {hint && <div className="text-[10px] text-muted">{hint}</div>}
+    </div>
+  );
+}
+
+type LoanPreview = {
+  principal: number; rate: number; interest: number; deduction: number; netDisbursed: number;
+  numDays: number; emi: boolean; months: number; emiAmount: number; instalment: boolean; interestOnly: boolean; cadenceDays: number;
+  startDate: string; firstDue: string; maturity: string | null;
+  totalRepayable: number | null; perLabel: string; perValue: number; annualPct: number;
+  type: LoanType; daily: number;
+};
+
+/** A label/value line inside a summary section. */
+function SumRow({ k, v, tone, strong, icon }: { k: string; v: string; tone?: 'success' | 'muted' | 'danger'; strong?: boolean; icon?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between py-2.5">
+      <span className="flex items-center gap-2 text-[13px] text-muted">{icon}{k}</span>
+      <span className={`tabular-nums ${strong ? 'text-[16px] font-bold' : 'text-[14px] font-semibold'} ${
+        tone === 'success' ? 'text-emerald-600 dark:text-emerald-400'
+          : tone === 'danger' ? 'text-red-600 dark:text-red-400'
+          : tone === 'muted' ? 'text-ink/70' : 'text-ink'
+      }`}>{v}</span>
+    </div>
+  );
+}
+
+/** A titled section card in the summary popup. */
+function SumSection({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-2xl border-[0.5px] border-slate-200/70 bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,.04)] dark:border-white/[.06] dark:bg-surface2">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-muted">
+        <span className="text-indigo-500 dark:text-indigo-400">{icon}</span>{title}
+      </div>
+      <div className="divide-y divide-slate-100 dark:divide-white/[.05]">{children}</div>
+    </section>
+  );
+}
+
+/** Professional loan-summary popup — gradient hero, key-figure tiles, grouped sections. */
+function LoanSummaryPopup({ open, onClose, p, customer }: { open: boolean; onClose: () => void; p: LoanPreview; customer: string }) {
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    if (open) document.addEventListener('keydown', onEsc);
+    return () => document.removeEventListener('keydown', onEsc);
+  }, [open, onClose]);
+  if (!open) return null;
+
+  const meta = TYPE_META[p.type];
+  const lastDayRemainder = p.instalment && p.daily > 0 ? p.principal % p.daily : 0;
+  const termLabel = p.interestOnly ? 'Open-ended'
+    : p.numDays > 0 ? `${p.numDays} ${isDailyLoan(p.type) ? 'days' : p.emi ? 'months' : 'days'}`
+    : '—';
+
+  return (
+    <div className="fixed inset-0 z-[210] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-md" />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-slate-50 shadow-[0_30px_80px_-20px_rgba(0,0,0,.55)] dark:bg-[#0c1220] animate-rise"
+      >
+        {/* Gradient hero header */}
+        <div className="relative shrink-0 overflow-hidden bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-600 px-6 pb-7 pt-5 text-white">
+          <span className="pointer-events-none absolute -right-10 -top-12 h-44 w-44 rounded-full bg-white/10 blur-2xl" />
+          <span className="pointer-events-none absolute -bottom-14 right-14 h-32 w-32 rounded-full border border-white/15" />
+          <span className="pointer-events-none absolute -bottom-8 -left-6 h-24 w-24 rounded-full bg-violet-400/20 blur-2xl" />
+          <div className="relative flex items-start justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/15 ring-1 ring-white/20 backdrop-blur">
+                <Calculator size={20} />
+              </span>
+              <div>
+                <div className="text-[15px] font-bold">Loan summary</div>
+                <div className="text-[12px] text-white/70">{customer}</div>
+              </div>
+            </div>
+            <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg text-white/70 transition-colors hover:bg-white/15 hover:text-white">
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Headline: net disbursed */}
+          <div className="relative mt-6">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-white/70">
+              {p.instalment ? 'Net disbursed to customer' : 'Disbursed to customer'}
+            </div>
+            <div className="mt-1 font-display text-[36px] font-extrabold leading-none tabular-nums">{inr(p.netDisbursed)}</div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[11.5px] font-semibold ring-1 ring-white/20">
+                <span className="h-2 w-2 rounded-full" style={{ background: meta.dot }} /> {LOAN_LABELS[p.type]}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-[11.5px] font-semibold ring-1 ring-white/20">
+                <Percent size={11} /> ~{p.annualPct ? p.annualPct.toFixed(0) : 0}% p.a.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Key-figure tiles overlapping the hero */}
+        <div className="relative z-10 -mt-4 grid grid-cols-3 gap-2.5 px-5">
+          <MiniStat label="Principal" value={inr(p.principal)} />
+          <MiniStat label={p.perLabel} value={inr(p.perValue)} />
+          <MiniStat label="Term" value={termLabel} small />
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+          {/* Money breakdown */}
+          <SumSection icon={<IndianRupee size={13} />} title="Money breakdown">
+            <SumRow k="Principal" v={inr(p.principal)} />
+            {p.interestOnly
+              ? <SumRow k={`${p.perLabel} interest (auto)`} v={inr(p.interest)} />
+              : <SumRow k={p.emi ? 'Interest (overall)' : 'Interest'} v={inr(p.interest)} />}
+            {p.emi && <SumRow k="Total payable" v={inr(p.principal + p.interest)} />}
+            {p.emi && <SumRow k="EMI / month" v={inr(p.emiAmount)} strong />}
+            {p.instalment && <SumRow k="Deduction (upfront)" v={`− ${inr(p.deduction)}`} tone="danger" />}
+            <SumRow k={p.instalment ? 'Net disbursed' : 'Disbursed'} v={inr(p.netDisbursed)} tone="success" strong />
+          </SumSection>
+
+          {/* Schedule */}
+          <SumSection icon={<Calendar size={13} />} title="Schedule">
+            <SumRow k="Start date" v={fmtDate(p.startDate)} />
+            {p.interestOnly ? (
+              <>
+                <SumRow k="Term" v="Open-ended (until settled)" tone="muted" />
+                <SumRow k="First due" v={fmtDate(p.firstDue)} strong />
+              </>
+            ) : (
+              <>
+                {p.numDays > 0 && <SumRow k="Term" v={termLabel} tone="muted" />}
+                <SumRow k={p.maturity ? 'End date' : 'First due'} v={fmtDate(p.maturity ?? p.firstDue)} strong />
+                {p.totalRepayable != null && <SumRow k="Total collection" v={inr(p.totalRepayable)} tone="muted" />}
+              </>
+            )}
+          </SumSection>
+
+          {/* Remainder note */}
+          {lastDayRemainder > 0 && (
+            <div className="flex items-start gap-2 rounded-xl border-[0.5px] border-blue-200 bg-blue-50 px-3 py-2.5 text-[12px] text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+              <AlertTriangle size={15} className="mt-px shrink-0" />
+              <span>
+                The final instalment collects <b>{inr(lastDayRemainder)}</b> instead of {inr(p.daily)} (principal isn't an exact multiple).
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="shrink-0 border-t border-slate-200/70 bg-white/60 px-5 py-3.5 dark:border-white/[.06] dark:bg-white/[.02]">
+          <Button className="w-full justify-center" onClick={onClose}>Got it</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A compact key-figure tile shown between the hero and the detail sections. */
+function MiniStat({ label, value, small }: { label: string; value: string; small?: boolean }) {
+  return (
+    <div className="rounded-xl border-[0.5px] border-slate-200/70 bg-white p-2.5 text-center shadow-[0_4px_14px_-8px_rgba(15,23,42,.25)] dark:border-white/[.08] dark:bg-surface2">
+      <div className={`font-display font-bold tabular-nums text-ink ${small ? 'text-[13px]' : 'text-[15px]'}`}>{value}</div>
+      <div className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-wide text-muted">{label}</div>
+    </div>
   );
 }

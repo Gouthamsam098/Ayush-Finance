@@ -21,10 +21,10 @@ export default function Documents() {
   const [docType, setDocType] = useState('Aadhaar');
   const [file, setFile] = useState<{ name: string; size: string; dataUrl: string; mime: string } | null>(null);
   const [viewer, setViewer] = useState<DocItem | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   const grouped = useMemo(() => {
-    const map = new Map<string, DocItem[]>();
+    const map = new Map<number, DocItem[]>();
     d.documents.forEach((doc) => {
       const arr = map.get(doc.customerId) ?? [];
       arr.push(doc); map.set(doc.customerId, arr);
@@ -45,13 +45,14 @@ export default function Documents() {
   const save = () => {
     if (!customerId) { toast('Select a customer', 'error'); return; }
     if (!file) { toast('Choose a file', 'error'); return; }
-    d.addDocument({ customerId, type: docType, fileName: file.name, size: file.size, dataUrl: file.dataUrl, mime: file.mime, date: todayISO() });
-    setExpanded((s) => ({ ...s, [customerId]: true }));
+    const custId = Number(customerId);
+    d.addDocument({ customerId: custId, type: docType, fileName: file.name, size: file.size, dataUrl: file.dataUrl, mime: file.mime, date: todayISO() });
+    setExpanded((s) => ({ ...s, [custId]: true }));
     toast('Document uploaded');
     setOpen(false); setFile(null); setCustomerId(''); if (fileRef.current) fileRef.current.value = '';
   };
 
-  const custName = (id: string) => d.customers.find((c) => c.id === id)?.name ?? 'Unknown';
+  const custName = (id: number) => d.customers.find((c) => c.id === id)?.name ?? 'Unknown';
 
   return (
     <div className="space-y-5">
@@ -94,7 +95,7 @@ export default function Documents() {
         footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save}>Upload &amp; save</Button></>}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <Select label="Customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)} options={[{ value: '', label: 'Select…' }, ...d.customers.map((c) => ({ value: c.id, label: c.name }))]} />
+            <Select label="Customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)} options={[{ value: '', label: 'Select…' }, ...d.customers.map((c) => ({ value: String(c.id), label: c.name }))]} />
             <Select label="Document type" value={docType} onChange={(e) => setDocType(e.target.value)} options={DOC_TYPES.map((t) => ({ value: t, label: t }))} />
           </div>
           <div onClick={() => fileRef.current?.click()}

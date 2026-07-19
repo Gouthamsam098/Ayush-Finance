@@ -49,6 +49,13 @@ func run() error {
 	}
 	defer pool.Close()
 
+	// Apply migrations first so the users table exists on a brand-new database.
+	// Migrate is idempotent (tracked in schema_migrations), so this is safe even
+	// when the server has already applied them.
+	if err := database.Migrate(ctx, pool); err != nil {
+		return err
+	}
+
 	hash, err := crypto.NewHasher(cfg.BcryptCost).Hash(password)
 	if err != nil {
 		return err

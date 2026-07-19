@@ -10,8 +10,10 @@ import (
 	"github.com/anush-capitals/lms-backend/internal/config"
 	"github.com/anush-capitals/lms-backend/internal/crypto"
 	"github.com/anush-capitals/lms-backend/internal/feature/auth"
+	"github.com/anush-capitals/lms-backend/internal/feature/collection"
 	"github.com/anush-capitals/lms-backend/internal/feature/customer"
 	"github.com/anush-capitals/lms-backend/internal/feature/document"
+	"github.com/anush-capitals/lms-backend/internal/feature/loan"
 	"github.com/anush-capitals/lms-backend/internal/httpx"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -44,6 +46,17 @@ func NewRouter(deps Dependencies) http.Handler {
 	documentService := document.NewService(documentRepo)
 	documentHandler := document.NewHandler(documentService)
 
+	collectionRepo := collection.NewRepository(deps.Pool)
+
+	loanRepo := loan.NewRepository(deps.Pool)
+	// The loan service reads collected totals so outstanding/close reflect real
+	// payments; collectionRepo.SumByLoan/SumByLoans satisfy loan.CollectedReader.
+	loanService := loan.NewService(loanRepo, collectionRepo)
+	loanHandler := loan.NewHandler(loanService)
+
+	collectionService := collection.NewService(collectionRepo, loanRepo)
+	collectionHandler := collection.NewHandler(collectionService)
+
 	r := chi.NewRouter()
 
 	// Global middleware, outermost first.
@@ -75,6 +88,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			protected.Mount("/me", authHandler.ProtectedRoutes())
 			protected.Mount("/customers", customerHandler.Routes())
 			protected.Mount("/customers/{customerId}/documents", documentHandler.Routes())
+			protected.Mount("/loans", loanHandler.Routes())
+			protected.Mount("/loans/{loanId}/collections", collectionHandler.LoanRoutes())
+			protected.Mount("/collections", collectionHandler.FlatRoutes())
 		})
 	})
 

@@ -6,7 +6,7 @@ import "time"
 // the service layer needs it to authenticate, but it must never be included
 // in any API response — handlers map to a response DTO that omits it.
 type User struct {
-	ID           string
+	ID           int64
 	Email        string
 	FullName     string
 	PasswordHash string

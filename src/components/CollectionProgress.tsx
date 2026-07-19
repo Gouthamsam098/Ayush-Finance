@@ -28,8 +28,8 @@ function palette(pct: number) {
 }
 
 export function CollectionProgress({
-  paid, total, compact = false, showRemaining = false,
-}: { paid: number; total: number; compact?: boolean; showRemaining?: boolean }) {
+  paid, total, compact = false, showRemaining = false, unit = 'Days',
+}: { paid: number; total: number; compact?: boolean; showRemaining?: boolean; unit?: 'Days' | 'Months' }) {
   const clamped = Math.max(0, Math.min(paid, total));
   const pct = total > 0 ? Math.round((clamped / total) * 100) : 0;
   const shownPaid = useCountUp(clamped);
@@ -40,7 +40,7 @@ export function CollectionProgress({
   return (
     <div className={compact ? 'w-40' : 'w-full'}>
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className={`font-display text-xs font-bold ${c.text}`}>{shownPaid} / {total} Days</span>
+        <span className={`font-display text-xs font-bold ${c.text}`}>{shownPaid} / {total} {unit}</span>
         {done && (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
             <CheckCircle2 size={11} /> Completed
@@ -53,7 +53,7 @@ export function CollectionProgress({
       </div>
       {showRemaining && (
         <div className={`mt-1 text-[11px] ${done ? 'font-semibold text-emerald-600' : 'text-muted'}`}>
-          {done ? 'Loan fully collected 🎉' : `${remaining} Days Remaining`}
+          {done ? 'Loan fully collected 🎉' : `${remaining} ${unit} Remaining`}
         </div>
       )}
     </div>

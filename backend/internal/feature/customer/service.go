@@ -58,7 +58,7 @@ func (s *Service) Create(ctx context.Context, in domain.CustomerInput) (*domain.
 }
 
 // Get returns a single customer by ID.
-func (s *Service) Get(ctx context.Context, id string) (*domain.Customer, error) {
+func (s *Service) Get(ctx context.Context, id int64) (*domain.Customer, error) {
 	return s.repo.FindByID(ctx, id)
 }
 
@@ -75,7 +75,7 @@ func (s *Service) List(ctx context.Context, page Page) ([]*domain.Customer, int6
 // Update validates and applies changes to an existing customer. KYC
 // identifiers left blank in the input are preserved from the stored record
 // (the frontend never receives the raw values back, so a blank means "keep").
-func (s *Service) Update(ctx context.Context, id string, in domain.CustomerInput) (*domain.Customer, error) {
+func (s *Service) Update(ctx context.Context, id int64, in domain.CustomerInput) (*domain.Customer, error) {
 	existing, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -96,6 +96,6 @@ func (s *Service) Update(ctx context.Context, id string, in domain.CustomerInput
 func nonEmptyStr(s *string) bool { return s != nil && *s != "" }
 
 // Delete soft-deletes a customer.
-func (s *Service) Delete(ctx context.Context, id string) error {
+func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.repo.SoftDelete(ctx, id)
 }

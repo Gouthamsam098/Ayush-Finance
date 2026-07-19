@@ -106,7 +106,7 @@ func upperTrimPtr(s *string) *string {
 // customerResponse is the public projection. Money is emitted as rupees for
 // the frontend, derived from the stored paise.
 type customerResponse struct {
-	ID              string   `json:"id"`
+	ID              int64    `json:"id"`
 	Code            string   `json:"code"`
 	Name            string   `json:"name"`
 	FatherName      *string  `json:"father_name,omitempty"`
@@ -169,7 +169,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	c, err := h.service.Get(r.Context(), chi.URLParam(r, "id"))
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("customer"))
+		return
+	}
+	c, err := h.service.Get(r.Context(), id)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -207,7 +212,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
-	c, err := h.service.Update(r.Context(), chi.URLParam(r, "id"), req.toInput())
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("customer"))
+		return
+	}
+	c, err := h.service.Update(r.Context(), id, req.toInput())
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -216,7 +226,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.service.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("customer"))
+		return
+	}
+	if err := h.service.Delete(r.Context(), id); err != nil {
 		httpx.Error(w, r, err)
 		return
 	}

@@ -21,7 +21,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 // customerExists guards uploads/lists against a missing or deleted customer.
-func (r *Repository) customerExists(ctx context.Context, customerID string) (bool, error) {
+func (r *Repository) customerExists(ctx context.Context, customerID int64) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM customers WHERE id = $1 AND deleted_at IS NULL)`,
@@ -31,17 +31,13 @@ func (r *Repository) customerExists(ctx context.Context, customerID string) (boo
 
 // Create stores a document's bytes and metadata, returning the metadata (no
 // content) of the new row.
-func (r *Repository) Create(ctx context.Context, d *domain.Document, uploadedBy string) (*domain.Document, error) {
+func (r *Repository) Create(ctx context.Context, d *domain.Document, uploadedBy *int64) (*domain.Document, error) {
 	const query = `
 		INSERT INTO documents (customer_id, type, file_name, mime_type, size_bytes, content, uploaded_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		RETURNING id, created_at`
-	var by *string
-	if uploadedBy != "" {
-		by = &uploadedBy
-	}
 	err := r.pool.QueryRow(ctx, query,
-		d.CustomerID, d.Type, d.FileName, d.MimeType, d.SizeBytes, d.Content, by,
+		d.CustomerID, d.Type, d.FileName, d.MimeType, d.SizeBytes, d.Content, uploadedBy,
 	).Scan(&d.ID, &d.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -51,7 +47,7 @@ func (r *Repository) Create(ctx context.Context, d *domain.Document, uploadedBy 
 }
 
 // ListByCustomer returns document metadata (no content) for a customer.
-func (r *Repository) ListByCustomer(ctx context.Context, customerID string) ([]*domain.Document, error) {
+func (r *Repository) ListByCustomer(ctx context.Context, customerID int64) ([]*domain.Document, error) {
 	const query = `
 		SELECT id, customer_id, type, file_name, mime_type, size_bytes, created_at
 		FROM documents
@@ -76,7 +72,7 @@ func (r *Repository) ListByCustomer(ctx context.Context, customerID string) ([]*
 }
 
 // Download loads a single document including its content bytes.
-func (r *Repository) Download(ctx context.Context, id string) (*domain.Document, error) {
+func (r *Repository) Download(ctx context.Context, id int64) (*domain.Document, error) {
 	const query = `
 		SELECT id, customer_id, type, file_name, mime_type, size_bytes, content, created_at
 		FROM documents
@@ -96,7 +92,7 @@ func (r *Repository) Download(ctx context.Context, id string) (*domain.Document,
 }
 
 // SoftDelete marks a document deleted.
-func (r *Repository) SoftDelete(ctx context.Context, id string) error {
+func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE documents SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {

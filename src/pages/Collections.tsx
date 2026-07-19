@@ -1,20 +1,22 @@
-import { useMemo, useState } from 'react';
-import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, type PayMode, type LoanType, type Loan } from '@/mock/DataContext';
-import { Card } from '@/components/ui/card';
+import { useMemo, useState, type ReactNode } from 'react';
+import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, type PayMode, type LoanType, type Loan } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
-import { PageHeader } from '@/components/PageHeader';
+import { ApiError } from '@/lib/api';
+import { StatCard } from '@/components/ui/stat-card';
+import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { LedgerDialog } from '@/components/LedgerDialog';
 import { CollectionProgress } from '@/components/CollectionProgress';
-import { inr, fmtDate, todayISO, isoLocal, DAILY_TERM } from '@/lib/format';
-import { Plus, ScrollText, Inbox } from 'lucide-react';
+import { inr, inrShort, fmtDate, todayISO, isoLocal, addDays, DAILY_TERM } from '@/lib/format';
+import { Plus, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins } from 'lucide-react';
 
 const MODES: PayMode[] = ['CASH', 'UPI', 'BANK', 'CHEQUE'];
-/** Days denominator for the progress bar: daily loans use their term, Flexible uses its chosen days, everything else uses a fixed 30-day cycle. */
+
+/** Days denominator for the progress bar: daily loans use their term, Flexible uses its chosen days, everything else a 30-day cycle. */
 const totalDaysFor = (l: Loan) => {
   if (isDailyLoan(l.type)) return l.numDays ?? DAILY_TERM;
   if (l.type === 'FLEXIBLE') return l.numDays ?? 30;
@@ -35,7 +37,7 @@ const loanEndDateFor = (l: Loan) => {
   return isoLocal(new Date(ly, lm - 1, ld + totalDaysFor(l) - 1));
 };
 
-interface CForm { id?: string; customerId: string; loanId: string; amount: string; date: string; mode: PayMode; remarks: string; }
+interface CForm { id?: number; customerId: string; loanId: string; amount: string; date: string; mode: PayMode; remarks: string; }
 const blank = (): CForm => ({ customerId: '', loanId: '', amount: '', date: todayISO(), mode: 'CASH', remarks: '' });
 
 export default function Collections() {
@@ -44,9 +46,10 @@ export default function Collections() {
   const [form, setForm] = useState<CForm | null>(null);
   const [typeFilter, setTypeFilter] = useState<LoanType | 'ALL'>('ALL');
   const [ledger, setLedger] = useState<Loan | null>(null);
+  const [lastMode, setLastMode] = useState<PayMode>('CASH'); // remembered across entries
 
   const custLoans = useMemo(
-    () => d.loans.filter((l) => (!form?.customerId || l.customerId === form.customerId) && l.status === 'ACTIVE'),
+    () => d.loans.filter((l) => (!form?.customerId || l.customerId === Number(form.customerId)) && l.status === 'ACTIVE'),
     [d.loans, form?.customerId]
   );
 
@@ -64,31 +67,115 @@ export default function Collections() {
     return m;
   }, [d.loans]);
 
+  /** Portfolio KPIs — every figure derived from real data (no fabricated trends). */
+  const kpis = useMemo(() => {
+    const active = d.loans.filter((l) => l.status === 'ACTIVE');
+    const dueFor = (l: Loan) =>
+      isDailyLoan(l.type) ? d.totalDueForDaily(l)
+        : isMonthlyLike(l.type) ? d.totalDueForMonthly(l)
+          : isInterestOnly(l.type) ? d.totalDueForInterestOnly(l)
+            : 0;
+    const collectedToday = d.collections.filter((c) => c.date === todayISO()).reduce((s, c) => s + c.amount, 0);
+    return {
+      activeCount: active.length,
+      totalCollected: d.collections.reduce((s, c) => s + c.amount, 0),
+      collectedToday,
+      dueNow: active.reduce((s, l) => s + Math.max(0, dueFor(l)), 0),
+      outstanding: active.reduce((s, l) => s + d.outstandingFor(l), 0),
+    };
+  }, [d]);
+
   const set = (k: keyof CForm, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
-  const save = () => {
+
+  const selectedLoan = form?.loanId ? d.loans.find((l) => l.id === Number(form.loanId)) : undefined;
+  const overpay = !!selectedLoan && Number(form?.amount) > d.outstandingFor(selectedLoan);
+
+  /** Smart prefill: on picking a loan, default the amount to its due instalment
+   *  and the DATE to the loan's live next-due SLOT (same figure the Statement
+   *  shows) — UNCLAMPED, so a daily loan advances to tomorrow once today is
+   *  collected and a monthly loan selects its next 30-day cycle date. Overdue →
+   *  the oldest unpaid slot (a past date). */
+  const onLoanPick = (loanId: string) => {
+    const loan = d.loans.find((l) => l.id === Number(loanId));
+    let date = todayISO();
+    if (loan) {
+      const nd = d.nextDueFor(loan);
+      date = nd ?? todayISO();
+      if (date < loan.loanDate) date = loan.loanDate;
+    }
+    setForm((f) => (f ? { ...f, loanId, date, amount: f.amount || (loan?.dailyAmount ? String(loan.dailyAmount) : '') } : f));
+  };
+
+  const openAdd = () => setForm({ ...blank(), mode: lastMode });
+
+  const save = async () => {
     if (!form) return;
     if (!form.loanId) { toast('Select a loan (shown by type)', 'error'); return; }
     if (!Number(form.amount)) { toast('Enter an amount', 'error'); return; }
-    const payload = { loanId: form.loanId, date: form.date, amount: Number(form.amount), mode: form.mode, remarks: form.remarks || undefined };
-    if (form.id) { d.updateCollection(form.id, payload); toast('Collection updated'); }
-    else { d.addCollection(payload); toast('Collection recorded · receipt generated'); }
+    // Date discipline (mirrors the server + LedgerDialog rules):
+    //  • never before the loan date;
+    //  • never beyond the next due slot (or today+1, whichever is later);
+    //  • daily loans collect one slot per day — a day already fully funded
+    //    cannot be paid again (the picker pre-advances to the next open slot).
+    if (selectedLoan) {
+      const nd = d.nextDueFor(selectedLoan);
+      if (form.date < selectedLoan.loanDate) {
+        toast(`Payment date cannot be before the loan date (${fmtDate(selectedLoan.loanDate)})`, 'error'); return;
+      }
+      const cap = addDays(todayISO(), 1);
+      const maxDate = nd && nd > cap ? nd : cap;
+      if (form.date > maxDate) {
+        toast(`Payment date cannot be beyond the next due (${fmtDate(maxDate)})`, 'error'); return;
+      }
+      const dailyCadence = selectedLoan.type === 'DAILY_COLLECTION' || selectedLoan.type === 'DAILY_INTEREST';
+      if (!form.id && dailyCadence && nd && form.date < nd) {
+        toast(`Already collected for ${fmtDate(form.date)} — next due is ${fmtDate(nd)}`, 'error'); return;
+      }
+    }
+    const payload = { loanId: Number(form.loanId), date: form.date, amount: Number(form.amount), mode: form.mode, remarks: form.remarks || undefined };
+    try {
+      if (form.id) { await d.updateCollection(form.id, payload); toast('Collection updated'); }
+      else { await d.addCollection(payload); toast('Collection recorded · receipt generated'); }
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Failed to record collection', 'error');
+      return; // keep the form open so the user can fix the highlighted issue
+    }
+    setLastMode(form.mode); // remember for the next entry
     setForm(null);
   };
 
   return (
-    <div className="space-y-5">
-      <PageHeader title="Collections" subtitle={`${d.collections.length} payments recorded`}
-        action={<Button onClick={() => setForm(blank())}><Plus size={16} /> Add Collection</Button>} />
+    <div className="flex min-h-full flex-col">
+      {/* Dark page header — shared chrome, matches Loans */}
+      <PageHeader
+        icon={<HandCoins size={20} />}
+        title="Collections"
+        subtitle={`${d.collections.length} payments recorded · ${kpis.activeCount} active loans`}
+        actions={<HeaderPrimaryButton icon={<Plus size={14} />} onClick={openAdd}>Add Collection</HeaderPrimaryButton>}
+      />
 
-      {/* Loan type filter cards */}
+      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      {/* KPI strip — real portfolio metrics */}
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+        <StatCard label="Active loans" value={String(kpis.activeCount)} accent="#6366f1" icon={<Layers size={16} />} />
+        <StatCard label="Collected today" value={inrShort(kpis.collectedToday)} accent="#10b981" icon={<TrendingUp size={16} />} />
+        <StatCard label="Due now" value={inrShort(kpis.dueNow)} accent="#f59e0b" icon={<CalendarClock size={16} />} />
+        <StatCard label="Total outstanding" value={inrShort(kpis.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} />
+      </div>
+
+      {/* Loan type filter chips */}
       <div className="flex flex-wrap gap-2">
         {([['ALL', 'All'], ...(Object.keys(LOAN_LABELS) as LoanType[]).map((t) => [t, LOAN_LABELS[t]] as const)] as [string, string][]).map(([val, label]) => {
           const on = typeFilter === val;
           return (
             <button key={val} onClick={() => setTypeFilter(val as LoanType | 'ALL')}
-              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${on ? 'bg-primary text-white shadow-md' : 'border border-slate-200 dark:border-slate-700 text-muted hover:bg-slate-50 dark:hover:bg-white/[.05]'}`}>
+              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
+                on
+                  ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-[0_4px_14px_rgba(99,102,241,.3)]'
+                  : 'border border-slate-200/90 bg-white text-muted hover:border-primary/40 hover:text-primary dark:border-white/[.07] dark:bg-surface dark:hover:bg-white/[.05]'
+              }`}>
               {label}
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${on ? 'bg-white/25' : 'bg-slate-100 dark:bg-slate-800'}`}>{counts[val] ?? 0}</span>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${on ? 'bg-white/25' : 'bg-slate-100 text-muted dark:bg-white/[.08]'}`}>{counts[val] ?? 0}</span>
             </button>
           );
         })}
@@ -96,171 +183,104 @@ export default function Collections() {
 
       {/* Empty state */}
       {loansToShow.length === 0 ? (
-        <Card tilt className="anim-pop flex flex-col items-center gap-3 px-6 py-16 text-center">
-          <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-primary-400 to-primary text-white shadow-soft anim-float"><Inbox size={30} /></div>
-          <div className="font-display text-lg font-bold">No Collections Yet</div>
-          <p className="max-w-sm text-sm text-muted">{typeFilter !== 'ALL' ? 'No active loans of this type yet.' : 'Record your first payment to get started.'}</p>
-          <Button onClick={() => setForm(blank())}><Plus size={16} /> Record First Collection</Button>
-        </Card>
+        <EmptyState typed={typeFilter !== 'ALL'} onAdd={openAdd} />
       ) : typeFilter === 'DAILY_COLLECTION' ? (
         /* ── Daily Collection: expanded view with start/end date, due, and balance ── */
-        <Card className="anim-pop p-4" style={{ animationDelay: '80ms' }}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                <th className="py-2.5 pr-3">Customer</th><th className="py-2.5 pr-3">Collection Progress</th><th className="py-2.5 pr-3">Loan Type</th>
-                <th className="py-2.5 pr-3">Loan Start Date</th><th className="py-2.5 pr-3">Loan End Date</th>
-                <th className="py-2.5 pr-3">Total Due Amount</th><th className="py-2.5 pr-3">Balance</th><th className="py-2.5 pr-3">Amount Paid</th>
-                <th className="py-2.5 text-center">Actions</th>
-              </tr></thead>
-              <tbody>
-                {loansToShow.map((l) => {
-                  const cust = d.customers.find((c) => c.id === l.customerId);
-                  const paid = elapsedDaysFor(l);
-                  const collected = d.collectedFor(l.id);
-                  const totalDue = Math.max(0, paid * (l.dailyAmount ?? 0) - collected);
-                  const balance = d.outstandingFor(l); // Principal − Collected, for Daily Collection
-                  return (
-                    <tr key={l.id} className="border-t border-slate-100 dark:border-white/[.06] transition-colors hover:bg-primary-50/40 dark:hover:bg-primary/[.06]">
-                      <td className="py-3 pr-3 font-medium">{cust?.name ?? '—'}</td>
-                      <td className="py-3 pr-3"><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></td>
-                      <td className="py-3 pr-3"><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></td>
-                      <td className="py-3 pr-3">{fmtDate(l.loanDate)}</td>
-                      <td className="py-3 pr-3">{fmtDate(loanEndDateFor(l))}</td>
-                      <td className="py-3 pr-3 font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</td>
-                      <td className="py-3 pr-3 font-semibold">{inr(balance)}</td>
-                      <td className="py-3 pr-3 font-display font-semibold text-success">{inr(collected)}</td>
-                      <td className="py-3 text-right">
-                        <div className="flex items-center justify-center">
-                          <button onClick={() => setLedger(l)} title="View Report" aria-label="View Report"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-semibold text-muted hover:border-primary/40 hover:text-primary">
-                            <ScrollText size={14} /> View Report
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-2 text-[11px] text-muted">Total Due Amount is the cumulative shortfall from what's owed by today. Balance is Principal − Collected. Open View Report to add, edit, or delete individual payments.</p>
-        </Card>
-      ) : typeFilter === 'DAILY_INTEREST' ? (
-        /* ── Daily Interest: base columns + Total Interest Due + Outstanding ── */
-        <Card className="anim-pop p-4" style={{ animationDelay: '80ms' }}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                <th className="py-2.5 pr-3">Customer</th><th className="py-2.5 pr-3">Collection Progress</th><th className="py-2.5 pr-3">Loan Type</th>
-                <th className="py-2.5 pr-3">Amount Paid</th><th className="py-2.5 pr-3">Total Interest Due</th><th className="py-2.5 pr-3">Outstanding</th>
-                <th className="py-2.5 pr-3">Loan Date</th><th className="py-2.5 text-center">Actions</th>
-              </tr></thead>
-              <tbody>
-                {loansToShow.map((l) => {
-                  const cust = d.customers.find((c) => c.id === l.customerId);
-                  const paid = elapsedDaysFor(l);
-                  const totalDue = d.totalDueForDaily(l);
-                  return (
-                    <tr key={l.id} className="border-t border-slate-100 dark:border-white/[.06] transition-colors hover:bg-primary-50/40 dark:hover:bg-primary/[.06]">
-                      <td className="py-3 pr-3 font-medium">{cust?.name ?? '—'}</td>
-                      <td className="py-3 pr-3"><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></td>
-                      <td className="py-3 pr-3"><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></td>
-                      <td className="py-3 pr-3 font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</td>
-                      <td className="py-3 pr-3 font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</td>
-                      <td className="py-3 pr-3 font-semibold">{inr(d.outstandingFor(l))}</td>
-                      <td className="py-3 pr-3">{fmtDate(l.loanDate)}</td>
-                      <td className="py-3 text-right">
-                        <div className="flex items-center justify-center">
-                          <button onClick={() => setLedger(l)} title="View Report" aria-label="View Report"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-semibold text-muted hover:border-primary/40 hover:text-primary">
-                            <ScrollText size={14} /> View Report
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-2 text-[11px] text-muted">Total Interest Due is the cumulative shortfall vs. what's owed by today. Outstanding is Principal + Total Interest Due. Open View Report to add, edit, or delete individual payments.</p>
-        </Card>
+        <TableCard note="Total Due Amount is the cumulative shortfall from what's owed by today. Balance is Principal − Collected. Open View Report to add, edit, or delete individual payments.">
+          <thead><HeaderRow cols={['Customer', 'Collection Progress', 'Loan Type', 'Loan Start', 'Loan End', 'Total Due', 'Balance', 'Amount Paid', 'Actions']} /></thead>
+          <tbody>
+            {loansToShow.map((l) => {
+              const cust = d.customers.find((c) => c.id === l.customerId);
+              const paid = elapsedDaysFor(l);
+              const collected = d.collectedFor(l.id);
+              const totalDue = Math.max(0, paid * (l.dailyAmount ?? 0) - collected);
+              const balance = d.outstandingFor(l); // Principal − Collected, for Daily Collection
+              return (
+                <Row key={l.id}>
+                  <Td className="font-medium">{cust?.name ?? '—'}</Td>
+                  <Td><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></Td>
+                  <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
+                  <Td>{fmtDate(l.loanDate)}</Td>
+                  <Td>{fmtDate(loanEndDateFor(l))}</Td>
+                  <Td className="font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</Td>
+                  <Td className="font-semibold">{inr(balance)}</Td>
+                  <Td className="font-display font-semibold text-success">{inr(collected)}</Td>
+                  <ActionTd onView={() => setLedger(l)} />
+                </Row>
+              );
+            })}
+          </tbody>
+        </TableCard>
       ) : typeFilter !== 'ALL' && isMonthlyLike(typeFilter) ? (
-        /* ── Monthly Interest / Vehicle / Property: same columns, same 30-day-cycle logic ── */
-        <Card className="anim-pop p-4" style={{ animationDelay: '80ms' }}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                <th className="py-2.5 pr-3">Customer</th><th className="py-2.5 pr-3">Principal</th><th className="py-2.5 pr-3">{typeFilter === 'FLEXIBLE' ? 'Interest' : 'Monthly Interest'}</th>
-                <th className="py-2.5 pr-3">Total Due Amount</th><th className="py-2.5 pr-3">Loan Type</th><th className="py-2.5 pr-3">Amount Paid</th><th className="py-2.5 pr-3">Loan Date</th>
-                <th className="py-2.5 text-center">Actions</th>
-              </tr></thead>
-              <tbody>
-                {loansToShow.map((l) => {
-                  const cust = d.customers.find((c) => c.id === l.customerId);
-                  const totalDue = d.totalDueForMonthly(l);
-                  return (
-                    <tr key={l.id} className="border-t border-slate-100 dark:border-white/[.06] transition-colors hover:bg-primary-50/40 dark:hover:bg-primary/[.06]">
-                      <td className="py-3 pr-3 font-medium">{cust?.name ?? '—'}</td>
-                      <td className="py-3 pr-3">{inr(l.principal)}</td>
-                      <td className="py-3 pr-3">{inr(l.interest)}</td>
-                      <td className="py-3 pr-3 font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</td>
-                      <td className="py-3 pr-3"><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></td>
-                      <td className="py-3 pr-3 font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</td>
-                      <td className="py-3 pr-3">{fmtDate(l.loanDate)}</td>
-                      <td className="py-3 text-right">
-                        <div className="flex items-center justify-center">
-                          <button onClick={() => setLedger(l)} title="View Report" aria-label="View Report"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-semibold text-muted hover:border-primary/40 hover:text-primary">
-                            <ScrollText size={14} /> View Report
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-2 text-[11px] text-muted">Total Due Amount is the cumulative interest shortfall vs. what's owed by today ({typeFilter === 'FLEXIBLE' ? "the loan's own term" : '30-day cycles'}). Open View Report to add, edit, or delete individual payments.</p>
-        </Card>
+        /* ── Monthly Collection / Vehicle / Property: monthly instalment repays principal ── */
+        <TableCard note="Total Due Amount is the cumulative shortfall vs. the instalments owed by today (30-day cycles). Open View Report to add, edit, or delete individual payments.">
+          <thead><HeaderRow cols={['Customer', 'Principal', 'Monthly Instalment', 'Total Due', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
+          <tbody>
+            {loansToShow.map((l) => {
+              const cust = d.customers.find((c) => c.id === l.customerId);
+              const totalDue = d.totalDueForMonthly(l);
+              return (
+                <Row key={l.id}>
+                  <Td className="font-medium">{cust?.name ?? '—'}</Td>
+                  <Td>{inr(l.principal)}</Td>
+                  <Td>{inr(l.dailyAmount ?? 0)}</Td>
+                  <Td className="font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</Td>
+                  <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
+                  <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
+                  <Td>{fmtDate(l.loanDate)}</Td>
+                  <ActionTd onView={() => setLedger(l)} />
+                </Row>
+              );
+            })}
+          </tbody>
+        </TableCard>
+      ) : typeFilter !== 'ALL' && isInterestOnly(typeFilter) ? (
+        /* ── Daily / Monthly Interest: interest-only, principal fixed until settled ── */
+        <TableCard note="Interest Due is the accrued, unpaid interest to date. Outstanding = Principal + Interest Due; the principal stays until separately settled.">
+          <thead><HeaderRow cols={['Customer', 'Principal', `${typeFilter === 'DAILY_INTEREST' ? 'Daily' : 'Monthly'} Interest`, 'Interest Collected', 'Interest Due', 'Outstanding', 'Loan Date', 'Actions']} /></thead>
+          <tbody>
+            {loansToShow.map((l) => {
+              const cust = d.customers.find((c) => c.id === l.customerId);
+              const due = d.totalDueForInterestOnly(l);
+              return (
+                <Row key={l.id}>
+                  <Td className="font-medium">{cust?.name ?? '—'}</Td>
+                  <Td>{inr(l.principal)}</Td>
+                  <Td>{inr(l.dailyAmount ?? 0)}</Td>
+                  <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
+                  <Td className="font-semibold text-danger">{due > 0 ? inr(due) : '—'}</Td>
+                  <Td className="font-semibold">{inr(d.outstandingFor(l))}</Td>
+                  <Td>{fmtDate(l.loanDate)}</Td>
+                  <ActionTd onView={() => setLedger(l)} />
+                </Row>
+              );
+            })}
+          </tbody>
+        </TableCard>
       ) : (
-        /* ── One row per loan, for every other loan type — live progress, View Report for individual payments ── */
-        <Card className="anim-pop p-4" style={{ animationDelay: '80ms' }}>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-                <th className="py-2.5 pr-3">Customer</th><th className="py-2.5 pr-3">Collection Progress</th><th className="py-2.5 pr-3">Loan Type</th><th className="py-2.5 pr-3">Amount Paid</th><th className="py-2.5 pr-3">Loan Date</th><th className="py-2.5 text-center">Actions</th>
-              </tr></thead>
-              <tbody>
-                {loansToShow.map((l) => {
-                  const cust = d.customers.find((c) => c.id === l.customerId);
-                  const paid = isDailyLoan(l.type) ? elapsedDaysFor(l) : d.collections.filter((c) => c.loanId === l.id).length;
-                  return (
-                    <tr key={l.id} className="border-t border-slate-100 dark:border-white/[.06] transition-colors hover:bg-primary-50/40 dark:hover:bg-primary/[.06]">
-                      <td className="py-3 pr-3 font-medium">{cust?.name ?? '—'}</td>
-                      <td className="py-3 pr-3"><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></td>
-                      <td className="py-3 pr-3"><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></td>
-                      <td className="py-3 pr-3 font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</td>
-                      <td className="py-3 pr-3">{fmtDate(l.loanDate)}</td>
-                      <td className="py-3 text-right">
-                        <div className="flex items-center justify-center">
-                          <button onClick={() => setLedger(l)} title="View Report" aria-label="View Report"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs font-semibold text-muted hover:border-primary/40 hover:text-primary">
-                            <ScrollText size={14} /> View Report
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-2 text-[11px] text-muted">Amount Paid is the total collected so far for each loan. Open View Report to add, edit, or delete individual payments.</p>
-        </Card>
+        /* ── One row per loan, for every other loan type (incl. ALL) — live progress ── */
+        <TableCard note="Amount Paid is the total collected so far for each loan. Open View Report to add, edit, or delete individual payments.">
+          <thead><HeaderRow cols={['Customer', 'Collection Progress', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
+          <tbody>
+            {loansToShow.map((l) => {
+              const cust = d.customers.find((c) => c.id === l.customerId);
+              const paid = isDailyLoan(l.type) ? elapsedDaysFor(l) : d.collections.filter((c) => c.loanId === l.id).length;
+              return (
+                <Row key={l.id}>
+                  <Td className="font-medium">{cust?.name ?? '—'}</Td>
+                  <Td><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></Td>
+                  <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
+                  <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
+                  <Td>{fmtDate(l.loanDate)}</Td>
+                  <ActionTd onView={() => setLedger(l)} />
+                </Row>
+              );
+            })}
+          </tbody>
+        </TableCard>
       )}
+
+      </div>
 
       {/* Add / Edit dialog */}
       <Dialog open={!!form} onClose={() => setForm(null)} title={form?.id ? 'Edit collection' : 'Add collection'}
@@ -268,10 +288,19 @@ export default function Collections() {
         {form && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Select label="Customer" value={form.customerId} onChange={(e) => { set('customerId', e.target.value); set('loanId', ''); }}
-              options={[{ value: '', label: 'All customers' }, ...d.customers.map((c) => ({ value: c.id, label: c.name }))]} />
-            <Select label="Loan type *" value={form.loanId} onChange={(e) => set('loanId', e.target.value)}
-              options={[{ value: '', label: 'Select loan…' }, ...custLoans.map((l) => ({ value: l.id, label: `${LOAN_LABELS[l.type]} · ${l.loanNumber}` }))]} />
-            <Input label="Amount *" type="number" value={form.amount} onChange={(e) => set('amount', e.target.value)} />
+              options={[{ value: '', label: 'All customers' }, ...d.customers.map((c) => ({ value: String(c.id), label: c.name }))]} />
+            <Select label="Loan *" value={form.loanId} onChange={(e) => onLoanPick(e.target.value)}
+              options={[{ value: '', label: 'Select loan…' }, ...custLoans.map((l) => ({ value: String(l.id), label: `${LOAN_LABELS[l.type]} · ${l.loanNumber}` }))]} />
+            <div>
+              <Input label="Amount *" type="number" value={form.amount} onChange={(e) => set('amount', e.target.value)} />
+              {selectedLoan && (
+                <p className={`mt-1 text-[11px] ${overpay ? 'font-semibold text-warning' : 'text-muted'}`}>
+                  {overpay
+                    ? `Exceeds outstanding (${inr(d.outstandingFor(selectedLoan))}) — recorded as advance / settlement`
+                    : `Instalment ${inr(selectedLoan.dailyAmount ?? 0)} · outstanding ${inr(d.outstandingFor(selectedLoan))}`}
+                </p>
+              )}
+            </div>
             <Input label="Date" type="date" value={form.date} onChange={(e) => set('date', e.target.value)} />
             <Select label="Payment mode" value={form.mode} onChange={(e) => set('mode', e.target.value as PayMode)} options={MODES.map((m) => ({ value: m, label: m }))} />
             <div className="sm:col-span-2"><Input label="Remarks" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></div>
@@ -280,6 +309,61 @@ export default function Collections() {
       </Dialog>
 
       {ledger && <LedgerDialog loan={ledger} onClose={() => setLedger(null)} />}
+    </div>
+  );
+}
+
+/* ── Presentational helpers (kept local — cut the 4× table duplication) ── */
+
+/** A card wrapping a horizontally-scrollable table plus its footnote. */
+function TableCard({ children, note }: { children: ReactNode; note: string }) {
+  return (
+    <div className="anim-pop overflow-hidden rounded-card border border-slate-200/90 bg-white shadow-card dark:border-white/[.07] dark:bg-surface" style={{ animationDelay: '80ms' }}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">{children}</table>
+      </div>
+      <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] text-muted dark:border-white/[.06]">{note}</p>
+    </div>
+  );
+}
+
+/** Full-width gradient header row matching the Loans table treatment. */
+function HeaderRow({ cols }: { cols: string[] }) {
+  return (
+    <tr className="bg-gradient-to-r from-indigo-600 to-violet-600 text-[11px] font-bold uppercase tracking-[0.07em] text-white">
+      {cols.map((c, i) => (
+        <th key={c} className={`whitespace-nowrap px-4 py-3 ${c === 'Actions' ? 'text-center' : 'text-left'} ${i === 0 ? 'rounded-l-none' : ''}`}>{c}</th>
+      ))}
+    </tr>
+  );
+}
+
+function Row({ children }: { children: ReactNode }) {
+  return <tr className="border-t border-slate-100 transition-colors hover:bg-primary-50/40 dark:border-white/[.06] dark:hover:bg-primary/[.06]">{children}</tr>;
+}
+
+function Td({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <td className={`whitespace-nowrap px-4 py-3 ${className}`}>{children}</td>;
+}
+
+function ActionTd({ onView }: { onView: () => void }) {
+  return (
+    <td className="px-4 py-3 text-center">
+      <button onClick={onView} title="View Report" aria-label="View Report"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-muted transition-colors hover:border-primary/40 hover:text-primary dark:border-slate-700">
+        <ScrollText size={14} /> View Report
+      </button>
+    </td>
+  );
+}
+
+function EmptyState({ typed, onAdd }: { typed: boolean; onAdd: () => void }) {
+  return (
+    <div className="anim-pop flex flex-col items-center gap-3 rounded-card border border-slate-200/90 bg-white px-6 py-16 text-center shadow-card dark:border-white/[.07] dark:bg-surface">
+      <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-primary-400 to-primary text-white shadow-soft anim-float"><Inbox size={30} /></div>
+      <div className="font-display text-lg font-bold">No collections yet</div>
+      <p className="max-w-sm text-sm text-muted">{typed ? 'No active loans of this type yet.' : 'Record your first payment to get started.'}</p>
+      <Button onClick={onAdd}><Plus size={16} /> Record first collection</Button>
     </div>
   );
 }

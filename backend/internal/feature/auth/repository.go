@@ -48,7 +48,7 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.Use
 }
 
 // FindByID returns the active user with the given ID, or a NotFound error.
-func (r *Repository) FindByID(ctx context.Context, id string) (*domain.User, error) {
+func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, error) {
 	const query = `
 		SELECT id, email, full_name, password_hash, mfa_enabled, is_active,
 		       last_login_at, created_at, updated_at
@@ -70,7 +70,7 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*domain.User, err
 }
 
 // TouchLastLogin records a successful login timestamp.
-func (r *Repository) TouchLastLogin(ctx context.Context, id string, at time.Time) error {
+func (r *Repository) TouchLastLogin(ctx context.Context, id int64, at time.Time) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE users SET last_login_at = $1, updated_at = now() WHERE id = $2`, at, id)
 	return err

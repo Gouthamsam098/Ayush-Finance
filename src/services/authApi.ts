@@ -14,7 +14,7 @@ interface TokenResponse {
 }
 
 export interface BackendUser {
-  id: string;
+  id: number;
   email: string;
   full_name: string;
   mfa_enabled: boolean;

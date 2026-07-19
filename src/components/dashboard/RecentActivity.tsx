@@ -2,7 +2,7 @@ import { Banknote } from 'lucide-react';
 import { Panel } from './Panel';
 
 export interface ActivityRow {
-  id: string;
+  id: number;
   label: string;
   date: string;
   amount: string;

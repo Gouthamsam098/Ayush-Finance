@@ -29,7 +29,7 @@ func (h *Handler) Routes() chi.Router {
 }
 
 type documentResponse struct {
-	ID        string `json:"id"`
+	ID        int64  `json:"id"`
 	Type      string `json:"type"`
 	FileName  string `json:"file_name"`
 	MimeType  string `json:"mime_type"`
@@ -46,7 +46,11 @@ func toResponse(d *domain.Document) documentResponse {
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
-	customerID := chi.URLParam(r, "customerId")
+	customerID, err := strconv.ParseInt(chi.URLParam(r, "customerId"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("customer"))
+		return
+	}
 
 	// Cap the request body before parsing so an oversized upload cannot exhaust
 	// memory. +1 MiB slack over the file limit covers multipart overhead.
@@ -71,13 +75,18 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var uploadedBy *int64
+	if uid, err := strconv.ParseInt(httpx.UserID(r.Context()), 10, 64); err == nil {
+		uploadedBy = &uid
+	}
+
 	doc, err := h.service.Upload(r.Context(), UploadInput{
 		CustomerID: customerID,
 		Type:       docType,
 		FileName:   header.Filename,
 		MimeType:   header.Header.Get("Content-Type"),
 		Content:    content,
-		UploadedBy: httpx.UserID(r.Context()),
+		UploadedBy: uploadedBy,
 	})
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -87,7 +96,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	docs, err := h.service.List(r.Context(), chi.URLParam(r, "customerId"))
+	customerID, err := strconv.ParseInt(chi.URLParam(r, "customerId"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("customer"))
+		return
+	}
+	docs, err := h.service.List(r.Context(), customerID)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -100,7 +114,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
-	doc, err := h.service.Download(r.Context(), chi.URLParam(r, "docId"))
+	docID, err := strconv.ParseInt(chi.URLParam(r, "docId"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("document"))
+		return
+	}
+	doc, err := h.service.Download(r.Context(), docID)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -114,7 +133,12 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.service.Delete(r.Context(), chi.URLParam(r, "docId")); err != nil {
+	docID, err := strconv.ParseInt(chi.URLParam(r, "docId"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("document"))
+		return
+	}
+	if err := h.service.Delete(r.Context(), docID); err != nil {
 		httpx.Error(w, r, err)
 		return
 	}

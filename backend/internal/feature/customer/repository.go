@@ -67,7 +67,7 @@ func (r *Repository) Create(ctx context.Context, in domain.CustomerInput) (*doma
 func createArgs(in domain.CustomerInput) []any {
 	var monthlyIncome *int64
 	if in.MonthlyIncome != nil {
-		v := int64(*in.MonthlyIncome)
+		v := in.MonthlyIncome.DBRupees()
 		monthlyIncome = &v
 	}
 	return []any{
@@ -86,7 +86,7 @@ func nilIfEmpty(s *string) *string {
 }
 
 // FindByID returns a non-deleted customer or a NotFound error.
-func (r *Repository) FindByID(ctx context.Context, id string) (*domain.Customer, error) {
+func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.Customer, error) {
 	const query = `SELECT ` + customerColumns + `
 		FROM customers WHERE id = $1 AND deleted_at IS NULL`
 
@@ -140,7 +140,7 @@ func (r *Repository) List(ctx context.Context, p ListParams) ([]*domain.Customer
 
 // Update applies the input to an existing customer and returns the updated
 // row, or a NotFound error if it does not exist (or is soft-deleted).
-func (r *Repository) Update(ctx context.Context, id string, in domain.CustomerInput) (*domain.Customer, error) {
+func (r *Repository) Update(ctx context.Context, id int64, in domain.CustomerInput) (*domain.Customer, error) {
 	const query = `
 		UPDATE customers SET
 			name=$2, father_name=$3, mobile=$4, alt_mobile=$5, email=$6,
@@ -165,7 +165,7 @@ func (r *Repository) Update(ctx context.Context, id string, in domain.CustomerIn
 
 // SoftDelete marks a customer deleted. It returns NotFound if the customer
 // does not exist or was already deleted.
-func (r *Repository) SoftDelete(ctx context.Context, id string) error {
+func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE customers SET deleted_at = now(), updated_at = now()
 		 WHERE id = $1 AND deleted_at IS NULL`, id)
@@ -197,7 +197,7 @@ func scanCustomer(row rowScanner) (*domain.Customer, error) {
 		return nil, err
 	}
 	if monthlyIncome != nil {
-		p := domain.Paise(*monthlyIncome)
+		p := domain.PaiseFromDBRupees(*monthlyIncome)
 		c.MonthlyIncome = &p
 	}
 	if dob != nil {

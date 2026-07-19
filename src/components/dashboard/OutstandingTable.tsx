@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 import { Panel } from './Panel';
 
 export interface OutstandingRow {
-  id: string;
+  id: number;
   loanLabel: string;
   amount: string;
   status: 'Due' | 'Overdue' | 'Daily';

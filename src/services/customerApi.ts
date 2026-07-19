@@ -9,7 +9,7 @@ import { api, type ListResult } from '@/lib/api';
 import type { Customer } from '@/mock/DataContext';
 
 interface CustomerWire {
-  id: string;
+  id: number;
   code: string;
   name: string;
   father_name?: string;
@@ -94,11 +94,11 @@ export const customerApi = {
     return toCustomer(await api.post<CustomerWire>('/customers', toWire(c)));
   },
 
-  async update(id: string, c: Partial<Customer>): Promise<Customer> {
+  async update(id: number, c: Partial<Customer>): Promise<Customer> {
     return toCustomer(await api.patch<CustomerWire>(`/customers/${id}`, toWire(c)));
   },
 
-  async remove(id: string): Promise<void> {
+  async remove(id: number): Promise<void> {
     await api.delete(`/customers/${id}`);
   },
 };

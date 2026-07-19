@@ -23,7 +23,7 @@ export default function Login() {
     if (!config.useApi) {
       setTimeout(() => {
         dispatch(setTokens({ accessToken: 'demo-token' }));
-        dispatch(setUser({ id: 'demo', username, fullName: 'Administrator', role: 'ADMIN' }));
+        dispatch(setUser({ id: 0, username, fullName: 'Administrator', role: 'ADMIN' }));
         navigate('/');
       }, 450);
       return;

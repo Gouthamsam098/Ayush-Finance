@@ -36,6 +36,11 @@ services:
       APP_ENV: development
       PORT: "4000"
       LOG_LEVEL: info
+      # The app is India-local by design (all dates are IST calendar days). The
+      # backend derives "today" from its own clock, so it must run in IST or a
+      # loan/collection dated today (IST) is wrongly rejected as "in the future"
+      # during the UTC-evening hours.
+      TZ: Asia/Kolkata
       # Frontend dev-server origins allowed by CORS (Vite may pick 5173–5175).
       CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:5174,http://localhost:5175
       # 'postgres' is the compose service hostname on the internal network.

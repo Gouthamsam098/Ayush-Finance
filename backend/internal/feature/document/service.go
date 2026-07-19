@@ -16,12 +16,12 @@ func NewService(repo *Repository) *Service {
 
 // UploadInput is a validated upload request.
 type UploadInput struct {
-	CustomerID string
+	CustomerID int64
 	Type       domain.DocumentType
 	FileName   string
 	MimeType   string
 	Content    []byte
-	UploadedBy string
+	UploadedBy *int64
 }
 
 // Upload validates and stores a document. No verification/approval workflow is
@@ -62,14 +62,14 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*domain.Document,
 	}, in.UploadedBy)
 }
 
-func (s *Service) List(ctx context.Context, customerID string) ([]*domain.Document, error) {
+func (s *Service) List(ctx context.Context, customerID int64) ([]*domain.Document, error) {
 	return s.repo.ListByCustomer(ctx, customerID)
 }
 
-func (s *Service) Download(ctx context.Context, id string) (*domain.Document, error) {
+func (s *Service) Download(ctx context.Context, id int64) (*domain.Document, error) {
 	return s.repo.Download(ctx, id)
 }
 
-func (s *Service) Delete(ctx context.Context, id string) error {
+func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.repo.SoftDelete(ctx, id)
 }
