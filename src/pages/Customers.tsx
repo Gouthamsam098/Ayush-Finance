@@ -28,7 +28,7 @@ import {
   Search, Plus, Eye, Pencil, Trash2, Download, Upload as UploadIcon, Users,
   FileText, AlertTriangle, ArrowRight, AlertCircle, Clock, IndianRupee,
   User, MapPin, ShieldCheck, Upload, SlidersHorizontal, Activity,
-  CreditCard, Check, X, Car, Home, RotateCcw, ChevronLeft, ChevronRight,
+  CreditCard, Check, X, Car, Home, RotateCcw, ChevronLeft, ChevronRight, ChevronDown,
 } from 'lucide-react';
 
 type FormState = Partial<Customer>;
@@ -76,6 +76,20 @@ function mapApiErrorFields(e: unknown): FieldErrors {
 function apiErrorMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) return e.message || fallback;
   return e instanceof Error ? e.message : fallback;
+}
+
+/**
+ * Map a backend CONFLICT (duplicate mobile / Aadhaar / PAN) to the specific
+ * form field and a clear message. The backend reports these as a plain conflict
+ * message with no field map, so we key off the message text.
+ */
+function conflictField(e: unknown): { field: 'mobile' | 'aadhaar' | 'pan'; message: string } | null {
+  if (!(e instanceof ApiError) || e.code !== 'CONFLICT') return null;
+  const m = e.message.toLowerCase();
+  if (m.includes('aadhaar')) return { field: 'aadhaar', message: 'Aadhaar number already exists' };
+  if (m.includes('pan')) return { field: 'pan', message: 'PAN number already exists' };
+  if (m.includes('mobile')) return { field: 'mobile', message: 'Mobile number already exists' };
+  return null;
 }
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
@@ -173,6 +187,22 @@ export default function Customers() {
     setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
   };
 
+  // Phone fields accept digits only, capped at 10. A live red message shows
+  // while the entry is a partial (1–9 digit) number.
+  const MOBILE_LABELS: Record<'mobile' | 'altMobile' | 'referenceMobile', string> = {
+    mobile: 'Mobile number',
+    altMobile: 'Alternate mobile',
+    referenceMobile: 'Reference mobile',
+  };
+  const setMobile = (k: 'mobile' | 'altMobile' | 'referenceMobile', v: string) => {
+    const digits = v.replace(/\D/g, '').slice(0, 10);
+    setForm((f) => ({ ...f, [k]: digits }));
+    setErrors((e) => ({
+      ...e,
+      [k]: digits.length > 0 && digits.length < 10 ? `${MOBILE_LABELS[k]} must be 10 digits` : undefined,
+    }));
+  };
+
   // Upload every file the user picked, for the document types relevant to the
   // chosen loan type. In API mode this hits the backend; mock mode is a no-op.
   const uploadPendingDocs = async (customerId: number) => {
@@ -221,6 +251,18 @@ export default function Customers() {
     setErrors({});
     setDocErrors([]);
 
+    // UI guard: block a mobile number that already belongs to another customer,
+    // with an instant, clear message. The backend still enforces uniqueness.
+    const enteredMobile = (payload.mobile ?? '').replace(/\D/g, '');
+    if (
+      enteredMobile.length === 10 &&
+      d.customers.some((c) => c.mobile.replace(/\D/g, '') === enteredMobile && c.id !== editId)
+    ) {
+      setErrors((e) => ({ ...e, mobile: 'Mobile number already exists' }));
+      toast('Mobile number already exists', 'error');
+      return;
+    }
+
     if (editId && config.useApi) {
       // Update via API and await it so failures surface (no false success).
       try {
@@ -229,6 +271,12 @@ export default function Customers() {
         d.updateCustomerRecord(updated); // reflect the authoritative record
         toast('Customer updated');
       } catch (e) {
+        const conflict = conflictField(e);
+        if (conflict) {
+          setErrors((prev) => ({ ...prev, [conflict.field]: conflict.message }));
+          toast(conflict.message, 'error');
+          return;
+        }
         setErrors(mapApiErrorFields(e));
         toast(apiErrorMessage(e, 'Failed to update customer'), 'error');
         return;
@@ -244,6 +292,12 @@ export default function Customers() {
         d.addCustomerRecord(created); // reflect in list without a refetch
         toast('Customer added');
       } catch (e) {
+        const conflict = conflictField(e);
+        if (conflict) {
+          setErrors((prev) => ({ ...prev, [conflict.field]: conflict.message }));
+          toast(conflict.message, 'error');
+          return;
+        }
         setErrors(mapApiErrorFields(e));
         toast(apiErrorMessage(e, 'Failed to add customer'), 'error');
         return;
@@ -544,13 +598,18 @@ export default function Customers() {
                 >
                   <ChevronRight size={16} />
                 </button>
-                <select
-                  value={pageSize}
-                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-                  className="ml-1 h-9 rounded-lg border-[0.5px] border-slate-200 bg-white px-2.5 text-[14px] text-muted outline-none dark:border-white/10 dark:bg-white/5"
-                >
-                  {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n} / page</option>)}
-                </select>
+                <div className="relative ml-1">
+                  <select
+                    value={pageSize}
+                    onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                    className="h-9 appearance-none rounded-lg border-[0.5px] border-slate-200 bg-white pl-2.5 pr-8 text-[14px] text-muted outline-none [color-scheme:light] dark:border-white/10 dark:bg-white/5 dark:[color-scheme:dark]"
+                  >
+                    {PAGE_SIZE_OPTIONS.map((n) => (
+                      <option key={n} value={n} style={{ backgroundColor: 'rgb(var(--surface))', color: 'rgb(var(--ink))' }}>{n} / page</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted" />
+                </div>
               </div>
             </div>
           )}
@@ -580,8 +639,8 @@ export default function Customers() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Input label="Full Name *" placeholder="Enter full name" value={form.name ?? ''} onChange={(e) => set('name', e.target.value)} error={errors.name} />
                 <Input label="Father's Name" placeholder="Enter father's name" value={form.fatherName ?? ''} onChange={(e) => set('fatherName', e.target.value)} error={errors.fatherName} />
-                <Input label="Mobile Number *" placeholder="Enter mobile number" value={form.mobile ?? ''} onChange={(e) => set('mobile', e.target.value)} error={errors.mobile} />
-                <Input label="Alternate Mobile" placeholder="Enter alternate number" value={form.altMobile ?? ''} onChange={(e) => set('altMobile', e.target.value)} error={errors.altMobile} />
+                <Input label="Mobile Number *" placeholder="Enter mobile number" inputMode="numeric" maxLength={10} value={form.mobile ?? ''} onChange={(e) => setMobile('mobile', e.target.value)} error={errors.mobile} />
+                <Input label="Alternate Mobile" placeholder="Enter alternate number" inputMode="numeric" maxLength={10} value={form.altMobile ?? ''} onChange={(e) => setMobile('altMobile', e.target.value)} error={errors.altMobile} />
                 <Input label="Email" type="email" placeholder="Enter email address" value={form.email ?? ''} onChange={(e) => set('email', e.target.value)} error={errors.email} />
                 <Input label="Occupation" placeholder="Enter occupation" value={form.occupation ?? ''} onChange={(e) => set('occupation', e.target.value)} error={errors.occupation} />
                 <Input label="Monthly Income" type="number" placeholder="Enter monthly income" value={form.monthlyIncome ?? ''} onChange={(e) => set('monthlyIncome', e.target.value)} error={errors.monthlyIncome} />
@@ -613,7 +672,7 @@ export default function Customers() {
                 </div>
                 <Input label="Pincode *" placeholder="Enter pincode" value={form.pincode ?? ''} onChange={(e) => set('pincode', e.target.value)} error={errors.pincode} />
                 <Input label="Reference Name" placeholder="Enter reference name" value={form.referenceName ?? ''} onChange={(e) => set('referenceName', e.target.value)} error={errors.referenceName} />
-                <Input label="Reference Mobile" placeholder="Enter reference mobile" value={form.referenceMobile ?? ''} onChange={(e) => set('referenceMobile', e.target.value)} error={errors.referenceMobile} />
+                <Input label="Reference Mobile" placeholder="Enter reference mobile" inputMode="numeric" maxLength={10} value={form.referenceMobile ?? ''} onChange={(e) => setMobile('referenceMobile', e.target.value)} error={errors.referenceMobile} />
               </div>
             </section>
 

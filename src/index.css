@@ -3,6 +3,10 @@
 @tailwind utilities;
 
 :root {
+  /* Make native form controls (select option lists, date pickers, spinners,
+     scrollbars) follow the app theme instead of the OS default. */
+  color-scheme: light;
+
   --surface: 255 255 255;
   --surface2: 250 250 252;
   --ink: 15 23 42;
@@ -21,6 +25,8 @@
   --danger: 239 68 68;
 }
 .dark {
+  color-scheme: dark;
+
   --surface: 22 22 29;
   --surface2: 28 28 36;
   --ink: 237 237 244;

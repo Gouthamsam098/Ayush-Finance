@@ -67,25 +67,28 @@ export function AppShell() {
       {/* ── Sidebar ─────────────────────────────────────────── */}
       <aside
         className={cn(
-          'flex shrink-0 flex-col overflow-hidden bg-[#0c1220] transition-[width] duration-200 ease-[cubic-bezier(.4,0,.2,1)]',
-          collapsed ? 'w-[54px]' : 'w-[200px]',
+          'flex shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white transition-[width] duration-200 ease-[cubic-bezier(.4,0,.2,1)] dark:border-transparent dark:bg-[#0c1220]',
+          collapsed ? 'w-[72px]' : 'w-[200px]',
         )}
       >
         {/* Logo + collapse toggle */}
-        <div className="flex min-h-[58px] items-center gap-2.5 border-b border-white/[.07] px-2.5 py-3">
+        <div className={cn(
+          'flex min-h-[58px] items-center gap-2.5 border-b border-slate-200 px-2.5 py-3 dark:border-white/[.07]',
+          collapsed && 'justify-center gap-1 px-1.5',
+        )}>
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-indigo-500 text-sm font-semibold text-white">
             A
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1 overflow-hidden">
-              <div className="truncate text-sm font-semibold text-slate-50">Anush Capitals</div>
-              <div className="truncate text-[11px] text-slate-400">Loan Management</div>
+              <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-50">Anush Capitals</div>
+              <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">Loan Management</div>
             </div>
           )}
           <button
             onClick={() => setCollapsed((c) => !c)}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-white/10 bg-white/[.04] text-slate-500 hover:text-slate-300"
+            className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 hover:text-slate-600 dark:border-white/10 dark:bg-white/[.04] dark:text-slate-500 dark:hover:text-slate-300"
           >
             <ChevronsLeft size={14} className={cn('transition-transform duration-200', collapsed && 'rotate-180')} />
           </button>
@@ -96,7 +99,7 @@ export function AppShell() {
           {NAV.map((section) => (
             <div key={section.heading}>
               {!collapsed && (
-                <div className="px-1.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                <div className="px-1.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400 dark:text-slate-500">
                   {section.heading}
                 </div>
               )}
@@ -112,7 +115,7 @@ export function AppShell() {
                       cn(
                         'group relative mb-px flex items-center gap-2.5 rounded-lg px-[7px] py-[9px] transition-colors',
                         collapsed && 'justify-center',
-                        isActive ? 'bg-indigo-500/[.18]' : 'hover:bg-white/[.05]',
+                        isActive ? 'bg-indigo-50 dark:bg-indigo-500/[.18]' : 'hover:bg-slate-100 dark:hover:bg-white/[.05]',
                       )
                     }
                   >
@@ -125,14 +128,14 @@ export function AppShell() {
                           size={19}
                           className={cn(
                             'shrink-0 transition-colors',
-                            isActive ? 'text-indigo-300' : 'text-slate-400 group-hover:text-slate-200',
+                            isActive ? 'text-indigo-600 dark:text-indigo-300' : 'text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-200',
                           )}
                         />
                         {!collapsed && (
                           <span
                             className={cn(
                               'truncate text-[13px] transition-colors',
-                              isActive ? 'font-semibold text-indigo-100' : 'text-slate-300 group-hover:text-slate-100',
+                              isActive ? 'font-semibold text-indigo-700 dark:text-indigo-100' : 'text-slate-600 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-slate-100',
                             )}
                           >
                             {label}
@@ -144,7 +147,7 @@ export function AppShell() {
                           </span>
                         )}
                         {badge != null && collapsed && (
-                          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[#0c1220]" />
+                          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-[#0c1220]" />
                         )}
                       </>
                     )}
@@ -156,15 +159,15 @@ export function AppShell() {
         </nav>
 
         {/* Footer — user + logout */}
-        <div className="border-t border-white/[.07] px-[7px] py-2">
+        <div className="border-t border-slate-200 px-[7px] py-2 dark:border-white/[.07]">
           <div className="flex items-center gap-2 rounded-lg px-[3px] py-[5px]">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-[10px] font-semibold text-white">
               AD
             </div>
             {!collapsed && (
               <div className="min-w-0 flex-1 overflow-hidden">
-                <div className="truncate text-[13px] font-semibold text-slate-100">Admin</div>
-                <div className="truncate text-[11px] text-slate-400">Super Admin</div>
+                <div className="truncate text-[13px] font-semibold text-slate-900 dark:text-slate-100">Admin</div>
+                <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">Super Admin</div>
               </div>
             )}
           </div>
@@ -172,7 +175,7 @@ export function AppShell() {
             onClick={toggleTheme}
             title={collapsed ? (dark ? 'Light mode' : 'Dark mode') : undefined}
             className={cn(
-              'group mt-1 flex w-full items-center gap-2.5 rounded-lg px-[7px] py-2 text-slate-400 transition-colors hover:bg-white/[.05] hover:text-slate-200',
+              'group mt-1 flex w-full items-center gap-2.5 rounded-lg px-[7px] py-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[.05] dark:hover:text-slate-200',
               collapsed && 'justify-center',
             )}
           >
@@ -183,7 +186,7 @@ export function AppShell() {
             onClick={() => { dispatch(logout()); navigate('/login'); }}
             title={collapsed ? 'Logout' : undefined}
             className={cn(
-              'group mt-px flex w-full items-center gap-2.5 rounded-lg px-[7px] py-2 text-slate-400 transition-colors hover:bg-red-500/10 hover:text-red-400',
+              'group mt-px flex w-full items-center gap-2.5 rounded-lg px-[7px] py-2 text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400',
               collapsed && 'justify-center',
             )}
           >

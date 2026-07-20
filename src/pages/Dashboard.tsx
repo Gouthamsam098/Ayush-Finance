@@ -52,23 +52,27 @@ export default function Dashboard() {
   const heroKpis: HeroKpi[] = [
     {
       icon: Users, value: String(d.customers.length), label: 'Customers', chip: `${active.length} active`,
-      iconBg: 'bg-indigo-500/30', iconColor: 'text-indigo-200', chipClass: 'bg-indigo-500/25 text-indigo-200',
-      tileTint: 'border-indigo-400/25 bg-indigo-500/[.12]',
+      iconBg: 'bg-indigo-100 dark:bg-indigo-500/30', iconColor: 'text-indigo-600 dark:text-indigo-200',
+      chipClass: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/25 dark:text-indigo-200',
+      tileTint: 'border-indigo-200 bg-indigo-50 dark:border-indigo-400/25 dark:bg-indigo-500/[.12]',
     },
     {
       icon: Banknote, value: inrShort(todayColl), label: "Today's collection",
       chip: `${todayCollList.length} receipt${todayCollList.length === 1 ? '' : 's'}`,
-      iconBg: 'bg-emerald-500/25', iconColor: 'text-emerald-300', chipClass: 'bg-emerald-500/20 text-emerald-300',
-      tileTint: 'border-emerald-400/25 bg-emerald-500/[.12]',
+      iconBg: 'bg-emerald-100 dark:bg-emerald-500/25', iconColor: 'text-emerald-600 dark:text-emerald-300',
+      chipClass: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+      tileTint: 'border-emerald-200 bg-emerald-50 dark:border-emerald-400/25 dark:bg-emerald-500/[.12]',
     },
     {
       icon: TrendingUp, value: inrShort(monthColl), label: 'Monthly collection', chip: monthLabel,
-      iconBg: 'bg-amber-500/25', iconColor: 'text-amber-300', chipClass: 'bg-amber-500/20 text-amber-300',
-      tileTint: 'border-amber-400/25 bg-amber-500/[.12]',
+      iconBg: 'bg-amber-100 dark:bg-amber-500/25', iconColor: 'text-amber-600 dark:text-amber-300',
+      chipClass: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+      tileTint: 'border-amber-200 bg-amber-50 dark:border-amber-400/25 dark:bg-amber-500/[.12]',
     },
     {
       icon: AlertTriangle, value: `${collectionRate}%`, label: 'Collection rate', chip: rateChip,
-      iconBg: 'bg-red-500/30', iconColor: 'text-red-300', chipClass: 'bg-red-500/25 text-red-300',
+      iconBg: 'bg-red-100 dark:bg-red-500/30', iconColor: 'text-red-600 dark:text-red-300',
+      chipClass: 'bg-red-100 text-red-700 dark:bg-red-500/25 dark:text-red-300',
       danger: collectionRate < 50,
     },
   ];
