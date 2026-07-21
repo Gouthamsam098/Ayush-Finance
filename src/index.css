@@ -272,6 +272,11 @@ button, a, input, select, textarea {
    ══════════════════════════════════════════════════════════════ */
 
 /* ---- Keyframes ---- */
+@keyframes shimmer-border {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
 @keyframes aurora {
   0%,100% { transform: translate3d(0,0,0) scale(1); }
   33%     { transform: translate3d(4%,-6%,0) scale(1.15); }

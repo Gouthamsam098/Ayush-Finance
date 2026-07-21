@@ -7,6 +7,7 @@ import { Drawer } from '@/components/ui/drawer';
 import { useToast } from '@/components/ui/toast';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
 import { inr, inrShort, fmtDate, initials } from '@/lib/format';
 import { config } from '@/lib/config';
@@ -25,7 +26,7 @@ import {
   FilterCard, SegGroup, Seg, ToggleRow, NumFilterRow, CityPill, MatchPreview, drawerSelectCls,
 } from '@/components/ui/filter-kit';
 import {
-  Search, Plus, Eye, Pencil, Trash2, Download, Upload as UploadIcon, Users,
+  Search, Plus, Eye, Pencil, Trash2, Download, Users,
   FileText, AlertTriangle, ArrowRight, AlertCircle, Clock, IndianRupee,
   User, MapPin, ShieldCheck, Upload, SlidersHorizontal, Activity,
   CreditCard, Check, X, Car, Home, RotateCcw, ChevronLeft, ChevronRight, ChevronDown,
@@ -340,8 +341,7 @@ export default function Customers() {
         actions={
           <>
             <HeaderGhostButton icon={<Download size={14} />}>Export</HeaderGhostButton>
-            <HeaderGhostButton icon={<UploadIcon size={14} />}>Import</HeaderGhostButton>
-            <HeaderPrimaryButton icon={<Plus size={14} />} onClick={openAdd}>Add customer</HeaderPrimaryButton>
+            <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openAdd}>Add customer</HeaderPrimaryButton>
           </>
         }
       />
@@ -471,6 +471,7 @@ export default function Customers() {
               <tbody className="divide-y divide-slate-100 dark:divide-white/[.05]">
                 {rows.map((c, i) => {
                   const cLoans = loansOf(c.id);
+                  const activeLoans = cLoans.filter((l) => l.status === 'ACTIVE');
                   const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
                   const hasOverdue = cLoans.some((l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE');
                   const kyc = kycOf(c);
@@ -506,10 +507,10 @@ export default function Customers() {
                       <td className="px-5 py-4 text-[14px] font-medium text-ink/85 tabular-nums">{c.mobile}</td>
                       <td className="px-5 py-4 text-[14px] text-ink/85">{c.city || '—'}</td>
                       <td className="px-5 py-4">
-                        {cLoans.length > 0 ? (
+                        {activeLoans.length > 0 ? (
                           <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-[12px] font-semibold text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
                             <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-                            {cLoans.length} {cLoans.length === 1 ? 'loan' : 'loans'}
+                            {activeLoans.length} {activeLoans.length === 1 ? 'loan' : 'loans'}
                           </span>
                         ) : (
                           <span className="inline-flex items-center rounded-full border-[0.5px] border-slate-200 bg-slate-50 px-2.5 py-1 text-[12px] font-medium text-muted dark:border-white/[.08] dark:bg-white/[.03]">
@@ -644,7 +645,7 @@ export default function Customers() {
                 <Input label="Email" type="email" placeholder="Enter email address" value={form.email ?? ''} onChange={(e) => set('email', e.target.value)} error={errors.email} />
                 <Input label="Occupation" placeholder="Enter occupation" value={form.occupation ?? ''} onChange={(e) => set('occupation', e.target.value)} error={errors.occupation} />
                 <Input label="Monthly Income" type="number" placeholder="Enter monthly income" value={form.monthlyIncome ?? ''} onChange={(e) => set('monthlyIncome', e.target.value)} error={errors.monthlyIncome} />
-                <Input label="Date of Birth" type="date" value={form.dateOfBirth ?? ''} onChange={(e) => set('dateOfBirth', e.target.value)} error={errors.dateOfBirth} />
+                <DatePicker label="Date of Birth" value={form.dateOfBirth ?? ''} onChange={(e) => set('dateOfBirth', e.target.value)} error={errors.dateOfBirth} />
               </div>
             </section>
 

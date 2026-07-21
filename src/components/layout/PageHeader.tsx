@@ -64,16 +64,31 @@ export function HeaderGhostButton({
   );
 }
 
-/** Primary (indigo) button styled for the dark PageHeader. */
+/** Primary button styled for the PageHeader. With `beam`, a white light streak
+ *  continuously runs 360° around the border (opt-in — off by default). */
 export function HeaderPrimaryButton({
-  icon, children, onClick,
-}: { icon?: ReactNode; children: ReactNode; onClick?: () => void }) {
-  return (
+  icon, children, onClick, beam = false,
+}: { icon?: ReactNode; children: ReactNode; onClick?: () => void; beam?: boolean }) {
+  const btn = (
     <button
       onClick={onClick}
       className="flex items-center gap-1.5 rounded-lg bg-blue-500 px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-blue-600"
     >
       {icon}{children}
     </button>
+  );
+  if (!beam) return btn;
+  return (
+    <span className="relative inline-flex overflow-hidden rounded-[10px] bg-blue-900 p-[2px] shadow-[0_2px_12px_-2px_rgba(37,99,235,.55)]">
+      {/* Rotating conic gradient over a dark-blue track — only the ~2px ring
+          shows, so a bright white line travels around the button's perimeter.
+          The dark track keeps the white beam visible on any page background. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-[-45%] animate-[spin_3s_linear_infinite] bg-[conic-gradient(from_0deg,transparent_0%,transparent_62%,#ffffff_82%,#ffffff_90%,transparent_99%)]"
+      />
+      {/* Button sits above the beam and hides its centre. */}
+      <span className="relative z-10 inline-flex">{btn}</span>
+    </span>
   );
 }

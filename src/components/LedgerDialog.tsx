@@ -316,7 +316,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     { k: interestPeriodLabel, v: inr(instalment), sub: 'Per cycle' },
     // Interest bucket ONLY — a principal settlement must not inflate this figure.
     { k: 'Interest Collected', v: inr(d.interestCollectedFor(loan.id)), sub: undefined as string | undefined },
-    { k: 'Interest Due', v: inr(d.totalDueForInterestOnly(loan)), sub: 'Accrued, unpaid' },
+    { k: 'Interest Due', v: inr(d.totalDueForInterestOnly(loan)), sub: 'Accrued, unpaid', danger: true },
     { k: 'Outstanding', v: inr(outstanding), sub: 'Principal + interest', hi: true },
   ] : emiLoan ? [
     { k: 'Principal', v: inr(loan.principal), sub: 'Disbursed in full' },
@@ -412,7 +412,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-blue-400 to-primary text-sm font-bold text-white">{initials(cust?.name ?? '—')}</div>
           <div>
             <div className="font-display text-base font-bold">{cust?.name ?? '—'}</div>
-            <div className="flex items-center gap-1.5 text-xs text-muted"><Phone size={12} /> {loan.contact || cust?.mobile || '—'} · {loan.loanNumber}</div>
+            <div className="flex items-center gap-1.5 text-xs text-muted"><Phone size={12} /> {loan.contact || cust?.mobile || '—'}</div>
           </div>
         </div>
         <div className="text-xs text-muted">Loan date: <span className="font-semibold text-slate-600 dark:text-slate-300">{fmtDate(loan.loanDate)}</span></div>
@@ -459,7 +459,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
             {/* Fixed slots: label (2-line reserve, top) · value (bottom-aligned) ·
                 caption (single line). Every card the same height; values line up. */}
             <div className="flex min-h-[28px] items-start text-[10px] font-bold uppercase leading-[1.3] tracking-[0.04em] text-muted">{c.k}</div>
-            <div className={`mt-auto font-display text-[18px] font-bold leading-none tabular-nums ${c.hi ? 'text-warning-600 dark:text-warning' : 'text-ink'}`}>{c.v}</div>
+            <div className={`mt-auto font-display text-[18px] font-bold leading-none tabular-nums ${c.danger ? 'text-danger' : c.hi ? 'text-warning-600 dark:text-warning' : 'text-ink'}`}>{c.v}</div>
             <div className="mt-1.5 h-[13px] truncate text-[10px] leading-none text-muted">{c.sub ?? ''}</div>
           </div>
         ))}

@@ -3,6 +3,7 @@ import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, type 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
@@ -151,7 +152,7 @@ export default function Collections() {
         icon={<HandCoins size={20} />}
         title="Collections"
         subtitle={`${d.collections.length} payments recorded · ${kpis.activeCount} active loans`}
-        actions={<HeaderPrimaryButton icon={<Plus size={14} />} onClick={openAdd}>Add Collection</HeaderPrimaryButton>}
+        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openAdd}>Add Collection</HeaderPrimaryButton>}
       />
 
       <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
@@ -315,7 +316,7 @@ export default function Collections() {
                 </p>
               )}
             </div>
-            <Input label="Date" type="date" value={form.date} onChange={(e) => set('date', e.target.value)} />
+            <DatePicker label="Date" value={form.date} onChange={(e) => set('date', e.target.value)} />
             <Select label="Payment mode" value={form.mode} onChange={(e) => set('mode', e.target.value as PayMode)} options={MODES.map((m) => ({ value: m, label: m }))} />
             <div className="sm:col-span-2"><Input label="Remarks" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></div>
           </div>
@@ -334,7 +335,7 @@ function TableCard({ children, note }: { children: ReactNode; note: string }) {
   return (
     <div className="anim-pop overflow-hidden rounded-card border border-slate-200/90 bg-white shadow-card dark:border-white/[.07] dark:bg-surface" style={{ animationDelay: '80ms' }}>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">{children}</table>
+        <table className="w-full text-[15px]">{children}</table>
       </div>
       <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] text-muted dark:border-white/[.06]">{note}</p>
     </div>
@@ -344,9 +345,9 @@ function TableCard({ children, note }: { children: ReactNode; note: string }) {
 /** Full-width gradient header row matching the Loans table treatment. */
 function HeaderRow({ cols }: { cols: string[] }) {
   return (
-    <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-[11px] font-bold uppercase tracking-[0.07em] text-white">
+    <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-[12px] font-bold uppercase tracking-[0.08em] text-white">
       {cols.map((c, i) => (
-        <th key={c} className={`whitespace-nowrap px-4 py-3 ${c === 'Actions' ? 'text-center' : 'text-left'} ${i === 0 ? 'rounded-l-none' : ''}`}>{c}</th>
+        <th key={c} className={`whitespace-nowrap px-5 py-3.5 ${c === 'Actions' ? 'text-center' : 'text-left'} ${i === 0 ? 'rounded-l-none' : ''}`}>{c}</th>
       ))}
     </tr>
   );
@@ -357,7 +358,7 @@ function Row({ children }: { children: ReactNode }) {
 }
 
 function Td({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <td className={`whitespace-nowrap px-4 py-3 ${className}`}>{children}</td>;
+  return <td className={`whitespace-nowrap px-5 py-4 ${className}`}>{children}</td>;
 }
 
 function ActionTd({ onView }: { onView: () => void }) {

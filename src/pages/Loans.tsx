@@ -7,7 +7,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { Drawer } from '@/components/ui/drawer';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
-import { inr, inrShort, fmtDate, todayISO, addDays, DAILY_TERM } from '@/lib/format';
+import { inr, inrShort, fmtDate, todayISO, addDays, initials, DAILY_TERM } from '@/lib/format';
 import { emptyNum, matchNum, numActive, type NumFilter } from '@/lib/customerFilters';
 import { FilterCard, SegGroup, Seg, NumFilterRow, MatchPreview } from '@/components/ui/filter-kit';
 import { StatCard } from '@/components/ui/stat-card';
@@ -17,9 +17,10 @@ import { loanApi } from '@/services/loanApi';
 import {
   Search, Plus, FileText, Pencil, Trash2, CheckCircle2, SlidersHorizontal, MoreVertical,
   Wallet, AlertTriangle, CalendarClock, Layers, Lock, RotateCcw, ArrowUpDown, Activity, IndianRupee,
-  User, Calendar, Car, Phone, Calculator, Percent, X,
+  User, Calendar, Car, Phone, Calculator, Percent, X, ChevronLeft, ChevronRight, ChevronDown,
 } from 'lucide-react';
 import { LedgerDialog } from '@/components/LedgerDialog';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const TYPE_OPTS = (Object.keys(LOAN_LABELS) as LoanType[]).map((v) => ({ value: v, label: LOAN_LABELS[v] }));
 
@@ -156,7 +157,7 @@ function validateLoanForm(f: LoanForm): LoanErrors {
 }
 
 type Urgency = 'all' | 'overdue' | 'soon';
-type SortMode = 'urgency' | 'amount';
+type SortMode = 'newest' | 'urgency' | 'amount';
 
 /** Drawer-managed loan filters (draft is edited in the drawer, applied on button). */
 interface LoanFilters {
@@ -167,8 +168,23 @@ interface LoanFilters {
   sort: SortMode;
 }
 const defaultLoanFilters = (): LoanFilters => ({
-  status: '', types: [], outstanding: emptyNum(), principal: emptyNum(), sort: 'urgency',
+  status: '', types: [], outstanding: emptyNum(), principal: emptyNum(), sort: 'newest',
 });
+
+const PAGE_SIZE_OPTIONS = [6, 10, 25, 50];
+
+/** Page-number list with ellipses for the pagination footer. */
+function loanPageNumbers(current: number, total: number): (number | '…')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const out: (number | '…')[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  if (start > 2) out.push('…');
+  for (let p = start; p <= end; p++) out.push(p);
+  if (end < total - 1) out.push('…');
+  out.push(total);
+  return out;
+}
 /** How many drawer dimensions are constraining the list (sort excluded). */
 const countLoanFilters = (f: LoanFilters) =>
   (f.status ? 1 : 0) + (f.types.length ? 1 : 0) + (numActive(f.outstanding) ? 1 : 0) + (numActive(f.principal) ? 1 : 0);
@@ -188,6 +204,8 @@ export default function Loans() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [errors, setErrors] = useState<LoanErrors>({});
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(6);
 
   const custName = (id: number) => d.customers.find((c) => c.id === id)?.name ?? '—';
   const set = <K extends keyof LoanForm>(k: K, v: string) => {
@@ -317,11 +335,18 @@ export default function Loans() {
 
   const rows = useMemo(() => {
     const r = d.loans.filter((l) => loanPasses(l, filters));
+    if (filters.sort === 'newest') r.sort((a, b) => b.id - a.id); // latest-created first
     if (filters.sort === 'urgency') r.sort((a, b) => (dueInDaysOf(a) ?? 9999) - (dueInDaysOf(b) ?? 9999));
     if (filters.sort === 'amount') r.sort((a, b) => d.outstandingFor(b) - d.outstandingFor(a));
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.loans, d.collections, d.customers, filters, urgency, query]);
+
+  // Pagination (mirrors Customers). Reset to page 1 whenever the result set changes.
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageRows = rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  useEffect(() => { setPage(1); }, [query, urgency, filters, pageSize]);
 
   // Live count of what the drawer draft would match (respects urgency + search).
   const draftMatchCount = useMemo(
@@ -423,7 +448,7 @@ export default function Loans() {
         icon={<Layers size={20} />}
         title="Loans"
         subtitle={`${stats.count} loans across ${TYPE_OPTS.length} types · automatic interest`}
-        actions={<HeaderPrimaryButton icon={<Plus size={14} />} onClick={openCreate}>Create Loan</HeaderPrimaryButton>}
+        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openCreate}>Create Loan</HeaderPrimaryButton>}
       />
 
       <div className="flex flex-1 flex-col gap-4 p-3.5 sm:px-5">
@@ -499,7 +524,7 @@ export default function Loans() {
 
         {/* Rows */}
         <div className="flex flex-col gap-2">
-          {rows.map((l) => {
+          {pageRows.map((l) => {
             const t = TYPE_META[l.type];
             const dd = dueInDaysOf(l);
             const endDate = endDateOf(l);
@@ -520,11 +545,18 @@ export default function Loans() {
               >
                 {/* Borrower — hover reveals the ⋮ actions menu */}
                 <div className="flex min-w-0 items-center gap-3">
-                  <div
-                    className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl border"
-                    style={{ background: t.bg, borderColor: t.bd }}
-                  >
-                    <span className="h-3 w-3 rounded-full" style={{ background: t.dot }} />
+                  <div className="relative shrink-0">
+                    <div
+                      className="flex h-[46px] w-[46px] items-center justify-center rounded-2xl border text-[15px] font-bold tracking-tight shadow-sm"
+                      style={{ background: t.bg, borderColor: t.bd, color: t.fg }}
+                    >
+                      {initials(custName(l.customerId))}
+                    </div>
+                    {/* Loan-type accent dot */}
+                    <span
+                      className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white dark:border-surface"
+                      style={{ background: t.dot }}
+                    />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[15px] font-semibold text-ink">{custName(l.customerId)}</div>
@@ -534,16 +566,13 @@ export default function Loans() {
                       onClick={() => setMenuFor(menuFor === l.id ? null : l.id)}
                       title="Actions" aria-label="Loan actions"
                       className={`grid h-8 w-8 place-items-center rounded-lg text-muted transition-all hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.08] ${
-                        menuFor === l.id ? 'bg-slate-100 opacity-100 dark:bg-white/[.08]' : 'opacity-0 group-hover:opacity-100 max-lg:opacity-100'
+                        menuFor === l.id ? 'bg-slate-100 opacity-100 dark:bg-white/[.08]' : 'opacity-100'
                       }`}
                     >
                       <MoreVertical size={16} />
                     </button>
                     {menuFor === l.id && (
-                      <>
-                        {/* click-outside catcher */}
-                        <div className="fixed inset-0 z-40" onClick={() => setMenuFor(null)} />
-                        <div className="absolute left-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900">
+                      <div className="absolute left-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900">
                           <MenuItem icon={<FileText size={14} />} label="Statement" onClick={() => { setMenuFor(null); setLedger(l); }} />
                           <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { setMenuFor(null); editLoan(l); }} />
                           {l.status === 'ACTIVE' ? (
@@ -558,7 +587,6 @@ export default function Loans() {
                           )}
                           <MenuItem danger icon={<Trash2 size={14} />} label="Delete" onClick={() => { setMenuFor(null); setConfirm(l); }} />
                         </div>
-                      </>
                     )}
                   </div>
                 </div>
@@ -645,10 +673,65 @@ export default function Loans() {
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between text-[14px] text-muted">
-          <span>Showing 1–{rows.length} of {stats.count} loans</span>
-        </div>
+        {/* Global click-outside overlay for row action menus — rendered outside motion.tr so fixed positioning works correctly */}
+        {menuFor !== null && (
+          <div className="fixed inset-0 z-40" onClick={() => setMenuFor(null)} />
+        )}
+
+        {/* Footer — pagination (matches Customers) */}
+        {rows.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-[14px] text-muted">
+            <span>
+              Showing <span className="font-semibold text-ink">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, rows.length)}</span> of{' '}
+              <span className="font-semibold text-ink">{rows.length}</span> loans
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="grid h-9 w-9 place-items-center rounded-lg border-[0.5px] border-slate-200 bg-white text-muted transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-white/10 dark:bg-surface"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              {loanPageNumbers(currentPage, totalPages).map((p, idx) =>
+                p === '…' ? (
+                  <span key={`e${idx}`} className="px-1 text-muted">…</span>
+                ) : (
+                  <button
+                    key={p}
+                    onClick={() => setPage(p as number)}
+                    className={`grid h-9 min-w-9 place-items-center rounded-lg px-2.5 text-[14px] font-semibold transition-colors ${
+                      p === currentPage
+                        ? 'bg-blue-500 text-white shadow-sm shadow-blue-500/30'
+                        : 'border-[0.5px] border-slate-200 bg-white text-ink/70 hover:bg-slate-50 dark:border-white/10 dark:bg-surface'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ),
+              )}
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="grid h-9 w-9 place-items-center rounded-lg border-[0.5px] border-slate-200 bg-white text-muted transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-white/10 dark:bg-surface"
+              >
+                <ChevronRight size={16} />
+              </button>
+              <div className="relative ml-1">
+                <select
+                  value={pageSize}
+                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                  className="h-9 appearance-none rounded-lg border-[0.5px] border-slate-200 bg-white pl-2.5 pr-8 text-[14px] text-muted outline-none [color-scheme:light] dark:border-white/10 dark:bg-surface dark:[color-scheme:dark]"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n} style={{ backgroundColor: 'rgb(var(--surface))', color: 'rgb(var(--ink))' }}>{n} / page</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Filters — premium right-side drawer (draft, applied on button) */}
@@ -676,8 +759,9 @@ export default function Loans() {
           />
 
           {/* Sort */}
-          <FilterCard icon={<ArrowUpDown size={16} />} title="Sort by" color="amber" active={draft.sort !== 'urgency'}>
+          <FilterCard icon={<ArrowUpDown size={16} />} title="Sort by" color="amber" active={draft.sort !== 'newest'}>
             <SegGroup>
+              <Seg active={draft.sort === 'newest'} onClick={() => setDraft({ ...draft, sort: 'newest' })} tone="amber">Newest</Seg>
               <Seg active={draft.sort === 'urgency'} onClick={() => setDraft({ ...draft, sort: 'urgency' })} tone="amber">Due next</Seg>
               <Seg active={draft.sort === 'amount'} onClick={() => setDraft({ ...draft, sort: 'amount' })} tone="amber">Largest first</Seg>
             </SegGroup>
@@ -753,7 +837,14 @@ export default function Loans() {
             {/* 1 — Borrower & product */}
             <FormCard icon={<User size={16} />} title="Borrower & product" color="blue">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Select label="Customer *" value={form.customerId} onChange={(e) => set('customerId', e.target.value)} error={errors.customerId}
+                <Select label="Customer *" value={form.customerId} onChange={(e) => {
+                    const custId = e.target.value;
+                    set('customerId', custId);
+                    if (custId) {
+                      const customer = d.customers.find((c) => c.id === Number(custId));
+                      if (customer?.mobile) set('contact', customer.mobile);
+                    }
+                  }} error={errors.customerId}
                   options={[{ value: '', label: 'Select customer…' }, ...d.customers.map((c) => ({ value: String(c.id), label: `${c.name} (${c.code})` }))]} />
                 <Select label="Loan type *" value={form.type} onChange={(e) => set('type', e.target.value)} options={TYPE_OPTS} />
               </div>
@@ -806,7 +897,7 @@ export default function Loans() {
             {/* 3 — Schedule */}
             <FormCard icon={<Calendar size={16} />} title="Schedule" color="violet">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Input label="Loan date" type="date" value={form.loanDate} onChange={(e) => set('loanDate', e.target.value)} error={errors.loanDate} />
+                <DatePicker label="Loan date" value={form.loanDate} onChange={(e) => set('loanDate', e.target.value)} error={errors.loanDate} />
                 <div>
                   <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Term (auto)</span>
                   <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-semibold dark:border-white/[.08] dark:bg-white/[.04]">
@@ -1052,7 +1143,7 @@ function LoanSummaryPopup({ open, onClose, p, customer }: { open: boolean; onClo
                 <span className="h-2 w-2 rounded-full" style={{ background: meta.dot }} /> {LOAN_LABELS[p.type]}
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-[11.5px] font-semibold ring-1 ring-white/20">
-                <Percent size={11} /> ~{p.annualPct ? p.annualPct.toFixed(0) : 0}% p.a.
+                <Percent size={11} /> {p.rate}% interest
               </span>
             </div>
           </div>
