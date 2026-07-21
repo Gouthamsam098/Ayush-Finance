@@ -5,6 +5,7 @@
 **Anush LMS** is a React 18 + TypeScript + Vite-based web UI for a Loan Management System (LMS). The application handles loan lifecycle management including customer management, loan applications, collections, expenses, documents, reporting, and SMS notifications.
 
 **Stack:**
+
 - **Frontend**: React 18, TypeScript, Vite
 - **State Management**: Redux Toolkit (`@reduxjs/toolkit`)
 - **Routing**: React Router v6 with protected routes

@@ -43,7 +43,7 @@ export default function Settings() {
   const setStatus = (id: string, status: AppUser['status']) => setUsers((s) => s.map((u) => (u.id === id ? { ...u, status } : u)));
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 p-3.5 sm:p-5">
       <PageHeader title="Settings" subtitle="Company profile, security and user access" />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">

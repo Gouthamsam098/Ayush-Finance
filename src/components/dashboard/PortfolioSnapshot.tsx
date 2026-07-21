@@ -23,11 +23,11 @@ export function PortfolioSnapshot({
   const rateNote = healthy ? 'Healthy' : watch ? 'Watch' : 'At risk';
 
   return (
-    <div className="flex flex-col gap-3 rounded-xl border-[0.5px] border-slate-200/70 bg-white p-4 dark:border-indigo-500/25 dark:bg-[#0c1220]">
+    <div className="flex flex-col gap-3 rounded-xl border-[0.5px] border-slate-200/70 bg-white p-4 dark:border-blue-500/25 dark:bg-[#0c1220]">
       <div className="text-[11px] font-semibold uppercase tracking-[0.07em] text-slate-500 dark:text-slate-400">Portfolio snapshot</div>
 
       {/* Outstanding */}
-      <div className="rounded-xl border-[0.5px] border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-400/30 dark:bg-indigo-500/20">
+      <div className="rounded-xl border-[0.5px] border-blue-200 bg-blue-50 p-4 dark:border-blue-400/30 dark:bg-blue-500/20">
         <div className="mb-1 text-xs text-slate-500 dark:text-slate-300">Outstanding</div>
         <div className="text-[28px] font-semibold leading-[1.1] text-slate-900 dark:text-white">{outstanding}</div>
         <div className="mt-1.5 flex items-center gap-1.5 text-[13px] text-emerald-600 dark:text-emerald-300">

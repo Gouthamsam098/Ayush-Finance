@@ -57,7 +57,7 @@ export function StatementView({ loan }: { loan: Loan }) {
   return (
     <div className="overflow-hidden rounded-xl border-[0.5px] border-slate-200/80 bg-white text-ink shadow-card dark:border-white/[.08] dark:bg-surface">
       {/* Document header — brand band with title + reference */}
-      <div className="relative overflow-hidden bg-gradient-to-r from-indigo-600 via-indigo-600 to-violet-600 px-5 py-4 text-white">
+      <div className="relative overflow-hidden bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 px-5 py-4 text-white">
         <span className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
         <div className="relative flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -112,7 +112,7 @@ export function StatementView({ loan }: { loan: Loan }) {
           <div className="max-h-[44vh] overflow-auto rounded-xl border-[0.5px] border-slate-200/70 dark:border-white/[.06]">
             <table className="w-full min-w-[720px] border-collapse text-[12px] tabular-nums">
               <thead>
-                <tr className="text-left [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-gradient-to-r [&>th]:from-indigo-600 [&>th]:to-violet-600 [&>th]:px-3 [&>th]:py-2.5 [&>th]:text-[11px] [&>th]:font-bold [&>th]:uppercase [&>th]:tracking-wide [&>th]:text-white">
+                <tr className="text-left [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-gradient-to-r [&>th]:from-blue-600 [&>th]:to-blue-600 [&>th]:px-3 [&>th]:py-2.5 [&>th]:text-[11px] [&>th]:font-bold [&>th]:uppercase [&>th]:tracking-wide [&>th]:text-white">
                   <th className="!text-center">Instl</th>
                   <th>Due Date</th>
                   <th className="!text-right">Opening</th>
@@ -131,7 +131,7 @@ export function StatementView({ loan }: { loan: Loan }) {
                   return (
                     <tr
                       key={r.sn}
-                      className={`border-t border-l-[3px] border-slate-100 dark:border-white/[.06] ${accent} ${r.sn % 2 === 0 ? 'bg-slate-50/50 dark:bg-white/[.015]' : ''} transition-colors hover:bg-indigo-50/40 dark:hover:bg-indigo-500/[.06]`}
+                      className={`border-t border-l-[3px] border-slate-100 dark:border-white/[.06] ${accent} ${r.sn % 2 === 0 ? 'bg-slate-50/50 dark:bg-white/[.015]' : ''} transition-colors hover:bg-blue-50/40 dark:hover:bg-blue-500/[.06]`}
                     >
                       <td className="px-3 py-2 text-center text-muted">{r.sn}</td>
                       <td className="px-3 py-2 whitespace-nowrap font-medium">{fmtDate(r.dueDate)}</td>
@@ -174,7 +174,7 @@ export function StatementView({ loan }: { loan: Loan }) {
 function StatusPill({ kind }: { kind: 'paid' | 'overdue' | 'due' | 'settled' }) {
   const map = {
     paid: { label: 'Paid', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', dot: 'bg-emerald-500' },
-    settled: { label: 'Foreclosed', cls: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300', dot: 'bg-indigo-500' },
+    settled: { label: 'Foreclosed', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300', dot: 'bg-blue-500' },
     overdue: { label: 'Overdue', cls: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300', dot: 'bg-red-500' },
     due: { label: 'Due', cls: 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-400', dot: 'bg-slate-400' },
   }[kind];

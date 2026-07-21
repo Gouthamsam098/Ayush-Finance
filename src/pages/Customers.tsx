@@ -393,7 +393,7 @@ export default function Customers() {
           <div className="flex items-center gap-2">
             {/* Expandable search */}
             <div
-              className={`flex items-center gap-2 rounded-lg border-[0.5px] transition-all duration-200 focus-within:border-indigo-500 ${
+              className={`flex items-center gap-2 rounded-lg border-[0.5px] transition-all duration-200 focus-within:border-blue-500 ${
                 searchOpen || q
                   ? 'w-56 border-slate-200/70 bg-white px-3 py-2.5 dark:border-white/[.06] dark:bg-surface'
                   : 'w-9 justify-center border-transparent'
@@ -428,13 +428,13 @@ export default function Customers() {
               onClick={openFilters}
               className={`relative inline-flex items-center gap-2 rounded-lg border-[0.5px] px-4 py-2.5 text-[14px] font-semibold transition-colors ${
                 activeFilterCount > 0
-                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-400/40 dark:bg-indigo-500/15 dark:text-indigo-300'
+                  ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-400/40 dark:bg-blue-500/15 dark:text-blue-300'
                   : 'border-slate-200/70 bg-white text-ink/80 hover:bg-slate-50 dark:border-white/[.06] dark:bg-surface dark:hover:bg-white/[.03]'
               }`}
             >
               <SlidersHorizontal size={16} /> Filters
               {activeFilterCount > 0 && (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-500 px-1.5 text-[11px] font-bold text-white">
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[11px] font-bold text-white">
                   {activeFilterCount}
                 </span>
               )}
@@ -456,7 +456,7 @@ export default function Customers() {
           <div className="min-h-0 flex-1 overflow-auto">
             <table className="w-full text-[15px]">
               <thead className="sticky top-0 z-10">
-                <tr className="bg-gradient-to-r from-indigo-50 via-slate-50 to-violet-50 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-slate-600 dark:from-indigo-500/[.12] dark:via-white/[.04] dark:to-violet-500/[.12] dark:text-slate-300">
+                <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer ID</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Mobile</th>
@@ -481,7 +481,7 @@ export default function Customers() {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       transition={{ delay: Math.min(i * 0.03, 0.3) }}
-                      className={`group cursor-pointer transition-colors hover:bg-indigo-50/50 dark:hover:bg-indigo-500/[.06] ${hasOverdue ? 'bg-red-500/[.03]' : 'odd:bg-slate-50/40 dark:odd:bg-white/[.015]'}`}
+                      className={`group cursor-pointer transition-colors hover:bg-blue-50/50 dark:hover:bg-blue-500/[.06] ${hasOverdue ? 'bg-red-500/[.03]' : 'odd:bg-slate-50/40 dark:odd:bg-white/[.015]'}`}
                       onClick={() => setView(c)}
                     >
                       <td className="px-5 py-4">
@@ -507,8 +507,8 @@ export default function Customers() {
                       <td className="px-5 py-4 text-[14px] text-ink/85">{c.city || '—'}</td>
                       <td className="px-5 py-4">
                         {cLoans.length > 0 ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-2.5 py-1 text-[12px] font-semibold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
-                            <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-[12px] font-semibold text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
                             {cLoans.length} {cLoans.length === 1 ? 'loan' : 'loans'}
                           </span>
                         ) : (
@@ -524,8 +524,8 @@ export default function Customers() {
                       <td className="px-5 py-4"><StatusBadge overdue={hasOverdue} active={activeLoan} /></td>
                       <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1 opacity-60 transition-opacity group-hover:opacity-100">
-                          <RowAction icon={<Eye size={16} />} title="View" onClick={() => setView(c)} hover="hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-500/15" />
-                          <RowAction icon={<Pencil size={16} />} title="Edit" onClick={() => openEdit(c)} hover="hover:bg-violet-50 hover:text-violet-600 dark:hover:bg-violet-500/15" />
+                          <RowAction icon={<Eye size={16} />} title="View" onClick={() => setView(c)} hover="hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/15" />
+                          <RowAction icon={<Pencil size={16} />} title="Edit" onClick={() => openEdit(c)} hover="hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/15" />
                           <RowAction icon={<Trash2 size={16} />} title="Delete" onClick={() => setConfirm(c)} hover="hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15" />
                         </div>
                       </td>
@@ -538,7 +538,7 @@ export default function Customers() {
             {/* Empty state */}
             {rows.length === 0 && (
               <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
-                <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-indigo-50 text-indigo-500 dark:bg-indigo-500/15">
+                <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-blue-50 text-blue-500 dark:bg-blue-500/15">
                   <Users size={28} />
                 </div>
                 <h3 className="text-base font-semibold text-ink">
@@ -550,7 +550,7 @@ export default function Customers() {
                 {!filtersActive && (
                   <button
                     onClick={openAdd}
-                    className="mt-5 inline-flex items-center gap-2 rounded-lg bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-600"
+                    className="mt-5 inline-flex items-center gap-2 rounded-lg bg-blue-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-600"
                   >
                     <Plus size={16} /> Add first customer
                   </button>
@@ -583,7 +583,7 @@ export default function Customers() {
                       onClick={() => setPage(p as number)}
                       className={`grid h-9 min-w-9 place-items-center rounded-lg px-2.5 text-[14px] font-semibold transition-colors ${
                         p === currentPage
-                          ? 'bg-indigo-500 text-white shadow-sm shadow-indigo-500/30'
+                          ? 'bg-blue-500 text-white shadow-sm shadow-blue-500/30'
                           : 'border-[0.5px] border-slate-200 bg-white text-ink/70 hover:bg-slate-50 dark:border-white/10 dark:bg-white/5'
                       }`}
                     >
@@ -908,16 +908,24 @@ export default function Customers() {
                 ))}
             </div>
             <div>
-              <div className="mb-2 text-sm font-semibold">Loans ({loansOf(view.id).length})</div>
-              <div className="space-y-2">
-                {loansOf(view.id).map((l) => (
-                  <div key={l.id} className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm hover:bg-slate-50">
-                    <div className="flex items-center gap-2"><span className="font-mono text-xs text-slate-600">{l.loanNumber}</span><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></div>
-                    <div className="flex items-center gap-4"><span className="text-slate-600">{inr(l.principal)}</span><span className="font-semibold">Out: {inr(d.outstandingFor(l))}</span></div>
-                  </div>
-                ))}
-                {loansOf(view.id).length === 0 && <p className="text-sm text-slate-600">No loans yet.</p>}
-              </div>
+              {(() => {
+                // View card shows ACTIVE loans only — closed loans are hidden here.
+                const activeLoans = loansOf(view.id).filter((l) => l.status === 'ACTIVE');
+                return (
+                  <>
+                    <div className="mb-2 text-sm font-semibold">Loans ({activeLoans.length})</div>
+                    <div className="space-y-2">
+                      {activeLoans.map((l) => (
+                        <div key={l.id} className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm hover:bg-slate-50">
+                          <div className="flex items-center gap-2"><span className="font-mono text-xs text-slate-600">{l.loanNumber}</span><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></div>
+                          <div className="flex items-center gap-4"><span className="text-slate-600">{inr(l.principal)}</span><span className="font-semibold">Out: {inr(d.outstandingFor(l))}</span></div>
+                        </div>
+                      ))}
+                      {activeLoans.length === 0 && <p className="text-sm text-slate-600">No active loans.</p>}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -1026,7 +1034,7 @@ function RowAction({ icon, title, onClick, hover }: { icon: React.ReactNode; tit
 type SectionColor = 'blue' | 'violet' | 'emerald' | 'amber';
 const sectionColorClasses: Record<SectionColor, string> = {
   blue: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400',
-  violet: 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400',
+  violet: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400',
   emerald: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
   amber: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400',
 };

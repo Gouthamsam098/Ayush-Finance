@@ -413,7 +413,8 @@ export default function Loans() {
   };
   const openCreate = () => { setErrors({}); setForm(blank()); };
 
-  const GRID = 'grid grid-cols-[1.55fr_1.2fr_1fr_0.95fr_1.2fr_1.05fr_1fr_92px] items-center gap-4';
+  // Desktop-only table grid. Below lg, rows fall back to a stacked card layout.
+  const GRID = 'lg:grid lg:grid-cols-[1.55fr_1.2fr_1fr_0.95fr_1.2fr_1.05fr_1fr_92px] lg:items-center lg:gap-4';
 
   return (
     <div className="flex min-h-full flex-col">
@@ -446,7 +447,7 @@ export default function Loans() {
             {filtersOn && (
               <button
                 onClick={() => { setFilters(defaultLoanFilters()); setDraft(defaultLoanFilters()); setUrgency('all'); setQuery(''); }}
-                className="ml-1 text-[13px] font-semibold text-indigo-500 hover:underline"
+                className="ml-1 text-[13px] font-semibold text-blue-500 hover:underline"
               >
                 Clear
               </button>
@@ -455,7 +456,7 @@ export default function Loans() {
 
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Search */}
-            <div className="flex w-60 items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] focus-within:border-indigo-400 dark:border-white/[.08] dark:bg-surface">
+            <div className="flex w-60 items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] focus-within:border-blue-400 dark:border-white/[.08] dark:bg-surface">
               <Search size={16} className="shrink-0 text-slate-400" />
               <input
                 value={query}
@@ -470,13 +471,13 @@ export default function Loans() {
               onClick={openFilters}
               className={`relative inline-flex items-center gap-2 rounded-[11px] border-[0.5px] px-4 py-[9px] text-[14px] font-semibold transition-colors ${
                 activeFilterCount > 0
-                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-400/40 dark:bg-indigo-500/15 dark:text-indigo-300'
+                  ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-400/40 dark:bg-blue-500/15 dark:text-blue-300'
                   : 'border-slate-200/80 bg-white text-ink/80 hover:bg-slate-50 dark:border-white/[.08] dark:bg-surface dark:hover:bg-white/[.03]'
               }`}
             >
               <SlidersHorizontal size={16} /> Filters
               {activeFilterCount > 0 && (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-500 px-1.5 text-[11px] font-bold text-white">
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[11px] font-bold text-white">
                   {activeFilterCount}
                 </span>
               )}
@@ -485,7 +486,7 @@ export default function Loans() {
         </div>
 
         {/* Column header — solid full-color band */}
-        <div className={`${GRID} hidden rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-3.5 text-[12px] font-bold uppercase tracking-[0.08em] text-white shadow-[0_4px_14px_rgba(99,102,241,.3)] lg:grid`}>
+        <div className={`${GRID} hidden rounded-xl bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 px-5 py-3.5 text-[12px] font-bold uppercase tracking-[0.08em] text-white shadow-[0_4px_14px_rgba(37,99,235,.35)] lg:grid`}>
           <div>Borrower</div>
           <div>Loan</div>
           <div>Principal</div>
@@ -513,7 +514,7 @@ export default function Loans() {
             return (
               <div
                 key={l.id}
-                className={`${GRID} group rounded-[14px] border-[0.5px] border-slate-200/90 bg-white px-5 py-4 transition-all hover:-translate-y-px hover:border-slate-300 hover:shadow-[0_6px_20px_rgba(30,39,64,.08)] dark:border-white/[.07] dark:bg-surface dark:hover:border-white/[.14] ${
+                className={`${GRID} group flex flex-col gap-2.5 rounded-[14px] border-[0.5px] border-slate-200/90 bg-white px-5 py-4 transition-all hover:border-slate-300 hover:shadow-[0_6px_20px_rgba(30,39,64,.08)] lg:hover:-translate-y-px dark:border-white/[.07] dark:bg-surface dark:hover:border-white/[.14] ${
                   menuFor === l.id ? 'relative z-40' : ''
                 } ${closed && menuFor !== l.id ? 'opacity-70' : ''}`}
               >
@@ -569,17 +570,26 @@ export default function Loans() {
                 </div>
 
                 {/* Principal */}
-                <div className="text-[14.5px] tabular-nums text-ink/75">{inr(l.principal)}</div>
+                <div className="flex items-center justify-between text-[14.5px] tabular-nums text-ink/75 lg:block">
+                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Principal</span>
+                  <span>{inr(l.principal)}</span>
+                </div>
 
                 {/* Instalment (per-period amount) */}
-                <div className="tabular-nums">
-                  <span className="text-[14.5px] font-semibold text-ink">{l.dailyAmount ? inr(l.dailyAmount) : '—'}</span>
-                  {l.dailyAmount ? <span className="text-[11px] text-muted">{perSuffix}</span> : null}
+                <div className="flex items-center justify-between tabular-nums lg:block">
+                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Instalment</span>
+                  <span>
+                    <span className="text-[14.5px] font-semibold text-ink">{l.dailyAmount ? inr(l.dailyAmount) : '—'}</span>
+                    {l.dailyAmount ? <span className="text-[11px] text-muted">{perSuffix}</span> : null}
+                  </span>
                 </div>
 
                 {/* Collected + mini progress */}
                 <div className="min-w-0">
-                  <div className="text-[14.5px] font-semibold tabular-nums text-[#15803d] dark:text-emerald-400">{inr(rowCollected)}</div>
+                  <div className="flex items-center justify-between lg:block">
+                    <span className="text-[12.5px] font-medium text-muted lg:hidden">Collected</span>
+                    <div className="text-[14.5px] font-semibold tabular-nums text-[#15803d] dark:text-emerald-400">{inr(rowCollected)}</div>
+                  </div>
                   {totalPayable > 0 && (
                     <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-white/[.08]">
                       <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: `${collectedPct}%` }} />
@@ -588,28 +598,35 @@ export default function Loans() {
                 </div>
 
                 {/* Outstanding */}
-                <div className="text-[15.5px] font-bold tabular-nums text-ink">{inr(d.outstandingFor(l))}</div>
+                <div className="flex items-center justify-between text-[15.5px] font-bold tabular-nums text-ink lg:block">
+                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Outstanding</span>
+                  <span>{inr(d.outstandingFor(l))}</span>
+                </div>
 
                 {/* End date + urgency */}
-                <div>
-                  <div className="text-[14px] tabular-nums text-ink/75">
-                    {endDate ? fmtDate(endDate) : isInterestOnly(l.type) ? <span className="text-muted">Open-ended</span> : '—'}
+                <div className="flex items-center justify-between lg:block">
+                  <span className="text-[12.5px] font-medium text-muted lg:hidden">End date</span>
+                  <div className="flex items-center gap-2 lg:block">
+                    <div className="text-[14px] tabular-nums text-ink/75">
+                      {endDate ? fmtDate(endDate) : isInterestOnly(l.type) ? <span className="text-muted">Open-ended</span> : '—'}
+                    </div>
+                    {dd != null && <DueBadge days={dd} />}
                   </div>
-                  {dd != null && <DueBadge days={dd} />}
                 </div>
 
                 {/* Status — Overdue (red) if an active loan's due date has passed,
                     else Active (green) / Closed (grey). */}
-                <div className="flex justify-end">
+                <div className="flex items-center justify-between lg:justify-end">
+                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Status</span>
                   {(() => {
                     const overdue = !closed && dd != null && dd < 0;
                     // Closed = settled (indigo), Overdue = red, Active = green.
                     const tone = closed
-                      ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
                       : overdue
                         ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
                         : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300';
-                    const dot = closed ? 'bg-indigo-500' : overdue ? 'bg-red-500' : 'bg-emerald-500';
+                    const dot = closed ? 'bg-blue-500' : overdue ? 'bg-red-500' : 'bg-emerald-500';
                     return (
                       <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11.5px] font-bold ${tone}`}>
                         <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
@@ -892,7 +909,7 @@ function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; lab
       className={`flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-semibold transition-colors ${
         danger
           ? 'text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10'
-          : 'text-ink/80 hover:bg-slate-50 hover:text-indigo-600 dark:hover:bg-white/[.05] dark:hover:text-indigo-400'
+          : 'text-ink/80 hover:bg-slate-50 hover:text-blue-600 dark:hover:bg-white/[.05] dark:hover:text-blue-400'
       }`}
     >
       {icon} {label}
@@ -905,11 +922,11 @@ type FormCardColor = 'blue' | 'emerald' | 'violet' | 'amber';
 const formCardIcon: Record<FormCardColor, string> = {
   blue: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400',
   emerald: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
-  violet: 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400',
+  violet: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400',
   amber: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400',
 };
 const formCardAccent: Record<FormCardColor, string> = {
-  blue: 'before:bg-blue-500', emerald: 'before:bg-emerald-500', violet: 'before:bg-violet-500', amber: 'before:bg-amber-500',
+  blue: 'before:bg-blue-500', emerald: 'before:bg-emerald-500', violet: 'before:bg-blue-500', amber: 'before:bg-amber-500',
 };
 
 /** Self-documenting section card for the loan form: icon + title + hint. */
@@ -975,7 +992,7 @@ function SumSection({ icon, title, children }: { icon: React.ReactNode; title: s
   return (
     <section className="rounded-2xl border-[0.5px] border-slate-200/70 bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,.04)] dark:border-white/[.06] dark:bg-surface2">
       <div className="mb-1.5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-muted">
-        <span className="text-indigo-500 dark:text-indigo-400">{icon}</span>{title}
+        <span className="text-blue-500 dark:text-blue-400">{icon}</span>{title}
       </div>
       <div className="divide-y divide-slate-100 dark:divide-white/[.05]">{children}</div>
     </section>
@@ -1005,10 +1022,10 @@ function LoanSummaryPopup({ open, onClose, p, customer }: { open: boolean; onClo
         className="relative flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-slate-50 shadow-[0_30px_80px_-20px_rgba(0,0,0,.55)] dark:bg-[#0c1220] animate-rise"
       >
         {/* Gradient hero header */}
-        <div className="relative shrink-0 overflow-hidden bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-600 px-6 pb-7 pt-5 text-white">
+        <div className="relative shrink-0 overflow-hidden bg-gradient-to-br from-blue-800 via-blue-700 to-blue-600 px-6 pb-7 pt-5 text-white">
           <span className="pointer-events-none absolute -right-10 -top-12 h-44 w-44 rounded-full bg-white/10 blur-2xl" />
           <span className="pointer-events-none absolute -bottom-14 right-14 h-32 w-32 rounded-full border border-white/15" />
-          <span className="pointer-events-none absolute -bottom-8 -left-6 h-24 w-24 rounded-full bg-violet-400/20 blur-2xl" />
+          <span className="pointer-events-none absolute -bottom-8 -left-6 h-24 w-24 rounded-full bg-blue-400/20 blur-2xl" />
           <div className="relative flex items-start justify-between">
             <div className="flex items-center gap-2.5">
               <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/15 ring-1 ring-white/20 backdrop-blur">

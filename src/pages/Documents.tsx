@@ -55,7 +55,7 @@ export default function Documents() {
   const custName = (id: number) => d.customers.find((c) => c.id === id)?.name ?? 'Unknown';
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 p-3.5 sm:p-5">
       <PageHeader title="Documents" subtitle={`${d.documents.length} files · grouped by customer`}
         action={<Button onClick={() => setOpen(true)}><Plus size={16} /> Upload Document</Button>} />
 

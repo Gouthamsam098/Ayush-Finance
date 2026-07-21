@@ -50,7 +50,7 @@ export default function Reports() {
   const totalExp = d.expenses.reduce((s, e) => s + e.amount, 0);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 p-3.5 sm:p-5">
       <PageHeader title="Reports" subtitle="Summaries with CSV export"
         action={<Button onClick={exportCsv}><Download size={16} /> Export {tab}</Button>} />
 

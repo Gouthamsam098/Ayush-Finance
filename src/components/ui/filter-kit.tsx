@@ -9,26 +9,26 @@ import { NUM_OPS, numActive, numLabel, type NumFilter, type NumOp } from '@/lib/
    ──────────────────────────────────────────────────────────── */
 
 export const drawerSelectCls =
-  'rounded-lg border-[0.5px] border-slate-200/70 bg-white px-3 py-2 text-[13px] text-ink outline-none transition-colors focus:border-indigo-500 dark:border-white/[.08] dark:bg-surface2';
+  'rounded-lg border-[0.5px] border-slate-200/70 bg-white px-3 py-2 text-[13px] text-ink outline-none transition-colors focus:border-blue-500 dark:border-white/[.08] dark:bg-surface2';
 
 // ─────────────── section card ───────────────
 export type GroupColor = 'blue' | 'emerald' | 'violet' | 'amber';
 const groupIconCls: Record<GroupColor, string> = {
   blue: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400',
   emerald: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
-  violet: 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400',
+  violet: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400',
   amber: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400',
 };
 const groupAccentCls: Record<GroupColor, string> = {
   blue: 'before:bg-blue-500',
   emerald: 'before:bg-emerald-500',
-  violet: 'before:bg-violet-500',
+  violet: 'before:bg-blue-500',
   amber: 'before:bg-amber-500',
 };
 const groupDotCls: Record<GroupColor, string> = {
   blue: 'bg-blue-500',
   emerald: 'bg-emerald-500',
-  violet: 'bg-violet-500',
+  violet: 'bg-blue-500',
   amber: 'bg-amber-500',
 };
 
@@ -55,7 +55,7 @@ export function FilterCard({
 // ─────────────── segmented control ───────────────
 export type SegTone = 'indigo' | 'emerald' | 'amber';
 const segActiveCls: Record<SegTone, string> = {
-  indigo: 'bg-indigo-500 text-white shadow-sm',
+  indigo: 'bg-blue-500 text-white shadow-sm',
   emerald: 'bg-emerald-500 text-white shadow-sm',
   amber: 'bg-amber-500 text-white shadow-sm',
 };
@@ -93,7 +93,7 @@ export function CityPill({ active, onClick, children }: { active: boolean; onCli
       onClick={onClick}
       className={`rounded-full border-[0.5px] px-3.5 py-1.5 text-[13px] font-medium transition-all ${
         active
-          ? 'border-violet-400 bg-violet-50 text-violet-700 ring-1 ring-violet-300 dark:border-violet-400/50 dark:bg-violet-500/15 dark:text-violet-300'
+          ? 'border-blue-400 bg-blue-50 text-blue-700 ring-1 ring-blue-300 dark:border-blue-400/50 dark:bg-blue-500/15 dark:text-blue-300'
           : 'border-slate-200/70 bg-white text-ink/70 hover:border-slate-300 hover:bg-slate-50 dark:border-white/[.08] dark:bg-surface2 dark:hover:bg-white/[.05]'
       }`}
     >
@@ -108,8 +108,8 @@ export function ToggleRow({
 }: { active: boolean; onToggle: () => void; icon: React.ReactNode; label: string; hint?: string; tone?: 'indigo' | 'danger' }) {
   const activeCls = tone === 'danger'
     ? 'border-red-300 bg-red-50 dark:border-red-400/40 dark:bg-red-500/10'
-    : 'border-indigo-300 bg-indigo-50 dark:border-indigo-400/40 dark:bg-indigo-500/10';
-  const iconCls = tone === 'danger' ? 'text-red-600 dark:text-red-400' : 'text-indigo-600 dark:text-indigo-400';
+    : 'border-blue-300 bg-blue-50 dark:border-blue-400/40 dark:bg-blue-500/10';
+  const iconCls = tone === 'danger' ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400';
   return (
     <button
       onClick={onToggle}
@@ -123,7 +123,7 @@ export function ToggleRow({
         {hint && <span className="block text-[11px] text-muted">{hint}</span>}
       </span>
       {/* Switch */}
-      <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${active ? (tone === 'danger' ? 'bg-red-500' : 'bg-indigo-500') : 'bg-slate-300 dark:bg-white/15'}`}>
+      <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${active ? (tone === 'danger' ? 'bg-red-500' : 'bg-blue-500') : 'bg-slate-300 dark:bg-white/15'}`}>
         <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${active ? 'left-[18px]' : 'left-0.5'}`} />
       </span>
     </button>
@@ -148,7 +148,7 @@ export function NumFilterRow({
       <div className="mb-1.5 flex items-center justify-between">
         <span className="text-[12px] font-semibold text-muted">{label}</span>
         {numActive(value) && (
-          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
             {numLabel(value, (n) => (unit === '₹' ? inrShort(n) : String(n)))}
           </span>
         )}
@@ -157,7 +157,7 @@ export function NumFilterRow({
         <select
           value={value.op}
           onChange={(e) => onChange({ ...value, op: e.target.value as NumOp })}
-          className="shrink-0 rounded-lg border-[0.5px] border-slate-200/70 bg-white px-2.5 py-2 text-[13px] text-ink outline-none focus:border-indigo-500 dark:border-white/[.08] dark:bg-surface2"
+          className="shrink-0 rounded-lg border-[0.5px] border-slate-200/70 bg-white px-2.5 py-2 text-[13px] text-ink outline-none focus:border-blue-500 dark:border-white/[.08] dark:bg-surface2"
         >
           {NUM_OPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
@@ -170,7 +170,7 @@ export function NumFilterRow({
                 value={value.a ?? ''}
                 onChange={(e) => onChange({ ...value, a: parseNum(e.target.value) })}
                 placeholder={showTwo ? 'Min' : 'Value'}
-                className={`w-full rounded-lg border-[0.5px] border-slate-200/70 bg-white py-2 text-[13px] text-ink outline-none focus:border-indigo-500 dark:border-white/[.08] dark:bg-surface2 ${unit ? 'pl-6 pr-2.5' : 'px-2.5'}`}
+                className={`w-full rounded-lg border-[0.5px] border-slate-200/70 bg-white py-2 text-[13px] text-ink outline-none focus:border-blue-500 dark:border-white/[.08] dark:bg-surface2 ${unit ? 'pl-6 pr-2.5' : 'px-2.5'}`}
               />
             </div>
             {showTwo && (
@@ -183,7 +183,7 @@ export function NumFilterRow({
                     value={value.b ?? ''}
                     onChange={(e) => onChange({ ...value, b: parseNum(e.target.value) })}
                     placeholder="Max"
-                    className={`w-full rounded-lg border-[0.5px] border-slate-200/70 bg-white py-2 text-[13px] text-ink outline-none focus:border-indigo-500 dark:border-white/[.08] dark:bg-surface2 ${unit ? 'pl-6 pr-2.5' : 'px-2.5'}`}
+                    className={`w-full rounded-lg border-[0.5px] border-slate-200/70 bg-white py-2 text-[13px] text-ink outline-none focus:border-blue-500 dark:border-white/[.08] dark:bg-surface2 ${unit ? 'pl-6 pr-2.5' : 'px-2.5'}`}
                   />
                 </div>
               </>
@@ -208,7 +208,7 @@ export function MatchPreview({
             <span className="font-display text-2xl font-bold text-ink">{matched}</span>
             <span className="text-[13px] text-muted">of {total} {itemLabel}</span>
           </div>
-          <div className="mt-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+          <div className="mt-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400">
             {activeCount === 0 ? 'No filters applied' : `${activeCount} filter${activeCount === 1 ? '' : 's'} set`}
           </div>
         </div>
@@ -220,7 +220,7 @@ export function MatchPreview({
       </div>
       <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-white/[.08]">
         <motion.div
-          className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500"
+          className="h-full rounded-full bg-gradient-to-r from-blue-600 to-blue-400"
           initial={false}
           animate={{ width: `${total ? (matched / total) * 100 : 0}%` }}
           transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}

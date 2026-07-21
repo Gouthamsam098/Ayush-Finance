@@ -18,7 +18,7 @@ export function QuickActions({ actions, onAction }: { actions: QuickAction[]; on
             onClick={() => onAction(a.to)}
             className="rounded-xl border-[0.5px] border-slate-200/70 bg-white p-3.5 text-center transition-colors hover:bg-slate-50 dark:border-white/[.06] dark:bg-surface dark:hover:bg-white/[.03]"
           >
-            <Icon size={22} className="mx-auto mb-1.5 block text-indigo-500" />
+            <Icon size={22} className="mx-auto mb-1.5 block text-blue-500" />
             <div className="text-[13px] font-medium text-ink/90">{a.label}</div>
           </button>
         );

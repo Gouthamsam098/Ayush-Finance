@@ -52,9 +52,9 @@ export default function Dashboard() {
   const heroKpis: HeroKpi[] = [
     {
       icon: Users, value: String(d.customers.length), label: 'Customers', chip: `${active.length} active`,
-      iconBg: 'bg-indigo-100 dark:bg-indigo-500/30', iconColor: 'text-indigo-600 dark:text-indigo-200',
-      chipClass: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/25 dark:text-indigo-200',
-      tileTint: 'border-indigo-200 bg-indigo-50 dark:border-indigo-400/25 dark:bg-indigo-500/[.12]',
+      iconBg: 'bg-blue-100 dark:bg-blue-500/30', iconColor: 'text-blue-600 dark:text-blue-200',
+      chipClass: 'bg-blue-100 text-blue-700 dark:bg-blue-500/25 dark:text-blue-200',
+      tileTint: 'border-blue-200 bg-blue-50 dark:border-blue-400/25 dark:bg-blue-500/[.12]',
     },
     {
       icon: Banknote, value: inrShort(todayColl), label: "Today's collection",

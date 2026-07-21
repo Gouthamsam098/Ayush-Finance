@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { Menu } from 'lucide-react';
+import { useOpenSidebar } from './AppShell';
 
 /** Dark hero band at the top of a page — mirrors the dashboard hero so every
  *  screen shares the same chrome. Left: icon + title + subtitle. Right: actions. */
@@ -13,20 +15,28 @@ export function PageHeader({
   subtitle?: string;
   actions?: ReactNode;
 }) {
+  const openSidebar = useOpenSidebar();
   return (
-    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-indigo-50 px-5 py-5 dark:border-transparent dark:from-[#0c1220] dark:via-[#111a30] dark:to-[#0c1220]">
+    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-blue-50 via-white to-blue-50 px-5 py-5 dark:border-transparent dark:from-[#0c1220] dark:via-[#111a30] dark:to-[#0c1220]">
       {/* Indigo glow wash + decorative geometry */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <span className="absolute -left-16 top-1/2 h-64 w-64 -translate-y-1/2 rounded-full bg-indigo-500/10 blur-3xl dark:bg-indigo-600/20" />
-        <span className="absolute right-24 top-1/2 h-40 w-40 -translate-y-1/2 rounded-full bg-violet-500/[.07] blur-3xl dark:bg-violet-500/10" />
-        <span className="absolute -right-12 -top-12 h-48 w-48 rounded-full border border-indigo-300/40 dark:border-indigo-400/20" />
-        <span className="absolute right-10 top-6 h-24 w-24 rounded-full border border-indigo-300/30 dark:border-indigo-400/15" />
-        <span className="absolute -bottom-10 right-40 h-24 w-24 rounded-full border border-violet-300/30 dark:border-violet-400/10" />
+        <span className="absolute -left-16 top-1/2 h-64 w-64 -translate-y-1/2 rounded-full bg-blue-500/10 blur-3xl dark:bg-blue-600/20" />
+        <span className="absolute right-24 top-1/2 h-40 w-40 -translate-y-1/2 rounded-full bg-blue-500/[.07] blur-3xl dark:bg-blue-500/10" />
+        <span className="absolute -right-12 -top-12 h-48 w-48 rounded-full border border-blue-300/40 dark:border-blue-400/20" />
+        <span className="absolute right-10 top-6 h-24 w-24 rounded-full border border-blue-300/30 dark:border-blue-400/15" />
+        <span className="absolute -bottom-10 right-40 h-24 w-24 rounded-full border border-blue-300/30 dark:border-blue-400/10" />
       </div>
 
       <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-100 to-violet-100 text-indigo-600 shadow-sm ring-1 ring-indigo-200/50 dark:border-indigo-400/40 dark:from-indigo-500/40 dark:to-violet-500/30 dark:text-indigo-100 dark:shadow-lg dark:shadow-indigo-900/40 dark:ring-white/10">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <button
+            onClick={openSidebar}
+            aria-label="Open menu"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 lg:hidden dark:border-white/15 dark:bg-white/[.08] dark:text-slate-300"
+          >
+            <Menu size={18} />
+          </button>
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-100 to-blue-100 text-blue-600 shadow-sm ring-1 ring-blue-200/50 dark:border-blue-400/40 dark:from-blue-500/40 dark:to-blue-500/30 dark:text-blue-100 dark:shadow-lg dark:shadow-blue-900/40 dark:ring-white/10">
             {icon}
           </span>
           <div>
@@ -61,7 +71,7 @@ export function HeaderPrimaryButton({
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-1.5 rounded-lg bg-indigo-500 px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-indigo-600"
+      className="flex items-center gap-1.5 rounded-lg bg-blue-500 px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-blue-600"
     >
       {icon}{children}
     </button>

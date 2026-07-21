@@ -13,7 +13,7 @@ const FEATURES = [
   { icon: Zap, title: 'Fast Approval', sub: 'Quick processing', color: 'text-amber-500 bg-amber-50' },
   { icon: ShieldCheck, title: 'Secure', sub: '256-bit encryption', color: 'text-emerald-600 bg-emerald-50' },
   { icon: FileText, title: 'Digital Docs', sub: 'Paperless process', color: 'text-blue-600 bg-blue-50' },
-  { icon: Headphones, title: '24×7 Support', sub: 'Always available', color: 'text-violet-600 bg-violet-50' },
+  { icon: Headphones, title: '24×7 Support', sub: 'Always available', color: 'text-blue-600 bg-blue-50' },
 ];
 
 export default function LoginCard({ onSubmit, loading = false, error = null }: LoginCardProps) {
@@ -29,7 +29,7 @@ export default function LoginCard({ onSubmit, loading = false, error = null }: L
         animate={{ y: [0, -6, 0] }}
         transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
         className="rounded-[28px] border border-white/60 bg-white/80 p-8 backdrop-blur-2xl md:p-10"
-        style={{ boxShadow: '0 24px 70px -20px rgba(16,185,129,.35), 0 8px 24px -12px rgba(15,23,42,.15)' }}
+        style={{ boxShadow: '0 24px 70px -20px rgba(37,99,235,.38), 0 8px 24px -12px rgba(15,23,42,.15)' }}
       >
         <div className="mb-7 flex flex-col items-center text-center">
           <Logo size="lg" />

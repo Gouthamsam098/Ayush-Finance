@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion';
-import { Plus, Bell, Search, Users, Banknote, TrendingUp, AlertTriangle } from 'lucide-react';
+import { Plus, Bell, Search, Menu, Users, Banknote, TrendingUp, AlertTriangle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useOpenSidebar } from '@/components/layout/AppShell';
 
 export interface HeroKpi {
   icon: LucideIcon;
@@ -27,27 +28,37 @@ interface HeroHeaderProps {
 
 /** Dark hero banner across the top of the dashboard: greeting, actions, and 4 KPI tiles. */
 export function HeroHeader({ name, dateLabel, kpis, onQuickAction }: HeroHeaderProps) {
+  const openSidebar = useOpenSidebar();
   return (
-    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-indigo-50 px-5 pb-[18px] pt-4 dark:border-transparent dark:from-[#0c1220] dark:via-[#111a30] dark:to-[#0c1220]">
+    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-blue-50 via-white to-blue-50 px-5 pb-[18px] pt-4 dark:border-transparent dark:from-[#0c1220] dark:via-[#111a30] dark:to-[#0c1220]">
       {/* Indigo glow wash + decorative geometry */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <span className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl dark:bg-indigo-600/20" />
-        <span className="absolute -right-[55px] -top-[55px] h-[190px] w-[190px] rounded-full border border-indigo-300/40 dark:border-indigo-400/20" />
-        <span className="absolute right-[38px] top-[18px] h-[110px] w-[110px] rounded-full border border-indigo-300/30 dark:border-indigo-400/15" />
-        <span className="absolute bottom-2 right-[18px] h-[55px] w-[55px] rounded-full border border-indigo-300/40 dark:border-indigo-400/20" />
+        <span className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl dark:bg-blue-600/20" />
+        <span className="absolute -right-[55px] -top-[55px] h-[190px] w-[190px] rounded-full border border-blue-300/40 dark:border-blue-400/20" />
+        <span className="absolute right-[38px] top-[18px] h-[110px] w-[110px] rounded-full border border-blue-300/30 dark:border-blue-400/15" />
+        <span className="absolute bottom-2 right-[18px] h-[55px] w-[55px] rounded-full border border-blue-300/40 dark:border-blue-400/20" />
       </div>
 
       <div className="relative z-10">
         {/* Greeting + actions */}
         <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <div className="text-2xl font-semibold text-slate-900 dark:text-slate-50">Good afternoon, {name}</div>
-            <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">{dateLabel}</div>
+          <div className="flex items-start gap-3">
+            <button
+              onClick={openSidebar}
+              aria-label="Open menu"
+              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-slate-200 bg-white text-slate-600 lg:hidden dark:border-white/15 dark:bg-white/[.08] dark:text-slate-300"
+            >
+              <Menu size={18} />
+            </button>
+            <div>
+              <div className="text-2xl font-semibold text-slate-900 dark:text-slate-50">Good afternoon, {name}</div>
+              <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">{dateLabel}</div>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={onQuickAction}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-600 dark:border-[0.5px] dark:border-indigo-400/50 dark:bg-indigo-500/25 dark:text-indigo-200 dark:hover:bg-indigo-500/40"
+              className="flex items-center gap-1.5 rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 dark:border-[0.5px] dark:border-blue-400/50 dark:bg-blue-500/25 dark:text-blue-200 dark:hover:bg-blue-500/40"
             >
               <Plus size={16} /> Quick action
             </button>

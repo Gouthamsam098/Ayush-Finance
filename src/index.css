@@ -65,7 +65,7 @@ button:active { transform: translateY(0.5px); }
 /* Premium focus ring, keyboard-accessible */
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgb(var(--bg)), 0 0 0 5px rgba(79,70,229,.45);
+  box-shadow: 0 0 0 3px rgb(var(--bg)), 0 0 0 5px rgba(37,99,235,.45);
   border-radius: 6px;
 }
 
@@ -356,7 +356,7 @@ button, a, input, select, textarea {
 
 /* Moving gradient text / borders */
 .text-gradient {
-  background: linear-gradient(90deg, #6366F1, #06B6D4, #10B981, #6366F1);
+  background: linear-gradient(90deg, #1e3a8a, #2563eb, #2e8bff, #1e3a8a);
   background-size: 300% 100%;
   -webkit-background-clip: text; background-clip: text;
   color: transparent;

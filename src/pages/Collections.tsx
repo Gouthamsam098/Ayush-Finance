@@ -11,8 +11,8 @@ import { StatCard } from '@/components/ui/stat-card';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { LedgerDialog } from '@/components/LedgerDialog';
 import { CollectionProgress } from '@/components/CollectionProgress';
-import { inr, inrShort, fmtDate, todayISO, isoLocal, addDays, DAILY_TERM } from '@/lib/format';
-import { Plus, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins } from 'lucide-react';
+import { inr, inrShort, fmtDate, todayISO, isoLocal, addDays, initials, DAILY_TERM } from '@/lib/format';
+import { Plus, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins, ChevronRight } from 'lucide-react';
 
 const MODES: PayMode[] = ['CASH', 'UPI', 'BANK', 'CHEQUE'];
 
@@ -171,7 +171,7 @@ export default function Collections() {
             <button key={val} onClick={() => setTypeFilter(val as LoanType | 'ALL')}
               className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
                 on
-                  ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-[0_4px_14px_rgba(99,102,241,.3)]'
+                  ? 'bg-gradient-to-r from-blue-700 to-blue-500 text-white shadow-[0_4px_14px_rgba(37,99,235,.35)]'
                   : 'border border-slate-200/90 bg-white text-muted hover:border-primary/40 hover:text-primary dark:border-white/[.07] dark:bg-surface dark:hover:bg-white/[.05]'
               }`}>
               {label}
@@ -184,7 +184,18 @@ export default function Collections() {
       {/* Empty state */}
       {loansToShow.length === 0 ? (
         <EmptyState typed={typeFilter !== 'ALL'} onAdd={openAdd} />
-      ) : typeFilter === 'DAILY_COLLECTION' ? (
+      ) : (
+      <>
+      {/* ── Mobile / tablet: premium card list (touch-first, CRED-style) ── */}
+      <div className="flex flex-col gap-3 lg:hidden">
+        {loansToShow.map((l) => (
+          <CollectionCard key={l.id} loan={l} d={d} onView={() => setLedger(l)} />
+        ))}
+      </div>
+
+      {/* ── Desktop: detailed per-type tables (unchanged) ── */}
+      <div className="hidden lg:block">
+      {typeFilter === 'DAILY_COLLECTION' ? (
         /* ── Daily Collection: expanded view with start/end date, due, and balance ── */
         <TableCard note="Total Due Amount is the cumulative shortfall from what's owed by today. Balance is Principal − Collected. Open View Report to add, edit, or delete individual payments.">
           <thead><HeaderRow cols={['Customer', 'Collection Progress', 'Loan Type', 'Loan Start', 'Loan End', 'Total Due', 'Balance', 'Amount Paid', 'Actions']} /></thead>
@@ -279,6 +290,9 @@ export default function Collections() {
           </tbody>
         </TableCard>
       )}
+      </div>
+      </>
+      )}
 
       </div>
 
@@ -330,7 +344,7 @@ function TableCard({ children, note }: { children: ReactNode; note: string }) {
 /** Full-width gradient header row matching the Loans table treatment. */
 function HeaderRow({ cols }: { cols: string[] }) {
   return (
-    <tr className="bg-gradient-to-r from-indigo-600 to-violet-600 text-[11px] font-bold uppercase tracking-[0.07em] text-white">
+    <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-[11px] font-bold uppercase tracking-[0.07em] text-white">
       {cols.map((c, i) => (
         <th key={c} className={`whitespace-nowrap px-4 py-3 ${c === 'Actions' ? 'text-center' : 'text-left'} ${i === 0 ? 'rounded-l-none' : ''}`}>{c}</th>
       ))}
@@ -354,6 +368,78 @@ function ActionTd({ onView }: { onView: () => void }) {
         <ScrollText size={14} /> View Report
       </button>
     </td>
+  );
+}
+
+/** Touch-first collection card for mobile/tablet — a premium, readable summary
+ *  of one loan's collection state, with a full-width "View Report" action. */
+function CollectionCard({ loan, d, onView }: { loan: Loan; d: ReturnType<typeof useData>; onView: () => void }) {
+  const cust = d.customers.find((c) => c.id === loan.customerId);
+  const collected = d.collectedFor(loan.id);
+  const outstanding = d.outstandingFor(loan);
+  const hasTerm = isDailyLoan(loan.type) || loan.type === 'FLEXIBLE';
+  const paid = isDailyLoan(loan.type) ? elapsedDaysFor(loan) : d.collections.filter((c) => c.loanId === loan.id).length;
+  const total = totalDaysFor(loan);
+  const pct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
+  const per = loan.type === 'FLEXIBLE' ? '' : isDailyLoan(loan.type) || loan.type === 'DAILY_INTEREST' ? '/day' : '/mo';
+  return (
+    <div className="anim-pop overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-card dark:border-white/[.07] dark:bg-surface">
+      {/* Header — customer + type */}
+      <div className="flex items-center gap-3 px-4 pt-4">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-blue-700 to-blue-500 text-sm font-bold text-white shadow-sm">
+          {initials(cust?.name ?? '—')}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[15px] font-semibold text-ink">{cust?.name ?? '—'}</div>
+          <div className="mt-0.5 font-mono text-xs text-muted">{loan.loanNumber}</div>
+        </div>
+        <Badge tone="info">{LOAN_LABELS[loan.type]}</Badge>
+      </div>
+
+      {/* Progress — only for loans with a defined term */}
+      {hasTerm && (
+        <div className="px-4 pt-3.5">
+          <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-muted">
+            <span>Progress</span>
+            <span className="tabular-nums">{paid} / {total} days</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/[.08]">
+            <div className="h-full rounded-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Stat grid */}
+      <div className="mt-3.5 grid grid-cols-2 gap-px bg-slate-100 text-sm dark:bg-white/[.06]">
+        <div className="bg-white px-4 py-3 dark:bg-surface">
+          <div className="text-[11px] font-medium text-muted">Collected</div>
+          <div className="mt-0.5 font-display font-semibold tabular-nums text-success">{inr(collected)}</div>
+        </div>
+        <div className="bg-white px-4 py-3 dark:bg-surface">
+          <div className="text-[11px] font-medium text-muted">Outstanding</div>
+          <div className="mt-0.5 font-semibold tabular-nums text-ink">{inr(outstanding)}</div>
+        </div>
+        <div className="bg-white px-4 py-3 dark:bg-surface">
+          <div className="text-[11px] font-medium text-muted">Instalment</div>
+          <div className="mt-0.5 font-semibold tabular-nums text-ink">
+            {loan.dailyAmount ? inr(loan.dailyAmount) : '—'}
+            {loan.dailyAmount ? <span className="text-[11px] font-normal text-muted">{per}</span> : null}
+          </div>
+        </div>
+        <div className="bg-white px-4 py-3 dark:bg-surface">
+          <div className="text-[11px] font-medium text-muted">Loan date</div>
+          <div className="mt-0.5 font-semibold tabular-nums text-ink">{fmtDate(loan.loanDate)}</div>
+        </div>
+      </div>
+
+      {/* CTA — touch-friendly (48px) */}
+      <button
+        onClick={onView}
+        className="flex w-full items-center justify-center gap-2 border-t border-slate-100 py-3.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09] dark:border-white/[.06]"
+      >
+        <ScrollText size={16} /> View Report <ChevronRight size={15} className="opacity-60" />
+      </button>
+    </div>
   );
 }
 

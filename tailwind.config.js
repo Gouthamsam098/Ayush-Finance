@@ -5,7 +5,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: { DEFAULT: '#4F46E5', 600: '#4338CA', 500: '#4F46E5', 400: '#6366F1', 50: '#EEF2FF', 100: '#E0E7FF' },
+        primary: { DEFAULT: '#2563EB', 600: '#1D4ED8', 500: '#2563EB', 400: '#3B82F6', 50: '#EFF6FF', 100: '#DBEAFE' },
         success: { DEFAULT: '#10B981', 600: '#059669', 50: '#ECFDF5' },
         warning: { DEFAULT: '#F59E0B', 600: '#D97706', 50: '#FFFBEB' },
         danger:  { DEFAULT: '#E11D48', 600: '#BE123C', 50: '#FFF1F2' },

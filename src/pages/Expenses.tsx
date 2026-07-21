@@ -57,7 +57,7 @@ export default function Expenses() {
   ];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 p-3.5 sm:p-5">
       <PageHeader title="Expenses" subtitle={`${d.expenses.length} entries`}
         action={<Button onClick={() => setForm(blank())}><Plus size={16} /> Add Expense</Button>} />
 

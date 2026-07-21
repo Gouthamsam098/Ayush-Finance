@@ -424,13 +424,13 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
         <div className="mb-4 inline-flex rounded-lg border-[0.5px] border-slate-200/70 bg-slate-100/70 p-1 dark:border-white/[.06] dark:bg-white/[.04]">
           <button
             onClick={() => setTab('ledger')}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-semibold transition-colors ${tab === 'ledger' ? 'bg-indigo-500 text-white shadow-sm' : 'text-muted hover:text-ink'}`}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-semibold transition-colors ${tab === 'ledger' ? 'bg-blue-500 text-white shadow-sm' : 'text-muted hover:text-ink'}`}
           >
             <LayoutList size={14} /> Ledger
           </button>
           <button
             onClick={() => setTab('statement')}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-semibold transition-colors ${tab === 'statement' ? 'bg-indigo-500 text-white shadow-sm' : 'text-muted hover:text-ink'}`}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-semibold transition-colors ${tab === 'statement' ? 'bg-blue-500 text-white shadow-sm' : 'text-muted hover:text-ink'}`}
           >
             <Table2 size={14} /> Statement
           </button>
@@ -578,7 +578,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
               </div>
             </div>
           ) : !isSimple && paidInstalments < totalTerm && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border-[0.5px] border-indigo-200/70 bg-indigo-50 px-3.5 py-3 text-[12px] font-medium text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border-[0.5px] border-blue-200/70 bg-blue-50 px-3.5 py-3 text-[12px] font-medium text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300">
               <Calendar size={15} className="shrink-0" />
               <span>Applies to {isMonthly ? 'EMI' : 'Day'} <span className="font-bold">{paidInstalments + 1}</span> of {totalTerm}{d.nextDueFor(loan) ? ` · due ${fmtDate(d.nextDueFor(loan)!)}` : ''}</span>
               {dueDays > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">{dueDays} overdue</span>}
@@ -589,7 +589,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           <div>
             <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Amount</span>
             <div className={`flex items-center gap-2 rounded-xl border bg-white px-3.5 dark:bg-surface ${
-              amountError ? 'border-danger' : 'border-slate-200 focus-within:border-indigo-400 dark:border-slate-700 dark:focus-within:border-indigo-500'
+              amountError ? 'border-danger' : 'border-slate-200 focus-within:border-blue-400 dark:border-slate-700 dark:focus-within:border-blue-500'
             }`}>
               <IndianRupee size={18} className="shrink-0 text-muted" />
               <input type="number" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0"
@@ -601,7 +601,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           {/* Payment mode — segmented picker with icons */}
           <div>
             <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Payment mode</span>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {MODES.map((m) => {
                 const Icon = MODE_ICON[m];
                 const on = mode === m;
@@ -609,7 +609,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
                   <button key={m} type="button" onClick={() => setMode(m)}
                     className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 text-[11.5px] font-semibold transition-all ${
                       on
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-[0_0_0_1px_rgba(99,102,241,.4)] dark:border-indigo-400 dark:bg-indigo-500/15 dark:text-indigo-300'
+                        ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-[0_0_0_1px_rgba(99,102,241,.4)] dark:border-blue-400 dark:bg-blue-500/15 dark:text-blue-300'
                         : 'border-slate-200 text-muted hover:border-slate-300 hover:text-ink dark:border-white/[.08] dark:hover:border-white/20'
                     }`}>
                     <Icon size={17} /> {m}
@@ -620,7 +620,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           </div>
 
           {/* Date + remarks */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input label="Date" type="date" value={date}
               min={!editId && !isSettlement && (loan.type === 'DAILY_COLLECTION' || loan.type === 'DAILY_INTEREST') && nextDue ? (nextDue > minPaymentDate ? nextDue : minPaymentDate) : minPaymentDate}
               max={maxPaymentDate} onChange={(e) => setDate(e.target.value)}

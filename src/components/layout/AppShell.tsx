@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { LogoMark } from '@/components/Logo';
 import { useDispatch } from 'react-redux';
 import { logout } from '@/store/authSlice';
 import { useData } from '@/mock/DataContext';
@@ -40,8 +41,14 @@ const NAV: NavSection[] = [
   },
 ];
 
+/** Lets page headers (rendered inside <Outlet/>) open the mobile sidebar drawer. */
+const OpenSidebarCtx = createContext<() => void>(() => {});
+export const useOpenSidebar = () => useContext(OpenSidebarCtx);
+
 export function AppShell() {
   const [collapsed, setCollapsed] = useState(false);
+  // Off-canvas drawer state for mobile/tablet (<lg). Desktop ignores this.
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -63,12 +70,25 @@ export function AppShell() {
   const badgeFor = (key?: 'overdue') => (key === 'overdue' && overdueCount > 0 ? overdueCount : null);
 
   return (
+    <OpenSidebarCtx.Provider value={() => setMobileOpen(true)}>
     <div className="flex h-dvh overflow-hidden bg-slate-50 dark:bg-[#080b14]">
+      {/* Mobile/tablet overlay — tap to dismiss the off-canvas sidebar */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm lg:hidden"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden
+        />
+      )}
       {/* ── Sidebar ─────────────────────────────────────────── */}
       <aside
         className={cn(
-          'flex shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white transition-[width] duration-200 ease-[cubic-bezier(.4,0,.2,1)] dark:border-transparent dark:bg-[#0c1220]',
-          collapsed ? 'w-[72px]' : 'w-[200px]',
+          // Mobile/tablet: fixed off-canvas drawer that slides in over the content.
+          'fixed inset-y-0 left-0 z-50 flex w-[240px] flex-col overflow-hidden border-r border-slate-200 bg-white transition-transform duration-200 ease-[cubic-bezier(.4,0,.2,1)] dark:border-transparent dark:bg-[#0c1220]',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          // Desktop (lg+): static in-flow sidebar, width driven by collapse — unchanged.
+          'lg:static lg:z-auto lg:shrink-0 lg:translate-x-0 lg:transition-[width]',
+          collapsed ? 'lg:w-[72px]' : 'lg:w-[200px]',
         )}
       >
         {/* Logo + collapse toggle */}
@@ -76,19 +96,17 @@ export function AppShell() {
           'flex min-h-[58px] items-center gap-2.5 border-b border-slate-200 px-2.5 py-3 dark:border-white/[.07]',
           collapsed && 'justify-center gap-1 px-1.5',
         )}>
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-indigo-500 text-sm font-semibold text-white">
-            A
-          </div>
+          <LogoMark className="h-8 w-8 rounded-[9px]" svg={19} />
           {!collapsed && (
             <div className="min-w-0 flex-1 overflow-hidden">
-              <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-50">Anush Capitals</div>
+              <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-50">Anush <span className="text-blue-700 dark:text-blue-400">Finserv</span></div>
               <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">Loan Management</div>
             </div>
           )}
           <button
             onClick={() => setCollapsed((c) => !c)}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 hover:text-slate-600 dark:border-white/10 dark:bg-white/[.04] dark:text-slate-500 dark:hover:text-slate-300"
+            className="hidden h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 hover:text-slate-600 lg:flex dark:border-white/10 dark:bg-white/[.04] dark:text-slate-500 dark:hover:text-slate-300"
           >
             <ChevronsLeft size={14} className={cn('transition-transform duration-200', collapsed && 'rotate-180')} />
           </button>
@@ -110,32 +128,33 @@ export function AppShell() {
                     key={to}
                     to={to}
                     end={to === '/'}
+                    onClick={() => setMobileOpen(false)}
                     title={collapsed ? label : undefined}
                     className={({ isActive }) =>
                       cn(
                         'group relative mb-px flex items-center gap-2.5 rounded-lg px-[7px] py-[9px] transition-colors',
                         collapsed && 'justify-center',
-                        isActive ? 'bg-indigo-50 dark:bg-indigo-500/[.18]' : 'hover:bg-slate-100 dark:hover:bg-white/[.05]',
+                        isActive ? 'bg-blue-50 dark:bg-blue-500/[.18]' : 'hover:bg-slate-100 dark:hover:bg-white/[.05]',
                       )
                     }
                   >
                     {({ isActive }) => (
                       <>
                         {isActive && !collapsed && (
-                          <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-sm bg-indigo-500" />
+                          <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-sm bg-blue-500" />
                         )}
                         <Icon
                           size={19}
                           className={cn(
                             'shrink-0 transition-colors',
-                            isActive ? 'text-indigo-600 dark:text-indigo-300' : 'text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-200',
+                            isActive ? 'text-blue-600 dark:text-blue-300' : 'text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-200',
                           )}
                         />
                         {!collapsed && (
                           <span
                             className={cn(
                               'truncate text-[13px] transition-colors',
-                              isActive ? 'font-semibold text-indigo-700 dark:text-indigo-100' : 'text-slate-600 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-slate-100',
+                              isActive ? 'font-semibold text-blue-700 dark:text-blue-100' : 'text-slate-600 group-hover:text-slate-900 dark:text-slate-300 dark:group-hover:text-slate-100',
                             )}
                           >
                             {label}
@@ -161,7 +180,7 @@ export function AppShell() {
         {/* Footer — user + logout */}
         <div className="border-t border-slate-200 px-[7px] py-2 dark:border-white/[.07]">
           <div className="flex items-center gap-2 rounded-lg px-[3px] py-[5px]">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-[10px] font-semibold text-white">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[10px] font-semibold text-white">
               AD
             </div>
             {!collapsed && (
@@ -203,5 +222,6 @@ export function AppShell() {
         </main>
       </div>
     </div>
+    </OpenSidebarCtx.Provider>
   );
 }

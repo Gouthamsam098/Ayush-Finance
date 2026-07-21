@@ -21,16 +21,16 @@ export default function Hero() {
       {/* ── Background effects ── */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         {/* radial glow */}
-        <div className="absolute right-[10%] top-[24%] h-[26rem] w-[26rem] rounded-full bg-emerald-400/25 blur-[110px]" />
-        <div className="absolute -left-20 bottom-10 h-72 w-72 rounded-full bg-blue-400/15 blur-[90px]" />
+        <div className="absolute right-[10%] top-[24%] h-[26rem] w-[26rem] rounded-full bg-blue-500/25 blur-[110px]" />
+        <div className="absolute -left-20 bottom-10 h-72 w-72 rounded-full bg-[#2e8bff]/20 blur-[90px]" />
         {/* blurred rings */}
-        <div className="absolute right-[14%] top-[20%] h-[24rem] w-[24rem] rounded-full border border-emerald-300/20" />
-        <div className="absolute right-[10%] top-[14%] h-[32rem] w-[32rem] rounded-full border border-emerald-300/10" />
+        <div className="absolute right-[14%] top-[20%] h-[24rem] w-[24rem] rounded-full border border-blue-300/25" />
+        <div className="absolute right-[10%] top-[14%] h-[32rem] w-[32rem] rounded-full border border-blue-300/10" />
         {/* floating particles */}
         {[...Array(6)].map((_, i) => (
           <motion.span
             key={i}
-            className="absolute h-2 w-2 rounded-full bg-emerald-400/40"
+            className="absolute h-2 w-2 rounded-full bg-[#2e8bff]/45"
             style={{ top: `${15 + i * 13}%`, left: `${20 + ((i * 37) % 60)}%` }}
             animate={{ y: [0, -18, 0], opacity: [0.3, 0.7, 0.3] }}
             transition={{ duration: 4 + i, repeat: Infinity, ease: 'easeInOut', delay: i * 0.5 }}
@@ -52,7 +52,7 @@ export default function Hero() {
             style={{ fontSize: 'clamp(2.5rem, 5.5vw, 5rem)' }}
           >
             One Platform.<br />
-            <span className="bg-gradient-to-r from-green-600 to-emerald-500 bg-clip-text text-transparent">Every Loan.</span><br />
+            <span className="bg-gradient-to-r from-[#13245a] via-[#1d4ed8] to-[#2e8bff] bg-clip-text text-transparent">Every Loan.</span><br />
             Every Possibility.
           </motion.h1>
 
