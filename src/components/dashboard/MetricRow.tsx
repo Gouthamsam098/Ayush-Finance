@@ -96,7 +96,7 @@ export function MetricRow({ metrics }: { metrics: Metric[] }) {
               {m.highlight && m.highlightColor === 'emerald' && <TrendingUp size={12} className="text-emerald-500" />}
               {m.highlight && m.highlightColor !== 'emerald' && <Sparkles size={12} className="text-amber-500 animate-pulse" />}
             </div>
-            <div className="text-[22px] font-semibold">
+            <div className="text-lg sm:text-[22px] font-semibold">
               {m.countUp != null ? (
                 <CountUpValue target={m.countUp} isGood={m.highlightColor === 'emerald' ? m.good : undefined} />
               ) : (

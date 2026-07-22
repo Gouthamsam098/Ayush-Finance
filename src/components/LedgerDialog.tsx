@@ -482,7 +482,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
               : `${isMonthly ? 'Monthly' : 'Daily'} ledger from ${fmtDate(loan.loanDate)} · ${totalTerm} ${isMonthly ? 'months' : 'days'} · instalments repay the principal`}
         </div>
         {!statementOnly && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Interest-only (Daily/Monthly Interest + Flexible): settle the FULL
                 outstanding (accrued interest + principal) in one shot → auto-close. */}
             {interestOnly && flexOutstanding > 0 && (

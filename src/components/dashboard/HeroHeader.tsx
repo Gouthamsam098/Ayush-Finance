@@ -85,7 +85,7 @@ export function HeroHeader({ name, dateLabel, kpis, onQuickAction }: HeroHeaderP
                 <span className={cn('mb-2.5 flex h-10 w-10 items-center justify-center rounded-xl relative z-10', k.iconBg)}>
                   <Icon size={19} className={cn(k.iconColor)} />
                 </span>
-                <div className={cn('text-[22px] font-display font-bold leading-tight tracking-tight relative z-10', k.danger ? 'text-red-600 dark:text-red-300' : 'text-slate-900 dark:text-white')}>
+                <div className={cn('text-lg sm:text-[22px] font-display font-bold leading-tight tracking-tight relative z-10', k.danger ? 'text-red-600 dark:text-red-300' : 'text-slate-900 dark:text-white')}>
                   {k.value}
                 </div>
                 <div className="mt-0.5 text-[13px] text-slate-500 dark:text-slate-400">{k.label}</div>

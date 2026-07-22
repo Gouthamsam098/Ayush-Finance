@@ -40,7 +40,7 @@ export function PageHeader({
             {icon}
           </span>
           <div>
-            <div className="font-display text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{title}</div>
+            <div className="font-display text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white truncate">{title}</div>
             {subtitle && <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</div>}
           </div>
         </div>

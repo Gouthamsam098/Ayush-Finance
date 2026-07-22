@@ -1,32 +1,37 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-/**
- * StatCard — the premium KPI/triage card used across list pages (Loans,
- * Collections, …). An accent-tinted icon chip beside a bold value + label.
- * When `onClick` is provided it becomes an interactive triage filter that shows
- * an active ring in its accent color; otherwise it renders as a static metric.
- *
- * Theme-token friendly: the surface uses `bg-white dark:bg-surface` and text
- * uses `text-ink`/`text-muted`; only the per-card accent is passed as a raw
- * color so each metric can carry its own hue.
- */
 export function StatCard({
-  label,
-  value,
-  active,
-  onClick,
-  accent,
-  icon,
+  label, value, active, onClick, accent, icon, countUp,
 }: {
   label: string;
   value: string;
   active?: boolean;
   onClick?: () => void;
-  /** Raw accent color (e.g. '#6366f1') for the icon chip + active ring. */
   accent: string;
   icon: ReactNode;
+  countUp?: number;
 }) {
+  const [display, setDisplay] = useState(countUp != null ? 0 : 0);
+  const raf = useRef(0);
+  const started = useRef(0);
+
+  useEffect(() => {
+    if (countUp == null) return;
+    started.current = performance.now();
+    const step = () => {
+      const elapsed = performance.now() - started.current;
+      const progress = Math.min(elapsed / 1000, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(Math.round(countUp * eased));
+      if (progress < 1) raf.current = requestAnimationFrame(step);
+    };
+    raf.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf.current);
+  }, [countUp]);
+
+  const displayedValue = countUp != null ? `₹${display.toLocaleString('en-IN')}` : value;
   const clickable = !!onClick;
+
   return (
     <button
       onClick={onClick}
@@ -40,19 +45,14 @@ export function StatCard({
       }}
     >
       {active && (
-        <span
-          className="pointer-events-none absolute inset-0"
-          style={{ background: `linear-gradient(135deg, ${accent}14, transparent 60%)` }}
-        />
+        <span className="pointer-events-none absolute inset-0" style={{ background: `linear-gradient(135deg, ${accent}14, transparent 60%)` }} />
       )}
-      <span
-        className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white transition-transform duration-200 group-hover:scale-105"
-        style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}
-      >
+      <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white transition-transform duration-200 group-hover:scale-105"
+        style={{ background: `linear-gradient(135deg, ${accent}, ${accent}cc)` }}>
         {icon}
       </span>
       <div className="relative min-w-0">
-        <div className="font-display text-xl font-bold leading-none text-ink">{value}</div>
+        <div className="font-display text-xl font-bold leading-none tabular-nums text-ink">{displayedValue}</div>
         <div className="mt-1 truncate text-[12px] font-medium text-muted">{label}</div>
       </div>
     </button>

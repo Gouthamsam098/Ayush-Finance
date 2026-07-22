@@ -456,7 +456,7 @@ export default function Loans() {
         <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
           <StatCard label="Total loans" value={String(stats.count)} accent="#6366f1" icon={<Layers size={16} />}
             active={urgency === 'all'} onClick={() => setUrgency('all')} />
-          <StatCard label="Total outstanding" value={inrShort(stats.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} />
+          <StatCard label="Total outstanding" value={inr(stats.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={stats.outstanding} />
           <StatCard label="Overdue" value={String(stats.overdue)} accent="#ef4444" icon={<AlertTriangle size={16} />}
             active={urgency === 'overdue'} onClick={() => setUrgency('overdue')} />
           <StatCard label="Due within 3 days" value={String(stats.soon)} accent="#f59e0b" icon={<CalendarClock size={16} />}
@@ -481,7 +481,7 @@ export default function Loans() {
 
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Search */}
-            <div className="flex w-60 items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] focus-within:border-blue-400 dark:border-white/[.08] dark:bg-surface">
+            <div className="flex w-full sm:w-60 items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] focus-within:border-blue-400 dark:border-white/[.08] dark:bg-surface">
               <Search size={16} className="shrink-0 text-slate-400" />
               <input
                 value={query}
@@ -600,7 +600,7 @@ export default function Loans() {
                 {/* Principal */}
                 <div className="flex items-center justify-between text-[14.5px] tabular-nums text-ink/75 lg:block">
                   <span className="text-[12.5px] font-medium text-muted lg:hidden">Principal</span>
-                  <span>{inr(l.principal)}</span>
+                  <span className="font-bold text-[13px] sm:text-[14.5px]">{inr(l.principal)}</span>
                 </div>
 
                 {/* Instalment (per-period amount) */}
@@ -628,14 +628,14 @@ export default function Loans() {
                 {/* Outstanding */}
                 <div className="flex items-center justify-between text-[15.5px] font-bold tabular-nums text-ink lg:block">
                   <span className="text-[12.5px] font-medium text-muted lg:hidden">Outstanding</span>
-                  <span>{inr(d.outstandingFor(l))}</span>
+                  <span className="font-bold">{inr(d.outstandingFor(l))}</span>
                 </div>
 
                 {/* End date + urgency */}
                 <div className="flex items-center justify-between lg:block">
                   <span className="text-[12.5px] font-medium text-muted lg:hidden">End date</span>
                   <div className="flex items-center gap-2 lg:block">
-                    <div className="text-[14px] tabular-nums text-ink/75">
+                    <div className="text-[14px] tabular-nums font-bold text-ink">
                       {endDate ? fmtDate(endDate) : isInterestOnly(l.type) ? <span className="text-muted">Open-ended</span> : '—'}
                     </div>
                     {dd != null && <DueBadge days={dd} />}
@@ -1110,7 +1110,7 @@ function LoanSummaryPopup({ open, onClose, p, customer }: { open: boolean; onClo
       <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-md" />
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-slate-50 shadow-[0_30px_80px_-20px_rgba(0,0,0,.55)] dark:bg-[#0c1220] animate-rise"
+        className="relative flex max-h-[92vh] w-full max-w-lg sm:max-w-md flex-col overflow-hidden rounded-3xl bg-slate-50 shadow-[0_30px_80px_-20px_rgba(0,0,0,.55)] dark:bg-[#0c1220] animate-rise"
       >
         {/* Gradient hero header */}
         <div className="relative shrink-0 overflow-hidden bg-gradient-to-br from-blue-800 via-blue-700 to-blue-600 px-6 pb-7 pt-5 text-white">
