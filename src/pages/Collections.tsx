@@ -161,7 +161,7 @@ export default function Collections() {
         <StatCard label="Active loans" value={String(kpis.activeCount)} accent="#6366f1" icon={<Layers size={16} />} />
         <StatCard label="Collected today" value={inrShort(kpis.collectedToday)} accent="#10b981" icon={<TrendingUp size={16} />} />
         <StatCard label="Due now" value={inrShort(kpis.dueNow)} accent="#f59e0b" icon={<CalendarClock size={16} />} />
-        <StatCard label="Total outstanding" value={inrShort(kpis.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} />
+        <StatCard label="Total outstanding" value={inr(kpis.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={kpis.outstanding} />
       </div>
 
       {/* Loan type filter chips */}
@@ -335,7 +335,7 @@ function TableCard({ children, note }: { children: ReactNode; note: string }) {
   return (
     <div className="anim-pop overflow-hidden rounded-card border border-slate-200/90 bg-white shadow-card dark:border-white/[.07] dark:bg-surface" style={{ animationDelay: '80ms' }}>
       <div className="overflow-x-auto">
-        <table className="w-full text-[15px]">{children}</table>
+        <table className="w-full min-w-[650px] text-[15px]">{children}</table>
       </div>
       <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] text-muted dark:border-white/[.06]">{note}</p>
     </div>

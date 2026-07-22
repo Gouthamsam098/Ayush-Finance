@@ -454,7 +454,7 @@ export default function Customers() {
         {/* Table card — flexes to fill remaining height; only its body scrolls. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-[0.5px] border-slate-200/70 bg-white dark:border-white/[.06] dark:bg-surface">
           <div className="min-h-0 flex-1 overflow-auto">
-            <table className="w-full text-[15px]">
+            <table className="w-full min-w-[800px] text-[15px]">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer</th>

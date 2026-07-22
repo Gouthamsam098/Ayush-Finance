@@ -531,10 +531,6 @@ export default function Loans() {
             const closed = l.status !== 'ACTIVE';
             // Live repayment figures for this row (all real, never fabricated).
             const rowCollected = d.collectedFor(l.id);
-            const totalPayable = isInstalmentLoan(l.type) ? l.principal
-              : isEmiLoan(l.type) || l.type === 'FLEXIBLE' ? l.principal + l.interest
-              : 0; // interest-only is open-ended — no fixed total, no bar
-            const collectedPct = totalPayable > 0 ? Math.min(100, Math.round((rowCollected / totalPayable) * 100)) : 0;
             const perSuffix = l.type === 'FLEXIBLE' ? '' : isDailyLoan(l.type) || l.type === 'DAILY_INTEREST' ? '/day' : '/mo';
             return (
               <div
@@ -618,11 +614,6 @@ export default function Loans() {
                     <span className="text-[12.5px] font-medium text-muted lg:hidden">Collected</span>
                     <div className="text-[14.5px] font-semibold tabular-nums text-[#15803d] dark:text-emerald-400">{inr(rowCollected)}</div>
                   </div>
-                  {totalPayable > 0 && (
-                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-white/[.08]">
-                      <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: `${collectedPct}%` }} />
-                    </div>
-                  )}
                 </div>
 
                 {/* Outstanding */}

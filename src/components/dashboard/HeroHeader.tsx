@@ -47,7 +47,7 @@ export function HeroHeader({ name, dateLabel, kpis, onQuickAction }: HeroHeaderP
               <Menu size={18} />
             </button>
             <div>
-              <div className="text-[22px] font-display font-bold tracking-tight text-slate-900 dark:text-white">{greeting}, {name}</div>
+              <div className="text-lg sm:text-[22px] font-display font-bold tracking-tight text-slate-900 dark:text-white">{greeting}, {name}</div>
               <div className="mt-0.5 text-[13px] text-slate-500 dark:text-slate-400">{dateLabel}</div>
             </div>
           </div>
@@ -55,9 +55,9 @@ export function HeroHeader({ name, dateLabel, kpis, onQuickAction }: HeroHeaderP
             <LiveClock />
             <button
               onClick={onQuickAction}
-              className="flex items-center gap-1.5 rounded-lg bg-blue-500 px-4 py-2 text-[13px] font-semibold text-white shadow-sm shadow-blue-500/25 transition-all hover:bg-blue-600 hover:shadow-md"
+              className="flex items-center gap-1.5 rounded-lg bg-blue-500 px-3 sm:px-4 py-2 text-[13px] font-semibold text-white shadow-sm shadow-blue-500/25 transition-all hover:bg-blue-600 hover:shadow-md"
             >
-              <Plus size={15} /> Record collection
+              <Plus size={15} /> <span className="hidden sm:inline">Record collection</span>
             </button>
           </div>
         </div>

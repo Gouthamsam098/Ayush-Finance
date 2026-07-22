@@ -168,7 +168,7 @@ export default function Settings() {
             )}
 
             <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-white/[.06]">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[600px] text-sm">
                 <thead className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600">
                   <tr className="text-left text-[12px] font-bold uppercase tracking-[0.08em] text-white">
                     <th className="px-5 py-3.5">Username</th>

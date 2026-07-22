@@ -82,7 +82,7 @@ export default function Expenses() {
           ))}
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[650px] text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted">
               <th className="py-2.5 pr-3">Date</th><th className="py-2.5 pr-3">Category</th><th className="py-2.5 pr-3">Sub Category</th><th className="py-2.5 pr-3">Name</th><th className="py-2.5 pr-3">Amount</th><th className="py-2.5 pr-3">Mode</th><th className="py-2.5 text-right">Actions</th>
             </tr></thead>

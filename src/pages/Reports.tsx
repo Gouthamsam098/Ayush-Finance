@@ -76,7 +76,7 @@ export default function Reports() {
       <Card className="anim-pop" style={{ animationDelay: '260ms' }}>
         <CardHeader><CardTitle className="capitalize">{tab} report</CardTitle></CardHeader>
         <CardBody className="overflow-x-auto pt-0">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[600px] text-sm">
             {tab === 'customers' && (
               <>
                 <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted"><th className="py-2 pr-3">Code</th><th className="py-2 pr-3">Name</th><th className="py-2 pr-3">Mobile</th><th className="py-2 pr-3">City</th><th className="py-2">Income</th></tr></thead>
