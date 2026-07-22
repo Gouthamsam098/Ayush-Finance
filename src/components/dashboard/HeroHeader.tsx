@@ -82,14 +82,6 @@ export function HeroHeader({ name, dateLabel, kpis, onQuickAction }: HeroHeaderP
                     : k.tileTint ?? 'border-slate-200 bg-white dark:border-white/[.08] dark:bg-white/[.04]',
                 )}
               >
-                {!k.danger && k.label === 'Collection Rate' && (
-                  <div className="pointer-events-none absolute inset-0 rounded-2xl overflow-hidden">
-                    <div className="absolute inset-0 rounded-2xl"
-                      style={{ background: 'conic-gradient(from 0deg, transparent 60%, #22c55e 70%, transparent 80%)', animation: 'spin 3s linear infinite' }} />
-                    <div className="absolute inset-[1.5px] rounded-2xl bg-white dark:bg-white/[.04]" />
-                  </div>
-                )}
-
                 <span className={cn('mb-2.5 flex h-10 w-10 items-center justify-center rounded-xl relative z-10', k.iconBg)}>
                   <Icon size={19} className={cn(k.iconColor)} />
                 </span>

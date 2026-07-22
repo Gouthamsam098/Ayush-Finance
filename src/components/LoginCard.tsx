@@ -1,6 +1,5 @@
 import { motion } from 'framer-motion';
-import { Zap, ShieldCheck, FileText, Headphones } from 'lucide-react';
-import Logo from './Logo';
+import { LogoMark } from './Logo';
 import LoginForm from './LoginForm';
 
 interface LoginCardProps {
@@ -8,13 +7,6 @@ interface LoginCardProps {
   loading?: boolean;
   error?: string | null;
 }
-
-const FEATURES = [
-  { icon: Zap, title: 'Fast Approval', sub: 'Quick processing', color: 'text-amber-500 bg-amber-50' },
-  { icon: ShieldCheck, title: 'Secure', sub: '256-bit encryption', color: 'text-emerald-600 bg-emerald-50' },
-  { icon: FileText, title: 'Digital Docs', sub: 'Paperless process', color: 'text-blue-600 bg-blue-50' },
-  { icon: Headphones, title: '24×7 Support', sub: 'Always available', color: 'text-blue-600 bg-blue-50' },
-];
 
 export default function LoginCard({ onSubmit, loading = false, error = null }: LoginCardProps) {
   return (
@@ -24,52 +16,49 @@ export default function LoginCard({ onSubmit, loading = false, error = null }: L
       transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
       className="w-full max-w-md"
     >
-      {/* Glass card with soft green glow + gentle float */}
       <motion.div
-        animate={{ y: [0, -6, 0] }}
-        transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
-        className="rounded-[28px] border border-white/60 bg-white/80 p-8 backdrop-blur-2xl md:p-10"
-        style={{ boxShadow: '0 24px 70px -20px rgba(37,99,235,.38), 0 8px 24px -12px rgba(15,23,42,.15)' }}
+        animate={{ y: [0, -5, 0] }}
+        transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }}
+        className="relative rounded-[28px] border border-white/20 bg-white/90 p-8 backdrop-blur-2xl md:p-10 shadow-[0_32px_80px_-16px_rgba(15,23,42,.45),0_0_0_1px_rgba(255,255,255,.1),inset_0_1px_0_rgba(255,255,255,.6)]"
       >
-        <div className="mb-7 flex flex-col items-center text-center">
-          <Logo size="lg" />
-          <h1 className="mt-6 text-2xl font-bold tracking-tight text-slate-900">Welcome back</h1>
-          <p className="mt-1 text-sm text-slate-500">Sign in to your account to continue</p>
-        </div>
+        <div className="pointer-events-none absolute -top-20 left-1/2 h-40 w-80 -translate-x-1/2 rounded-full bg-blue-500/10 blur-3xl" />
 
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
-          >
-            {error}
-          </motion.div>
-        )}
-
-        <LoginForm onSubmit={onSubmit} loading={loading} />
-      </motion.div>
-
-      {/* Compact glass feature cards */}
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        {FEATURES.map((f, i) => (
-          <motion.div
-            key={f.title}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 + i * 0.08 }}
-            className="flex items-center gap-2.5 rounded-2xl border border-white/50 bg-white/70 px-3 py-2.5 backdrop-blur-xl"
-          >
-            <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${f.color}`}>
-              <f.icon size={16} />
-            </span>
-            <div className="min-w-0">
-              <div className="truncate text-xs font-bold text-slate-800">{f.title}</div>
-              <div className="truncate text-[11px] text-slate-500">{f.sub}</div>
+        <div className="relative z-10">
+          <div className="mb-8 flex flex-col items-center text-center">
+            <div className="flex items-center gap-4">
+              <motion.div
+                initial={{ scale: 0, rotate: -30 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ duration: 0.7, ease: [0.34, 1.56, 0.64, 1], delay: 0.1 }}
+              >
+                <LogoMark className="h-16 w-16 rounded-[20px]" svg={42} />
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.5, ease: 'easeOut', delay: 0.4 }}
+                className="leading-none"
+              >
+                <div className="font-display text-[26px] font-extrabold uppercase tracking-tight text-blue-700">ANUSH</div>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className="h-px w-4 bg-blue-500/50" />
+                  <span className="text-[11px] font-bold uppercase tracking-[0.3em] text-blue-700 leading-none">FINSERV</span>
+                  <span className="h-px w-4 bg-blue-500/50" />
+                </div>
+              </motion.div>
             </div>
-          </motion.div>
-        ))}
-      </div>
+          </div>
+
+          {error && (
+            <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+              className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+              {error}
+            </motion.div>
+          )}
+
+          <LoginForm onSubmit={onSubmit} loading={loading} />
+        </div>
+      </motion.div>
     </motion.div>
   );
 }

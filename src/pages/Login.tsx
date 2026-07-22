@@ -18,8 +18,6 @@ export default function Login() {
   const handleSignIn = async (username: string, password: string) => {
     setLoading(true);
     setError(null);
-
-    // Mock path: unchanged stub behaviour when the API flag is off.
     if (!config.useApi) {
       setTimeout(() => {
         dispatch(setTokens({ accessToken: 'demo-token' }));
@@ -28,12 +26,10 @@ export default function Login() {
       }, 450);
       return;
     }
-
-    // Real backend: username field carries the email in API mode.
     try {
       await authApi.login(username, password);
       const me = await authApi.me();
-      dispatch(setTokens({ accessToken: 'api' })); // presence gates ProtectedRoute; real token is in tokenStore
+      dispatch(setTokens({ accessToken: 'api' }));
       dispatch(setUser({ id: me.id, username: me.email, fullName: me.full_name, role: 'ADMIN' }));
       navigate('/');
     } catch (e) {
@@ -44,23 +40,22 @@ export default function Login() {
   };
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-slate-50">
-      {/* Family background image */}
-      <div
-        className="absolute inset-0"
-        style={{ backgroundImage: `url(${loginBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
-      />
-      {/* Readability wash — lighter on the left (hero), stronger toward the login column */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/70 via-white/50 to-white/80" />
+    <div className="relative flex h-screen w-screen overflow-hidden bg-slate-950">
+      {/* Dark mesh gradient background */}
+      <div className="absolute inset-0">
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-950 to-slate-950" />
+        <div className="absolute right-0 top-0 h-[600px] w-[600px] rounded-full bg-blue-600/20 blur-[120px]" />
+        <div className="absolute -left-20 bottom-0 h-[500px] w-[500px] rounded-full bg-indigo-600/15 blur-[100px]" />
+        <div className="absolute left-1/3 top-1/2 h-[400px] w-[400px] rounded-full bg-blue-400/10 blur-[80px]" />
+        {/* Subtle grid */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,.03)_1px,transparent_1px)] bg-[size:40px_40px]" />
+      </div>
 
       <div className="relative z-10 flex h-full w-full flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-        {/* Hero */}
-        <div className="relative w-full lg:w-[62%]">
+        <div className="relative w-full lg:w-[58%]">
           <Hero />
         </div>
-
-        {/* Login column */}
-        <div className="relative z-40 flex w-full items-center justify-center p-6 md:p-10 lg:w-[38%] lg:h-full">
+        <div className="relative z-40 flex w-full items-center justify-center p-6 md:p-10 lg:w-[42%] lg:h-full">
           <LoginCard onSubmit={handleSignIn} loading={loading} error={error} />
         </div>
       </div>

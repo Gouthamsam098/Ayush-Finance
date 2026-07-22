@@ -1,17 +1,15 @@
 import { useState } from 'react';
-import { Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react';
+import { Lock, Eye, EyeOff, ArrowRight, User } from 'lucide-react';
 import { config } from '@/lib/config';
 
-interface LoginFormProps {
-  onSubmit: (username: string, password: string) => void;
-  loading?: boolean;
-}
+interface LoginFormProps { onSubmit: (u: string, p: string) => void; loading?: boolean; }
 
 export default function LoginForm({ onSubmit, loading = false }: LoginFormProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [focused, setFocused] = useState<'user' | 'pass' | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,70 +17,55 @@ export default function LoginForm({ onSubmit, loading = false }: LoginFormProps)
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Email / Username */}
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="mb-1.5 block text-sm font-semibold text-slate-700">
-          {config.useApi ? 'Email' : 'Username'}
-        </label>
-        <div className="group relative">
-          <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-emerald-600" />
-          <input
-            type="text"
-            placeholder={config.useApi ? 'you@company.com' : 'Enter your username'}
-            value={username}
+        <div className={`relative rounded-2xl border-2 transition-all duration-300 ${focused === 'user' ? 'border-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,.1)]' : 'border-slate-200 hover:border-slate-300'}`}>
+          <div className="absolute left-4 top-1/2 -translate-y-1/2">
+            <User size={18} className={focused === 'user' ? 'text-blue-500' : 'text-slate-400'} />
+          </div>
+          <input type="text" placeholder="Username" value={username}
             onChange={(e) => setUsername(e.target.value)}
-            className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50/70 pl-11 pr-4 text-sm text-slate-900 shadow-[inset_0_1px_2px_rgba(15,23,42,.04)] outline-none transition-all placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
-          />
+            onFocus={() => setFocused('user')} onBlur={() => setFocused(null)}
+            className="h-[52px] w-full rounded-2xl bg-transparent px-4 pl-12 text-[15px] font-medium text-slate-900 outline-none placeholder:text-slate-400" />
         </div>
       </div>
 
-      {/* Password */}
       <div>
-        <label className="mb-1.5 block text-sm font-semibold text-slate-700">Password</label>
-        <div className="group relative">
-          <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-emerald-600" />
-          <input
-            type={showPassword ? 'text' : 'password'}
-            placeholder="Enter your password"
-            value={password}
+        <div className={`relative rounded-2xl border-2 transition-all duration-300 ${focused === 'pass' ? 'border-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,.1)]' : 'border-slate-200 hover:border-slate-300'}`}>
+          <div className="absolute left-4 top-1/2 -translate-y-1/2">
+            <Lock size={18} className={focused === 'pass' ? 'text-blue-500' : 'text-slate-400'} />
+          </div>
+          <input type={showPassword ? 'text' : 'password'} placeholder="Password" value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50/70 pl-11 pr-11 text-sm text-slate-900 shadow-[inset_0_1px_2px_rgba(15,23,42,.04)] outline-none transition-all placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
-          />
-          <button
-            type="button"
-            onClick={() => setShowPassword((s) => !s)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600"
-            aria-label={showPassword ? 'Hide password' : 'Show password'}
-          >
+            onFocus={() => setFocused('pass')} onBlur={() => setFocused(null)}
+            className="h-[52px] w-full rounded-2xl bg-transparent px-4 pl-12 pr-12 text-[15px] font-medium text-slate-900 outline-none placeholder:text-slate-400" />
+          <button type="button" onClick={() => setShowPassword((s) => !s)}
+            className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600"
+            aria-label={showPassword ? 'Hide password' : 'Show password'}>
             {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
         </div>
       </div>
 
-      {/* Remember / forgot */}
-      <div className="flex items-center justify-between text-sm">
+      <div className="flex items-center justify-between px-1">
         <label className="flex cursor-pointer items-center gap-2 select-none">
-          <input
-            type="checkbox"
-            checked={remember}
-            onChange={(e) => setRemember(e.target.checked)}
-            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-          />
-          <span className="text-slate-600">Remember me</span>
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)}
+            className="h-[18px] w-[18px] cursor-pointer rounded-[5px] border-2 border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-0 checked:border-blue-600 checked:bg-blue-600" />
+          <span className="text-[13px] font-medium text-slate-600">Remember me</span>
         </label>
-        <a href="#" className="font-semibold text-emerald-600 hover:text-emerald-700">Forgot password?</a>
+        <a href="#" className="text-[13px] font-semibold text-blue-600 hover:text-blue-700 transition-colors">Forgot password?</a>
       </div>
 
-      {/* Gradient Sign In button */}
-      <button
-        type="submit"
-        disabled={loading}
-        className="group relative flex h-12 w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-green-600 to-emerald-500 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-emerald-500/40 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70"
-      >
-        <span>{loading ? 'Signing in…' : 'Sign In'}</span>
-        {!loading && <ArrowRight size={18} className="transition-transform group-hover:translate-x-1" />}
+      <button type="submit" disabled={loading}
+        className="group relative flex h-[52px] w-full items-center justify-center gap-2 overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 via-blue-600 to-blue-500 text-[15px] font-semibold text-white shadow-lg shadow-blue-500/25 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-blue-500/35 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60">
+        <span className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+        <span className="relative z-10">{loading ? 'Signing in…' : 'Sign In'}</span>
+        {!loading && <ArrowRight size={18} className="relative z-10 transition-transform duration-300 group-hover:translate-x-1" />}
       </button>
+
+      {!config.useApi && (
+        <p className="text-center text-[12px] text-slate-400">Enter any username and password to continue</p>
+      )}
     </form>
   );
 }
