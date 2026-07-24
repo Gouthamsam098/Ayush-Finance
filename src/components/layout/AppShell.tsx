@@ -116,11 +116,6 @@ export function AppShell() {
         <nav className="flex-1 overflow-y-auto px-[7px] py-2">
           {NAV.map((section) => (
             <div key={section.heading}>
-              {!collapsed && (
-                <div className="px-1.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400 dark:text-slate-500">
-                  {section.heading}
-                </div>
-              )}
               {section.items.map(({ to, label, icon: Icon, badgeKey }) => {
                 const badge = badgeFor(badgeKey);
                 return (

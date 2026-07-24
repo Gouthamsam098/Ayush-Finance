@@ -183,7 +183,9 @@ export default function Customers() {
     setForm({ ...c, aadhaar: undefined, pan: undefined });
   };
   const set = (k: keyof Customer, v: string) => {
-    setForm((f) => ({ ...f, [k]: k === 'monthlyIncome' ? Number(v) || undefined : v }));
+    const upperFields: (keyof Customer)[] = ['name', 'fatherName', 'occupation', 'city', 'referenceName'];
+    const value = upperFields.includes(k) ? v.toUpperCase() : v;
+    setForm((f) => ({ ...f, [k]: k === 'monthlyIncome' ? Number(value) || undefined : value }));
     // Clear this field's error as the user edits it.
     setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
   };

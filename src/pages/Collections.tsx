@@ -160,7 +160,11 @@ export default function Collections() {
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         <StatCard label="Active loans" value={String(kpis.activeCount)} accent="#6366f1" icon={<Layers size={16} />} />
         <StatCard label="Collected today" value={inrShort(kpis.collectedToday)} accent="#10b981" icon={<TrendingUp size={16} />} />
-        <StatCard label="Due now" value={inrShort(kpis.dueNow)} accent="#f59e0b" icon={<CalendarClock size={16} />} />
+        {kpis.dueNow > 0 ? (
+          <StatCard label="Due now" value={inrShort(kpis.dueNow)} accent="#ef4444" icon={<CalendarClock size={16} />} active />
+        ) : (
+          <StatCard label="Due now" value={inrShort(kpis.dueNow)} accent="#f59e0b" icon={<CalendarClock size={16} />} />
+        )}
         <StatCard label="Total outstanding" value={inr(kpis.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={kpis.outstanding} />
       </div>
 
