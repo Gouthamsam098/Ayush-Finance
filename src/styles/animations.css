@@ -1,0 +1,226 @@
+/* ══════════════════════════════════════════════════════════════
+   Premium Logo Animation — CSS keyframes & utilities
+   All animations use transform/opacity only for GPU acceleration.
+   ══════════════════════════════════════════════════════════════ */
+
+/* ---- Particle floating (depth parallax via custom props) ---- */
+@keyframes pla-particle-float {
+  0% {
+    transform: translate3d(0, 0, 0) scale(var(--pla-scale, 1));
+    opacity: var(--pla-op-min, 0.1);
+  }
+  50% {
+    opacity: var(--pla-op-max, 0.5);
+  }
+  100% {
+    transform: translate3d(var(--pla-drift-x, 0px), var(--pla-drift-y, -120px), 0) scale(var(--pla-scale, 1));
+    opacity: var(--pla-op-min, 0.1);
+  }
+}
+
+/* ---- Ambient light drift (large blurred blobs) ---- */
+@keyframes pla-ambient-drift {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  25% {
+    transform: translate3d(6%, -4%, 0) scale(1.12);
+  }
+  50% {
+    transform: translate3d(-3%, 5%, 0) scale(0.95);
+  }
+  75% {
+    transform: translate3d(-5%, -3%, 0) scale(1.08);
+  }
+}
+
+@keyframes pla-ambient-drift-alt {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(-5%, 4%, 0) scale(1.1);
+  }
+  66% {
+    transform: translate3d(4%, -5%, 0) scale(0.92);
+  }
+}
+
+/* ---- Breathing glow (idle mode) ---- */
+@keyframes pla-breathing {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.01);
+    opacity: 0.85;
+  }
+}
+
+/* ---- Floating dust (very subtle) ---- */
+@keyframes pla-dust-float {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  20% {
+    opacity: var(--pla-dust-op, 0.25);
+  }
+  80% {
+    opacity: var(--pla-dust-op, 0.25);
+  }
+  100% {
+    transform: translate3d(var(--pla-dust-x, 10px), var(--pla-dust-y, -200px), 0);
+    opacity: 0;
+  }
+}
+
+/* ---- Energy wave flow (loops below FINSERV) ---- */
+@keyframes pla-energy-wave {
+  0% {
+    transform: scaleX(0) translateX(-50%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1) translateX(0);
+    opacity: 0.7;
+  }
+}
+
+@keyframes pla-energy-wave-loop {
+  0%, 100% {
+    transform: scaleX(1);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scaleX(1.04);
+    opacity: 0.85;
+  }
+}
+
+/* ---- Lens flare diagonal sweep ---- */
+@keyframes pla-lens-flare {
+  0% {
+    transform: translate3d(-30%, -30%, 0) scale(0.6);
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.9;
+  }
+  60% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(130%, 130%, 0) scale(1.1);
+    opacity: 0;
+  }
+}
+
+/* ---- Scan line for FINSERV reveal ---- */
+@keyframes pla-scan-line {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(200%);
+    opacity: 0;
+  }
+}
+
+/* ---- Chrome shine sweep (recurring idle) ---- */
+@keyframes pla-shine-sweep {
+  0% {
+    transform: translateX(-150%) skewX(-20deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(250%) skewX(-20deg);
+    opacity: 0;
+  }
+}
+
+/* ---- Sparkle burst (scene 7) ---- */
+@keyframes pla-sparkle {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+    transform: translate3d(var(--pla-spark-x, 20px), var(--pla-spark-y, -20px), 0) scale(1);
+  }
+  100% {
+    transform: translate3d(calc(var(--pla-spark-x, 20px) * 2), calc(var(--pla-spark-y, -20px) * 2), 0) scale(0);
+    opacity: 0;
+  }
+}
+
+/* ---- Noise texture shift ---- */
+@keyframes pla-noise-shift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  25% { transform: translate3d(-2%, 1%, 0); }
+  50% { transform: translate3d(1%, -2%, 0); }
+  75% { transform: translate3d(2%, 2%, 0); }
+}
+
+/* ---- Utility classes ---- */
+.pla-particle {
+  position: absolute;
+  border-radius: 9999px;
+  will-change: transform, opacity;
+  animation: pla-particle-float linear infinite;
+  pointer-events: none;
+}
+
+.pla-dust {
+  position: absolute;
+  border-radius: 9999px;
+  will-change: transform, opacity;
+  animation: pla-dust-float linear infinite;
+  pointer-events: none;
+}
+
+.pla-ambient {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  will-change: transform;
+  pointer-events: none;
+}
+
+.pla-noise {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  will-change: transform;
+  animation: pla-noise-shift 20s ease-in-out infinite;
+}
+
+/* ---- Reduced motion: disable all cinematic animations ---- */
+@media (prefers-reduced-motion: reduce) {
+  .pla-particle,
+  .pla-dust,
+  .pla-ambient,
+  .pla-noise {
+    animation: none !important;
+  }
+}
