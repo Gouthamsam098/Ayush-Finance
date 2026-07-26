@@ -2,10 +2,12 @@ import { useState, useRef, useEffect, useCallback, useMemo, type InputHTMLAttrib
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
-import { ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar, ChevronDown } from 'lucide-react';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS_HEADER = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const DEFAULT_YEAR_MAX = new Date().getFullYear();
+const DEFAULT_YEAR_MIN = DEFAULT_YEAR_MAX - 100;
 
 const toISODate = (y: number, m: number, d: number) =>
   `${String(y).padStart(4, '0')}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -22,13 +24,24 @@ interface DatePickerProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 't
   error?: string;
   value: string;
   onChange: (e: { target: { value: string } }) => void;
+  yearMin?: number;
+  yearMax?: number;
 }
 
 const POPUP_WIDTH = 272;
 const GAP = 6;
 const MARGIN = 12;
 
-export function DatePicker({ label, error, value, onChange, className, ...props }: DatePickerProps) {
+export function DatePicker({ label, error, value, onChange, className, yearMin, yearMax, ...props }: DatePickerProps) {
+  const yMin = yearMin ?? DEFAULT_YEAR_MIN;
+  const yMax = yearMax ?? DEFAULT_YEAR_MAX;
+
+  const yearOptions = useMemo(() => {
+    const arr: number[] = [];
+    for (let y = yMax; y >= yMin; y--) arr.push(y);
+    return arr;
+  }, [yMin, yMax]);
+
   const today = useMemo(() => {
     const d = new Date();
     return [d.getFullYear(), d.getMonth(), d.getDate()] as const;
@@ -183,25 +196,51 @@ export function DatePicker({ label, error, value, onChange, className, ...props 
               style={{ top: popupStyle.top, left: popupStyle.left, width: POPUP_WIDTH }}
               className="fixed z-[300] overflow-hidden rounded-2xl border-[0.5px] border-slate-200/80 bg-white shadow-[0_20px_60px_-12px_rgba(15,23,42,.25),0_0_0_1px_rgba(15,23,42,.04)] dark:border-white/[.08] dark:bg-surface dark:shadow-[0_20px_60px_-12px_rgba(0,0,0,.45)]"
             >
-              <div className="relative overflow-hidden bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-600 px-4 pb-4 pt-3.5">
+              <div className="relative overflow-hidden bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-600 px-3 pb-3 pt-3">
                 <span className="pointer-events-none absolute -right-6 -top-8 h-16 w-16 rounded-full bg-white/10 blur-xl" />
                 <span className="pointer-events-none absolute -bottom-3 right-10 h-10 w-10 rounded-full border border-white/10" />
 
-                <div className="relative flex items-center justify-between">
+                <div className="relative flex items-center justify-between gap-1.5">
                   <button
                     type="button"
                     onClick={prevMonth}
-                    className="grid h-7 w-7 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/15 hover:text-white"
                   >
                     <ChevronLeft size={15} />
                   </button>
-                  <div className="text-[14px] font-bold tracking-tight text-white">
-                    {MONTHS[viewMonth]} {viewYear}
+
+                  <div className="flex items-center gap-1">
+                    <div className="relative">
+                      <select
+                        value={viewMonth}
+                        onChange={(e) => setViewMonth(Number(e.target.value))}
+                        className="appearance-none cursor-pointer rounded-md border border-white/[.15] bg-transparent px-2.5 py-1 pr-6 text-[13px] font-semibold text-white outline-none transition-colors hover:bg-white/[.08] focus:bg-white/[.12] [&>option]:bg-slate-800 [&>option]:text-white dark:[&>option]:bg-slate-900"
+                      >
+                        {MONTHS.map((m, i) => (
+                          <option key={m} value={i}>{m}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={10} className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-white/50" />
+                    </div>
+
+                    <div className="relative">
+                      <select
+                        value={viewYear}
+                        onChange={(e) => setViewYear(Number(e.target.value))}
+                        className="appearance-none cursor-pointer rounded-md border border-white/[.15] bg-transparent px-2.5 py-1 pr-6 text-[13px] font-semibold text-white outline-none transition-colors hover:bg-white/[.08] focus:bg-white/[.12] [&>option]:bg-slate-800 [&>option]:text-white dark:[&>option]:bg-slate-900"
+                      >
+                        {yearOptions.map((y) => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={10} className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-white/50" />
+                    </div>
                   </div>
+
                   <button
                     type="button"
                     onClick={nextMonth}
-                    className="grid h-7 w-7 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-white/80 transition-colors hover:bg-white/15 hover:text-white"
                   >
                     <ChevronRight size={15} />
                   </button>

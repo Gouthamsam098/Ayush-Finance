@@ -675,7 +675,7 @@ export default function Loans() {
           })}
           {rows.length === 0 && (
             <div className="rounded-[14px] border-[0.5px] border-slate-200/80 bg-white p-12 text-center text-slate-400 dark:border-white/[.08] dark:bg-surface">
-              No loans match that. Try a different search or clear the filter.
+              {d.loans.length === 0 ? 'No Loans Disbursed' : 'No loans match that. Try a different search or clear the filter.'}
             </div>
           )}
         </div>

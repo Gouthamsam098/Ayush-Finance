@@ -16,6 +16,7 @@ export function Drawer({
   children,
   footer,
   width = 'md',
+  closeOnScrimClick = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -25,6 +26,8 @@ export function Drawer({
   children: ReactNode;
   footer?: ReactNode;
   width?: 'md' | 'lg' | 'xl';
+  /** Set false for forms where an accidental outside click shouldn't discard in-progress input. Defaults to true to preserve existing drawers' behaviour. */
+  closeOnScrimClick?: boolean;
 }) {
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -50,7 +53,10 @@ export function Drawer({
     // logo/profile bleeds through. Scrim is opaque enough to fully hide the app.
     <div className="fixed inset-0 z-[200]">
       {/* Scrim */}
-      <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+        onClick={closeOnScrimClick ? onClose : undefined}
+      />
 
       {/* Panel */}
       <div

@@ -640,6 +640,7 @@ export default function Customers() {
         icon={<User size={18} />}
         title={editId ? 'Edit Customer' : 'Add New Customer'}
         subtitle="Enter customer details and KYC information"
+        closeOnScrimClick={false}
         footer={
           <>
             <Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button>

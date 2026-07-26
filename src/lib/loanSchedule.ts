@@ -57,15 +57,32 @@ export function buildSchedule(loan: Loan, opts?: ScheduleOpts): ScheduleRow[] {
   if (term <= 0 || instalment <= 0) return [];
 
   // Foreclosure collapse (Bajaj-style): a CLOSED loan settled by a final payoff
-  // shows its regular rows only up to the last instalment fully funded BEFORE
-  // the settlement, then a single settlement row (exact payoff, closing 0).
-  // settleAt = 0-based index of the settlement row; term when no collapse.
+  // shows all elapsed (overdue) slots plus a settlement row. The settlement
+  // row appears at the first slot AFTER the last elapsed slot — or after the
+  // regular schedule if every slot was already due by settlement date.
   const collected = opts?.collected ?? 0;
   const settlement = loan.status === 'CLOSED' && opts?.settlement && collected > 0 ? opts.settlement : null;
   const fundedBefore = settlement
     ? Math.max(0, Math.floor((collected - settlement.amount) / instalment))
     : term;
-  const settleAt = settlement && fundedBefore < term ? fundedBefore : term;
+  // How many slots had come due by the settlement date (capped at term).
+  // A loan settled long after maturity has every slot elapsed → settleAt = term.
+  const stepDays = isDailyLoan(loan.type) ? 1 : 30;
+  const elapsedBySettle = settlement
+    ? Math.min(
+        Math.floor(
+          (new Date(settlement.date + 'T00:00:00').getTime() -
+           new Date(loan.loanDate + 'T00:00:00').getTime()) / (86400000 * stepDays)
+        ),
+        term,
+      )
+    : 0;
+  // Show every elapsed slot (not just funded ones) so the schedule captures the
+  // full due history. When settleAt reaches term, the settlement row is appended
+  // after all regular rows — the overdraft was cleared in one lump sum.
+  const settleAt = settlement && fundedBefore < term
+    ? Math.max(fundedBefore, elapsedBySettle)
+    : term;
 
   // ── EMI loans ──
   if (isEmiLoan(loan.type)) {
@@ -76,7 +93,8 @@ export function buildSchedule(loan: Loan, opts?: ScheduleOpts): ScheduleRow[] {
     for (let i = 0; i < term; i++) {
       // Settlement row: everything still owed, paid in one shot on the payoff
       // date. Interest column carries the whole remaining (flat) interest.
-      if (settlement && i === settleAt) {
+      // Only triggers when settleAt falls inside the regular term range.
+      if (settlement && i === settleAt && settleAt < term) {
         const amount = Math.max(0, collected - i * instalment);
         rows.push({
           sn: i + 1, dueDate: settlement.date, opening: openPrincipal,
@@ -103,17 +121,26 @@ export function buildSchedule(loan: Loan, opts?: ScheduleOpts): ScheduleRow[] {
       openPrincipal = closing;
       intLeft -= intPortion;
     }
+    // Settlement after all regular slots were due.
+    if (settlement && fundedBefore < term) {
+      const amount = Math.max(0, collected - fundedBefore * instalment);
+      rows.push({
+        sn: rows.length + 1, dueDate: settlement.date, opening: 0,
+        instalment: amount, principal: amount, interest: 0,
+        closing: 0, settled: true,
+      });
+    }
     return rows;
   }
 
   // ── Daily Collection (upfront interest) ──
   if (!isInstalmentLoan(loan.type)) return [];
-  const stepDays = isDailyLoan(loan.type) ? 1 : 30;
   const rows: ScheduleRow[] = [];
   let opening = loan.principal;
   for (let i = 0; i < term; i++) {
     // Settlement row: the remaining principal cleared in one payoff.
-    if (settlement && i === settleAt) {
+    // Only triggers when settleAt falls inside the regular term range.
+    if (settlement && i === settleAt && settleAt < term) {
       const amount = Math.max(0, collected - i * instalment);
       rows.push({
         sn: i + 1, dueDate: settlement.date, opening,
@@ -135,6 +162,16 @@ export function buildSchedule(loan: Loan, opts?: ScheduleOpts): ScheduleRow[] {
     });
     opening = closing;
     if (opening <= 0) break;
+  }
+  // Settlement after all regular slots were due: append one payoff row
+  // on the actual settlement date carrying the full remaining amount.
+  if (settlement && fundedBefore < term) {
+    const amount = Math.max(0, collected - fundedBefore * instalment);
+    rows.push({
+      sn: rows.length + 1, dueDate: settlement.date, opening: 0,
+      instalment: amount, principal: amount, interest: 0,
+      closing: 0, settled: true,
+    });
   }
   return rows;
 }

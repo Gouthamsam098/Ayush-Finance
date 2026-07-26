@@ -90,6 +90,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     mode?: PayMode; receipt?: string; remarks?: string; id?: number; kind?: CollectionKind;
     payAmount?: number; // the actual payment record on this date (for editing)
   };
+
   const rows = useMemo<Row[]>(() => {
     if (slotDue <= 0) return [];
     const [ly, lm, ld] = loan.loanDate.split('-').map(Number);
@@ -141,7 +142,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     // elapsed slots stay visible (interest paid in advance still happened).
     const funded = Number.isFinite(slotCap) ? Math.min(paidSlots, slotCap) : paidSlots;
     const count = collapse
-      ? fundedBefore
+      ? Math.max(fundedBefore, elapsed)
       : nextSlot > 0
         ? nextSlot
         : loan.status === 'CLOSED'
@@ -149,7 +150,9 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           : elapsed;
     // For interest-only collapse, cap the FIFO pool used by cycle rows to the
     // regular (non-settlement) interest, so pre-settlement rows allocate correctly.
-    const rowPool = interestOnly && collapse ? regularInterestPool : pool;
+    const rowPool = collapse
+      ? (interestOnly ? regularInterestPool : Math.max(0, pool - settle!.amount))
+      : pool;
     const out: Row[] = [];
     for (let k = 1; k <= count; k++) {
       // Paid-ahead slots between the elapsed range and the actionable one are
@@ -348,7 +351,6 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     if (!isSimple) {
       tableTitle = `${unit}-by-${unit} Ledger`;
       tableHead = [unit, 'Collection Date', `${isMonthly ? 'Monthly' : 'Daily'} Due`, 'Amount', 'Principal Remaining', 'Payment Mode', 'Status', 'Remarks'];
-      // Elapsed slots only — the appended upcoming (isNext) row stays out of the report.
       tableBody = rows.filter((r) => r.date <= todayISO()).map((r) => [r.sn, fmtDate(r.date), inr(r.due), r.collected ? inr(r.collected) : '—', inr(r.remaining), r.mode ?? '—', r.status, r.remarks ?? '—']);
     } else {
       tableTitle = 'Recorded Payments';
@@ -595,7 +597,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
               amountError ? 'border-danger' : 'border-slate-200 focus-within:border-blue-400 dark:border-slate-700 dark:focus-within:border-blue-500'
             }`}>
               <IndianRupee size={18} className="shrink-0 text-muted" />
-              <input type="number" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0"
+              <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0"
                 className="w-full bg-transparent py-3 font-display text-2xl font-bold tabular-nums text-ink outline-none placeholder:text-slate-300 dark:placeholder:text-slate-600" />
             </div>
             {amountError && <span className="mt-1 block text-[12px] font-medium text-danger">{amountError}</span>}
