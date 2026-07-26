@@ -62,6 +62,8 @@ type Page struct {
 	Type       string
 	Status     string
 	CustomerID int64
+	From       string // '' = no lower bound (YYYY-MM-DD, on loan_date)
+	To         string // '' = no upper bound (YYYY-MM-DD, on loan_date)
 }
 
 func (p Page) Normalize() Page {
@@ -99,6 +101,7 @@ func (s *Service) List(ctx context.Context, page Page) ([]*domain.Loan, int64, e
 	return s.repo.List(ctx, ListParams{
 		Limit: page.Limit, Offset: page.offset(), Search: page.Search,
 		Type: page.Type, Status: page.Status, CustomerID: page.CustomerID,
+		From: page.From, To: page.To,
 	})
 }
 

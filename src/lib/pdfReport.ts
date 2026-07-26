@@ -109,6 +109,89 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
   return doc;
 }
 
+/** A portfolio-wide dataset report (Customers / Loans / Collections / Expenses):
+ *  title band, an optional KPI summary strip, and one wide multi-page table.
+ *  Kept separate from buildLedgerReportPDF (per-loan) so neither disturbs the
+ *  other. Column alignment is per-column so money/counts sit right-aligned. */
+export interface DatasetReportParams {
+  title: string;                 // e.g. "Loans Report"
+  subtitle: string;              // e.g. "All time · 42 loans"
+  summary?: ReportSummaryItem[]; // optional KPI strip
+  tableHead: string[];
+  tableBody: (string | number)[][];
+  rightAlignCols?: number[];     // 0-based column indices to right-align (money/counts)
+}
+
+export function buildDatasetReportPDF(p: DatasetReportParams): jsPDF {
+  // Landscape A4 — dataset tables are wide.
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'landscape' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 40;
+  let y = 38;
+
+  // Generated stamp (right)
+  const genStamp = `Generated ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text(genStamp, pageWidth - margin, y, { align: 'right' });
+
+  // Title + subtitle (left)
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.setTextColor(15, 23, 42);
+  doc.text(p.title, margin, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text(p.subtitle, margin, y + 16);
+  y += 34;
+
+  // Optional KPI summary strip (label row + value row)
+  if (p.summary && p.summary.length) {
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      body: [
+        p.summary.map((s) => s.label),
+        p.summary.map((s) => safeValue(s.value)),
+      ],
+      theme: 'plain',
+      styles: { fontSize: 8.5, cellPadding: { top: 3, bottom: 1, left: 6, right: 6 } },
+      didParseCell: (data) => {
+        if (data.row.index === 1) { data.cell.styles.textColor = [15, 23, 42]; data.cell.styles.fontStyle = 'bold'; data.cell.styles.fontSize = 11; }
+        else { data.cell.styles.textColor = [100, 116, 139]; data.cell.styles.fontStyle = 'normal'; data.cell.styles.fontSize = 7.5; }
+      },
+    });
+    // @ts-expect-error lastAutoTable is attached by the plugin at runtime
+    y = doc.lastAutoTable.finalY + 14;
+  }
+
+  const rightCols = new Set(p.rightAlignCols ?? []);
+  autoTable(doc, {
+    startY: y,
+    margin: { left: margin, right: margin, bottom: 34 },
+    head: [p.tableHead],
+    body: p.tableBody.map((row) => row.map(safeValue)),
+    theme: 'grid',
+    styles: { fontSize: 7.8, cellPadding: 4.5, lineColor: [226, 232, 240], lineWidth: 0.5, overflow: 'linebreak' },
+    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    didParseCell: (data) => {
+      if (rightCols.has(data.column.index)) data.cell.styles.halign = 'right';
+    },
+    didDrawPage: () => {
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Page ${doc.getNumberOfPages()}`, pageWidth - margin, pageHeight - 14, { align: 'right' });
+      doc.text('Anush Finserv — Confidential', margin, pageHeight - 14);
+    },
+  });
+
+  return doc;
+}
+
 export async function shareOrDownloadPDF(doc: jsPDF, filename: string): Promise<'shared' | 'downloaded'> {
   try {
     const blob = doc.output('blob');

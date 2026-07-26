@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, type PayMode, type LoanType, type Loan } from '@/mock/DataContext';
+import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, behavesInterestOnly, type PayMode, type LoanType, type Loan } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -74,7 +74,7 @@ export default function Collections() {
     const dueFor = (l: Loan) =>
       isDailyLoan(l.type) ? d.totalDueForDaily(l)
         : isMonthlyLike(l.type) ? d.totalDueForMonthly(l)
-          : isInterestOnly(l.type) ? d.totalDueForInterestOnly(l)
+          : behavesInterestOnly(l) ? d.totalDueForInterestOnly(l)
             : 0;
     const collectedToday = d.collections.filter((c) => c.date === todayISO()).reduce((s, c) => s + c.amount, 0);
     return {

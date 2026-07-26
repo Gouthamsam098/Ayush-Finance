@@ -24,6 +24,26 @@ const (
 	StatusClosed LoanStatus = "CLOSED"
 )
 
+// RepaymentMode applies ONLY to EMI loans (Vehicle, Property). It selects how
+// the loan is repaid:
+//   - RepayEMI: the default flat-interest EMI schedule over a fixed tenure.
+//   - RepayMonthlyInterest: behaves exactly like a Monthly Interest loan —
+//     principal × rate% due every 30 days, principal fixed until settled,
+//     open-ended. The loan's TYPE stays VEHICLE/PROPERTY (so KYC, filters and
+//     labels are unchanged); only the money behaviour changes.
+// Every other loan type ignores this field (stored as RepayEMI by default).
+type RepaymentMode string
+
+const (
+	RepayEMI             RepaymentMode = "EMI"
+	RepayMonthlyInterest RepaymentMode = "MONTHLY_INTEREST"
+)
+
+var validRepaymentModes = map[RepaymentMode]bool{RepayEMI: true, RepayMonthlyInterest: true}
+
+// IsValidRepaymentMode reports whether m is a known repayment mode.
+func IsValidRepaymentMode(m RepaymentMode) bool { return validRepaymentModes[m] }
+
 // standardCycleDays is the interest cycle length for every monthly-like loan
 // except FLEXIBLE, which carries its own term in NumDays.
 const standardCycleDays = 30
@@ -118,14 +138,15 @@ type Loan struct {
 	ID          int64
 	LoanNumber  string
 	CustomerID  int64
-	Type        LoanType
-	Principal   Paise
-	Rate        float64
-	Interest    Paise
-	Deduction   *Paise
-	Disbursed   Paise // net cash given to the borrower = principal − deduction
-	DailyAmount *Paise
-	NumDays     *int
+	Type          LoanType
+	RepaymentMode RepaymentMode // EMI (default) | MONTHLY_INTEREST — only meaningful for Vehicle/Property
+	Principal     Paise
+	Rate          float64
+	Interest      Paise
+	Deduction     *Paise
+	Disbursed     Paise // net cash given to the borrower = principal − deduction
+	DailyAmount   *Paise
+	NumDays       *int
 	LoanDate    time.Time
 	NextDueDate *time.Time
 	Status      LoanStatus
@@ -137,6 +158,29 @@ type Loan struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	ClosedAt    *time.Time
+}
+
+// behavesInterestOnly reports whether THIS loan should use the interest-only
+// engine — either its type is inherently interest-only (Daily/Monthly Interest,
+// Flexible), OR it's an EMI loan (Vehicle/Property) created in MONTHLY_INTEREST
+// repayment mode. This is the behaviour predicate; LoanType.IsInterestOnly()
+// stays type-only for categorisation (filters/KYC/labels).
+func (l *Loan) behavesInterestOnly() bool { return l.BehavesInterestOnly() }
+
+// behavesEMI reports whether THIS loan uses the flat-interest EMI schedule: an
+// EMI-type loan that is NOT in monthly-interest mode.
+func (l *Loan) behavesEMI() bool { return l.BehavesEMI() }
+
+// BehavesInterestOnly is the exported behaviour predicate (see behavesInterestOnly):
+// true for inherently interest-only types AND monthly-mode Vehicle/Property.
+func (l *Loan) BehavesInterestOnly() bool {
+	return l.Type.IsInterestOnly() || (l.Type.IsEmiLoan() && l.RepaymentMode == RepayMonthlyInterest)
+}
+
+// BehavesEMI is the exported EMI-behaviour predicate: an EMI-type loan NOT in
+// monthly-interest mode.
+func (l *Loan) BehavesEMI() bool {
+	return l.Type.IsEmiLoan() && l.RepaymentMode != RepayMonthlyInterest
 }
 
 // cycleDays returns the interest cycle length for this loan. FLEXIBLE uses its
@@ -166,9 +210,10 @@ func (l *Loan) NextDue(c Collected) *time.Time {
 		return nil
 	}
 	switch {
-	case l.Type.IsInterestOnly():
-		// Interest accrues per cadence period (1-day / 30-day / Flexible NumDays).
-		// The next due is the first not-fully-paid period. Daily/Monthly Interest
+	case l.behavesInterestOnly():
+		// Interest accrues per cadence period (1-day / 30-day / Flexible NumDays;
+		// a monthly-mode Vehicle/Property uses 30-day). The next due is the first
+		// not-fully-paid period. Daily/Monthly Interest (and monthly-mode EMI)
 		// charge cycle k at loanDate + k·cadence (first due at +cadence). Flexible
 		// charges the first cycle on the loan date itself, so its cycles are one
 		// step earlier: with `paid` funded, the next falls at loanDate + paid·cadence.
@@ -343,13 +388,14 @@ func (l *Loan) Outstanding(c Collected, now time.Time) Paise {
 	if l.Type.IsInstalmentLoan() {
 		return l.Principal.Sub(c.Total())
 	}
-	if l.Type.IsEmiLoan() {
+	// EMI schedule — only for EMI loans NOT in monthly-interest mode.
+	if l.behavesEMI() {
 		if l.Status == StatusClosed {
 			return 0
 		}
 		return l.Principal.Add(l.Interest).Sub(c.Total())
 	}
-	// Interest-accruing (Daily/Monthly Interest, Flexible).
+	// Interest-accruing (Daily/Monthly Interest, Flexible, and monthly-mode EMI).
 	if l.Status == StatusClosed {
 		return 0
 	}

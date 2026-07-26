@@ -35,6 +35,7 @@ func (h *Handler) Routes() chi.Router {
 type loanRequest struct {
 	CustomerID    int64    `json:"customer_id"`
 	Type          string   `json:"type"`
+	RepaymentMode string   `json:"repayment_mode"` // EMI (default) | MONTHLY_INTEREST
 	Principal     float64  `json:"principal"`
 	Rate          float64  `json:"rate"`
 	LoanDate      string   `json:"loan_date"` // YYYY-MM-DD
@@ -50,6 +51,7 @@ func (req loanRequest) toInput() (domain.LoanInput, error) {
 	in := domain.LoanInput{
 		CustomerID:    req.CustomerID,
 		Type:          domain.LoanType(strings.TrimSpace(req.Type)),
+		RepaymentMode: domain.RepaymentMode(strings.TrimSpace(req.RepaymentMode)),
 		Principal:     domain.RupeesToPaise(req.Principal),
 		Rate:          req.Rate,
 		NumDays:       req.NumDays,
@@ -77,6 +79,7 @@ type loanResponse struct {
 	LoanNumber    string   `json:"loan_number"`
 	CustomerID    int64    `json:"customer_id"`
 	Type          string   `json:"type"`
+	RepaymentMode string   `json:"repayment_mode"`
 	Principal     float64  `json:"principal"`
 	Rate          float64  `json:"rate"`
 	Interest      float64  `json:"interest"`
@@ -110,16 +113,17 @@ func (h *Handler) toResponse(l *domain.Loan, collected domain.Collected) loanRes
 	switch {
 	case l.Type.IsInstalmentLoan():
 		totalDue = l.TotalDueForDaily(collected.Total(), now)
-	case l.Type.IsEmiLoan():
-		totalDue = l.TotalDueForMonthly(collected.Total(), now)
-	case l.Type.IsInterestOnly():
+	case l.BehavesInterestOnly(): // interest-only types AND monthly-mode Vehicle/Property
 		totalDue = l.TotalDueForInterestOnly(collected.Interest, now)
+	case l.BehavesEMI():
+		totalDue = l.TotalDueForMonthly(collected.Total(), now)
 	}
 	if totalDue < 0 {
 		totalDue = 0 // paid ahead of schedule
 	}
 	resp := loanResponse{
 		ID: l.ID, LoanNumber: l.LoanNumber, CustomerID: l.CustomerID, Type: string(l.Type),
+		RepaymentMode: string(l.RepaymentMode),
 		Principal: l.Principal.Rupees(), Rate: l.Rate, Interest: l.Interest.Rupees(),
 		Disbursed: l.Disbursed.Rupees(),
 		NumDays: l.NumDays, LoanDate: l.LoanDate.Format("2006-01-02"), Status: string(l.Status),
@@ -204,6 +208,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		Type:       strings.TrimSpace(q.Get("type")),
 		Status:     strings.TrimSpace(q.Get("status")),
 		CustomerID: customerID,
+		From:       strings.TrimSpace(q.Get("from")),
+		To:         strings.TrimSpace(q.Get("to")),
 	}.Normalize()
 
 	loans, total, err := h.service.List(r.Context(), page)

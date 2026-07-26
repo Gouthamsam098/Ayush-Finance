@@ -12,6 +12,8 @@ const (
 	DocLicense  DocumentType = "LICENSE"  // vehicle loans
 	DocRC       DocumentType = "RC"       // vehicle loans (registration certificate)
 	DocProperty DocumentType = "PROPERTY" // property loans
+	DocPhoto    DocumentType = "PHOTO"    // borrower photo (optional)
+	DocOther    DocumentType = "OTHER"    // any additional supporting document (optional)
 )
 
 // MaxDocumentBytes caps a single upload. Named constant, not a magic number;
@@ -20,6 +22,7 @@ const MaxDocumentBytes = 5 << 20 // 5 MiB
 
 var validDocTypes = map[DocumentType]bool{
 	DocAadhaar: true, DocPAN: true, DocLicense: true, DocRC: true, DocProperty: true,
+	DocPhoto: true, DocOther: true,
 }
 
 // IsValidDocumentType reports whether t is an accepted document type.

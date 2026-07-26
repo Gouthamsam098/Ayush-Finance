@@ -7,6 +7,7 @@ package collection
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/anush-capitals/lms-backend/internal/domain"
@@ -77,6 +78,45 @@ func (r *Repository) ListByDate(ctx context.Context, date string, limit int) ([]
 		FROM collections WHERE deleted_at IS NULL
 		ORDER BY date DESC, id DESC LIMIT $1`
 	return r.queryList(ctx, q, limit)
+}
+
+// RangeParams filters the cross-loan feed by an inclusive date range with
+// pagination. Empty From/To mean unbounded on that side.
+type RangeParams struct {
+	From   string // '' = no lower bound (YYYY-MM-DD)
+	To     string // '' = no upper bound (YYYY-MM-DD)
+	Limit  int
+	Offset int
+}
+
+// ListRange returns a page of payments across all loans within [From, To],
+// newest first, plus the total matching count (for pagination). This backs the
+// Reports export, which needs an authoritative server-side date filter.
+func (r *Repository) ListRange(ctx context.Context, p RangeParams) ([]*domain.Collection, int64, error) {
+	where := "WHERE deleted_at IS NULL"
+	args := []any{}
+	if p.From != "" {
+		args = append(args, p.From)
+		where += fmt.Sprintf(" AND date >= $%d", len(args))
+	}
+	if p.To != "" {
+		args = append(args, p.To)
+		where += fmt.Sprintf(" AND date <= $%d", len(args))
+	}
+
+	var total int64
+	if err := r.pool.QueryRow(ctx, "SELECT count(*) FROM collections "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, p.Limit, p.Offset)
+	query := fmt.Sprintf(`SELECT %s FROM collections %s ORDER BY date DESC, id DESC LIMIT $%d OFFSET $%d`,
+		collectionColumns, where, len(args)-1, len(args))
+	items, err := r.queryList(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 // SumByLoan returns the collected total for a single loan, split into interest

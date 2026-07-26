@@ -42,21 +42,32 @@ const LOAN_TYPE_OPTIONS: { value: LoanTypeOption; label: string }[] = (
   Object.entries(LOAN_TYPE_LABELS) as [LoanType, string][]
 ).map(([value, label]) => ({ value, label }));
 
-/** Document tiles required per loan type. Aadhaar + PAN are always required;
- *  Vehicle adds License + RC, Property adds a Property document. */
+/** Document tiles. Aadhaar + PAN are always required; Vehicle adds License + RC,
+ *  Property adds a Property document. PHOTO + OTHER are always shown but OPTIONAL. */
 const DOC_TILES: { type: DocumentType; label: string; icon: React.ReactNode; color: SectionColor }[] = [
   { type: 'AADHAAR', label: 'Aadhaar Card', icon: <FileText size={18} />, color: 'blue' },
   { type: 'PAN', label: 'PAN Card', icon: <CreditCard size={18} />, color: 'amber' },
   { type: 'LICENSE', label: 'Driving License', icon: <Car size={18} />, color: 'violet' },
   { type: 'RC', label: 'RC (Registration)', icon: <Car size={18} />, color: 'violet' },
   { type: 'PROPERTY', label: 'Property Document', icon: <Home size={18} />, color: 'emerald' },
+  { type: 'PHOTO', label: 'Photo', icon: <User size={18} />, color: 'blue' },
+  { type: 'OTHER', label: 'Other Document', icon: <FileText size={18} />, color: 'amber' },
 ];
 
-function docTypesForLoan(loanType?: LoanTypeOption): DocumentType[] {
+/** Documents that are ALWAYS offered but never required. */
+const OPTIONAL_DOCS: DocumentType[] = ['PHOTO', 'OTHER'];
+
+/** REQUIRED document types for a loan type (drives the missing-doc validation). */
+function requiredDocsForLoan(loanType?: LoanTypeOption): DocumentType[] {
   const base: DocumentType[] = ['AADHAAR', 'PAN'];
   if (loanType === 'VEHICLE') return [...base, 'LICENSE', 'RC'];
   if (loanType === 'PROPERTY') return [...base, 'PROPERTY'];
   return base;
+}
+
+/** ALL document tiles shown for a loan type = required ones + the optional PHOTO/OTHER. */
+function docTilesForLoan(loanType?: LoanTypeOption): DocumentType[] {
+  return [...requiredDocsForLoan(loanType), ...OPTIONAL_DOCS];
 }
 
 // Backend field names (snake_case) → form field keys (camelCase) so a
@@ -210,7 +221,8 @@ export default function Customers() {
   // chosen loan type. In API mode this hits the backend; mock mode is a no-op.
   const uploadPendingDocs = async (customerId: number) => {
     if (!config.useApi) return;
-    for (const type of docTypesForLoan(loanType)) {
+    // Upload every attached tile (required + the optional PHOTO/OTHER).
+    for (const type of docTilesForLoan(loanType)) {
       const file = pendingDocs[type];
       if (file) {
         try { await documentApi.upload(customerId, type, file); }
@@ -237,7 +249,8 @@ export default function Customers() {
     // Documents are mandatory. On create, every required doc for the loan type
     // must be attached. On edit, documents may already exist server-side, so we
     // only require any tile the user has newly opened but left empty is skipped.
-    const required = docTypesForLoan(loanType);
+    // Only the REQUIRED docs block save; PHOTO + OTHER are optional.
+    const required = requiredDocsForLoan(loanType);
     const missingDocs = editId ? [] : required.filter((t) => !pendingDocs[t]);
 
     if (Object.keys(found).length > 0 || missingDocs.length > 0) {
@@ -741,11 +754,11 @@ export default function Customers() {
                 </p>
               )}
 
-              {/* Document uploads — conditional on loan type, all mandatory */}
+              {/* Document uploads — required docs per loan type + optional Photo/Other */}
               <div className="mt-6">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Upload Documents *</div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Upload Documents</div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {DOC_TILES.filter((t) => docTypesForLoan(loanType).includes(t.type)).map((tile) => (
+                  {DOC_TILES.filter((t) => docTilesForLoan(loanType).includes(t.type)).map((tile) => (
                     <UploadTile
                       key={tile.type}
                       label={tile.label}
@@ -753,6 +766,7 @@ export default function Customers() {
                       color={tile.color}
                       file={pendingDocs[tile.type] ?? null}
                       missing={docErrors.includes(tile.type)}
+                      optional={OPTIONAL_DOCS.includes(tile.type)}
                       onPick={(f) => {
                         setPendingDocs((p) => {
                           const next = { ...p };
@@ -767,8 +781,8 @@ export default function Customers() {
                 </div>
                 <p className="mt-2 text-xs text-muted">
                   {editId
-                    ? 'Upload to add or replace a document. JPEG, PNG, WebP or PDF, up to 5 MB each.'
-                    : 'All documents are required. JPEG, PNG, WebP or PDF, up to 5 MB each.'}
+                    ? 'Upload to add or replace a document. Photo and Other are optional. JPEG, PNG, WebP or PDF, up to 5 MB each.'
+                    : 'Aadhaar/PAN (and loan-specific docs) are required; Photo and Other are optional. JPEG, PNG, WebP or PDF, up to 5 MB each.'}
                 </p>
               </div>
             </section>
@@ -1061,6 +1075,7 @@ function UploadTile({
   color,
   file,
   missing,
+  optional,
   onPick,
 }: {
   label: string;
@@ -1068,6 +1083,7 @@ function UploadTile({
   color: SectionColor;
   file: File | null;
   missing?: boolean;
+  optional?: boolean;
   onPick: (f: File | null) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1094,9 +1110,12 @@ function UploadTile({
           {picked ? <Check size={18} /> : icon}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-slate-900 dark:text-white">{label}</div>
+          <div className="text-sm font-medium text-slate-900 dark:text-white">
+            {label}
+            {optional && <span className="ml-1.5 text-[11px] font-normal text-muted">(Optional)</span>}
+          </div>
           <div className={`truncate text-xs ${missing ? 'text-danger' : 'text-muted'}`}>
-            {picked ? file!.name : missing ? 'Required — click to upload' : 'Click to upload'}
+            {picked ? file!.name : missing ? 'Required — click to upload' : optional ? 'Optional — click to upload' : 'Click to upload'}
           </div>
         </div>
         {picked ? (

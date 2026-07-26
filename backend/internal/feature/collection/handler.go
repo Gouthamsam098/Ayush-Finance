@@ -1,6 +1,7 @@
 package collection
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -132,14 +133,52 @@ func (h *Handler) listByLoan(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) feed(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	date := strings.TrimSpace(q.Get("date"))
+	from := strings.TrimSpace(q.Get("from"))
+	to := strings.TrimSpace(q.Get("to"))
+	pageStr := strings.TrimSpace(q.Get("page"))
 	limit, _ := strconv.Atoi(q.Get("limit"))
+
+	// Range/paginated mode: any of from/to/page present → return a paginated
+	// envelope with meta (used by the Reports export). Otherwise fall back to the
+	// legacy single-day feed so the existing daily collection view is unchanged.
+	if from != "" || to != "" || pageStr != "" {
+		page := atoiDefault(pageStr, 1)
+		if page < 1 {
+			page = 1
+		}
+		if limit <= 0 {
+			limit = 100
+		}
+		offset := (page - 1) * limit
+		items, total, err := h.service.FeedRange(r.Context(), from, to, limit, offset)
+		if err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+		totalPages := int(math.Ceil(float64(total) / float64(limit)))
+		httpx.List(w, projectList(items), httpx.PaginationMeta{
+			Page: page, Limit: limit, Total: total, TotalPages: totalPages,
+		})
+		return
+	}
+
+	date := strings.TrimSpace(q.Get("date"))
 	items, err := h.service.Feed(r.Context(), date, limit)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, projectList(items))
+}
+
+func atoiDefault(s string, fallback int) int {
+	if s == "" {
+		return fallback
+	}
+	if v, err := strconv.Atoi(s); err == nil {
+		return v
+	}
+	return fallback
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {

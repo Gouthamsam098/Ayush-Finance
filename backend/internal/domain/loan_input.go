@@ -13,6 +13,7 @@ import (
 type LoanInput struct {
 	CustomerID    int64
 	Type          LoanType
+	RepaymentMode RepaymentMode // EMI (default) | MONTHLY_INTEREST — only for Vehicle/Property
 	Principal     Paise
 	Rate          float64
 	LoanDate      time.Time
@@ -22,6 +23,13 @@ type LoanInput struct {
 	VehicleNumber *string
 	VehicleBrand  *string
 	VehicleName   *string
+}
+
+// isMonthlyInterestEMI reports whether this input is a Vehicle/Property loan
+// created in MONTHLY_INTEREST repayment mode (interest-only behaviour). For
+// every other type the mode is ignored.
+func (in *LoanInput) isMonthlyInterestEMI() bool {
+	return in.Type.IsEmiLoan() && in.RepaymentMode == RepayMonthlyInterest
 }
 
 // ── Field limits (mirror the frontend's industrial-standard validation) ──
@@ -52,6 +60,13 @@ func (in *LoanInput) Validate(now time.Time) error {
 	if !IsValidLoanType(in.Type) {
 		fields["type"] = "Invalid loan type"
 	}
+	// Repayment mode: only Vehicle/Property may carry MONTHLY_INTEREST; every
+	// other type must be plain EMI (the default). An empty mode is treated as EMI.
+	if in.RepaymentMode != "" && !IsValidRepaymentMode(in.RepaymentMode) {
+		fields["repayment_mode"] = "Invalid repayment mode"
+	} else if in.RepaymentMode == RepayMonthlyInterest && !in.Type.IsEmiLoan() {
+		fields["repayment_mode"] = "Monthly interest mode applies only to Vehicle/Property loans"
+	}
 
 	// Principal — whole rupees only (no paise): must be an exact multiple of 100 paise.
 	if in.Principal < minPrincipalPaise {
@@ -71,9 +86,10 @@ func (in *LoanInput) Validate(now time.Time) error {
 		fields["rate"] = "Rate can have at most 2 decimals"
 	}
 
-	// Tenure — EMI (months) / Flexible (days). Other types derive it server-side.
+	// Tenure — EMI (months) / Flexible (days). Other types (incl. a monthly-
+	// interest-mode Vehicle/Property, which is open-ended) derive it server-side.
 	switch {
-	case in.Type.IsEmiLoan():
+	case in.Type.IsEmiLoan() && !in.isMonthlyInterestEMI():
 		if in.NumDays == nil || *in.NumDays < 1 {
 			fields["num_days"] = "Tenure is required"
 		} else if *in.NumDays > maxEmiMonths {
@@ -158,6 +174,16 @@ func (in *LoanInput) Derive() DerivedLoan {
 		d.DailyAmount = &daily
 		d.NumDays = &term
 		d.Deduction = &ded
+		d.NextDueDate = &next
+
+	case in.isMonthlyInterestEMI():
+		// Vehicle/Property in monthly-interest mode: behaves like Monthly Interest.
+		// Interest = principal × rate% due every 30 days on the original principal;
+		// principal fixed until settled; open-ended (no tenure). Per-period interest
+		// in DailyAmount; NumDays left nil.
+		perPeriod := interest
+		next := addDaysT(in.LoanDate, standardCycleDays) // first interest due +30 days
+		d.DailyAmount = &perPeriod
 		d.NextDueDate = &next
 
 	case in.Type.IsEmiLoan():

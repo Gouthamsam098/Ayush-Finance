@@ -111,9 +111,9 @@ func (in *CollectionInput) Validate(loan *Loan, collected Collected, now time.Ti
 
 	if !IsValidCollectionKind(in.Kind) {
 		fields["kind"] = "Select interest or principal"
-	} else if in.Kind == KindPrincipal && loan != nil && !loan.Type.IsInterestOnly() {
-		// Only interest-only loans split interest vs principal; for other types a
-		// payment is just a payment.
+	} else if in.Kind == KindPrincipal && loan != nil && !loan.behavesInterestOnly() {
+		// Only interest-accruing loans (incl. a monthly-mode Vehicle/Property)
+		// split interest vs principal; for others a payment is just a payment.
 		fields["kind"] = "Principal payments apply only to interest-only loans"
 	}
 

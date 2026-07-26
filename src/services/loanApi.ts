@@ -14,6 +14,7 @@ interface LoanWire {
   loan_number: string;
   customer_id: number;
   type: LoanType;
+  repayment_mode?: 'EMI' | 'MONTHLY_INTEREST';
   principal: number;
   rate: number;
   interest: number;
@@ -40,6 +41,7 @@ function toLoan(w: LoanWire): Loan {
     loanNumber: w.loan_number,
     customerId: w.customer_id,
     type: w.type,
+    repaymentMode: w.repayment_mode,
     principal: w.principal,
     rate: w.rate,
     interest: w.interest,
@@ -64,6 +66,7 @@ function toWire(l: Partial<Loan>): Record<string, unknown> {
   const w: Record<string, unknown> = {};
   if (l.customerId !== undefined) w.customer_id = l.customerId;
   if (l.type !== undefined) w.type = l.type;
+  if (l.repaymentMode !== undefined) w.repayment_mode = l.repaymentMode;
   if (l.principal !== undefined) w.principal = l.principal;
   if (l.rate !== undefined) w.rate = l.rate;
   if (l.loanDate !== undefined) w.loan_date = l.loanDate;
@@ -76,10 +79,43 @@ function toWire(l: Partial<Loan>): Record<string, unknown> {
   return w;
 }
 
+/** Server-side filters for the Reports export. Empty fields are omitted. */
+export interface LoanReportFilters {
+  from?: string;   // YYYY-MM-DD, on loan_date
+  to?: string;     // YYYY-MM-DD, on loan_date
+  status?: string; // ACTIVE | CLOSED
+  type?: string;   // LoanType
+  search?: string;
+}
+
+function loanQuery(f: LoanReportFilters, page: number): string {
+  const p = new URLSearchParams({ page: String(page), limit: '100' });
+  if (f.from) p.set('from', f.from);
+  if (f.to) p.set('to', f.to);
+  if (f.status) p.set('status', f.status);
+  if (f.type) p.set('type', f.type);
+  if (f.search) p.set('search', f.search);
+  return p.toString();
+}
+
 export const loanApi = {
   async list(): Promise<Loan[]> {
     const res: ListResult<LoanWire> = await api.getList<LoanWire>('/loans?limit=100');
     return res.data.map(toLoan);
+  },
+
+  /** Fetch EVERY loan matching the filters, paging through the server so the
+   *  export is never silently truncated (the plain list() caps at 100). */
+  async fetchAll(f: LoanReportFilters = {}): Promise<Loan[]> {
+    const out: Loan[] = [];
+    let page = 1;
+    for (;;) {
+      const res: ListResult<LoanWire> = await api.getList<LoanWire>(`/loans?${loanQuery(f, page)}`);
+      out.push(...res.data.map(toLoan));
+      if (page >= (res.meta?.total_pages ?? 1) || res.data.length === 0) break;
+      page += 1;
+    }
+    return out;
   },
 
   async create(l: Partial<Loan>): Promise<Loan> {

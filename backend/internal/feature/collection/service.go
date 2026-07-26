@@ -108,6 +108,22 @@ func (s *Service) Feed(ctx context.Context, date string, limit int) ([]*domain.C
 	return s.repo.ListByDate(ctx, date, limit)
 }
 
+// FeedRange returns a paginated page of payments across all loans within an
+// inclusive [from, to] date range, plus the total count — the authoritative
+// server-side filter used by the Reports export.
+func (s *Service) FeedRange(ctx context.Context, from, to string, limit, offset int) ([]*domain.Collection, int64, error) {
+	if limit <= 0 {
+		limit = defaultFeedLimit
+	}
+	if limit > maxFeedLimit {
+		limit = maxFeedLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return s.repo.ListRange(ctx, RangeParams{From: from, To: to, Limit: limit, Offset: offset})
+}
+
 // Get returns a single payment.
 func (s *Service) Get(ctx context.Context, id int64) (*domain.Collection, error) {
 	return s.repo.FindByID(ctx, id)

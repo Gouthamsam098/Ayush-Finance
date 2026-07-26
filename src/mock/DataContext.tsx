@@ -5,6 +5,7 @@ import { config } from '@/lib/config';
 import { customerApi } from '@/services/customerApi';
 import { loanApi } from '@/services/loanApi';
 import { collectionApi } from '@/services/collectionApi';
+import { expenseApi } from '@/services/expenseApi';
 import type { RootState } from '@/store';
 
 // ─────────────── Types ───────────────
@@ -29,9 +30,19 @@ export const isEmiLoan = (t: LoanType) => t === 'VEHICLE' || t === 'PROPERTY';
 export const isInstalmentLoan = (t: LoanType) => isDailyLoan(t);
 /** @deprecated kept for callers; monthly-cadence collection no longer exists. */
 export const isMonthlyLike = (_t: LoanType) => false;
-/** Interest-accruing loans: customer pays interest each cycle; principal fixed
- *  until separately settled. Open-ended. Daily/Monthly Interest + Flexible. */
+/** Interest-accruing loans BY TYPE: customer pays interest each cycle; principal
+ *  fixed until settled. Daily/Monthly Interest + Flexible. Use behavesInterestOnly(loan)
+ *  when a loan is available — it also covers a monthly-mode Vehicle/Property. */
 export const isInterestOnly = (t: LoanType) => t === 'DAILY_INTEREST' || t === 'MONTHLY_INTEREST' || t === 'FLEXIBLE';
+/** Repayment mode — only meaningful for Vehicle/Property (mirrors backend). */
+export type RepaymentMode = 'EMI' | 'MONTHLY_INTEREST';
+/** BEHAVIOUR predicate (mirrors backend Loan.BehavesInterestOnly): true for
+ *  inherently interest-only types AND a Vehicle/Property in MONTHLY_INTEREST mode. */
+export const behavesInterestOnly = (loan: Loan) =>
+  isInterestOnly(loan.type) || (isEmiLoan(loan.type) && loan.repaymentMode === 'MONTHLY_INTEREST');
+/** BEHAVIOUR predicate: an EMI-type loan NOT in monthly-interest mode. */
+export const behavesEmi = (loan: Loan) =>
+  isEmiLoan(loan.type) && loan.repaymentMode !== 'MONTHLY_INTEREST';
 /** Interest cadence in days by TYPE: 1 for Daily Interest, 30 otherwise. NOTE:
  *  Flexible's cadence is its own numDays — use cadenceDaysForLoan(loan) when the
  *  loan is available (mirrors backend interestCadenceDays). */
@@ -87,7 +98,7 @@ export interface Customer {
   aadhaarMasked?: string; panMasked?: string; hasAadhaar?: boolean; hasPan?: boolean;
 }
 export interface Loan {
-  id: number; loanNumber: string; customerId: number; type: LoanType; principal: number; rate: number;
+  id: number; loanNumber: string; customerId: number; type: LoanType; repaymentMode?: RepaymentMode; principal: number; rate: number;
   interest: number; deduction?: number; disbursed?: number; loanDate: string; contact?: string; remarks?: string; dailyAmount?: number;
   numDays?: number; nextDueDate?: string; vehicleNumber?: string; vehicleBrand?: string; vehicleName?: string;
   status: 'ACTIVE' | 'CLOSED';
@@ -188,9 +199,9 @@ interface DataShape {
   addCollection: (c: Omit<Collection, 'id' | 'receiptNo'>) => Promise<void> | void;
   updateCollection: (id: number, c: Partial<Collection>) => Promise<void> | void;
   deleteCollection: (id: number) => Promise<void> | void;
-  addExpense: (e: Omit<Expense, 'id'>) => void;
-  updateExpense: (id: number, e: Partial<Expense>) => void;
-  deleteExpense: (id: number) => void;
+  addExpense: (e: Omit<Expense, 'id'>) => Promise<void> | void;
+  updateExpense: (id: number, e: Partial<Expense>) => Promise<void> | void;
+  deleteExpense: (id: number) => Promise<void> | void;
   addDocument: (d: Omit<DocItem, 'id'>) => void;
   deleteDocument: (id: number) => void;
   collectedFor: (loanId: number) => number;
@@ -217,7 +228,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [customers, setCustomers] = useState<Customer[]>(config.useApi ? [] : seedCustomers);
   const [loans, setLoans] = useState<Loan[]>(config.useApi ? [] : seedLoans);
   const [collections, setCollections] = useState<Collection[]>(config.useApi ? [] : seedCollections);
-  const [expenses, setExpenses] = useState<Expense[]>(seedExpenses);
+  const [expenses, setExpenses] = useState<Expense[]>(config.useApi ? [] : seedExpenses);
   const [documents, setDocuments] = useState<DocItem[]>(seedDocs);
   const [codeSeq, setCodeSeq] = useState(1006);
   const [loanSeq, setLoanSeq] = useState(4006);
@@ -232,6 +243,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     customerApi.list().then(setCustomers).catch(() => { /* surfaced per-action */ });
     loanApi.list().then(setLoans).catch(() => { /* surfaced per-action */ });
     collectionApi.list().then(setCollections).catch(() => { /* surfaced per-action */ });
+    expenseApi.list().then(setExpenses).catch(() => { /* surfaced per-action */ });
   }, [accessToken]);
 
   // Mock-mode auto-close: when a loan's outstanding reaches 0 it is marked
@@ -250,10 +262,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const totalPaid = interestPaid + principalPaid;
         let outstanding: number;
         if (isInstalmentLoan(l.type)) outstanding = Math.max(0, l.principal - totalPaid);
-        else if (isEmiLoan(l.type)) outstanding = Math.max(0, l.principal + l.interest - totalPaid);
-        else if (isInterestOnly(l.type)) {
+        else if (behavesEmi(l)) outstanding = Math.max(0, l.principal + l.interest - totalPaid);
+        else if (behavesInterestOnly(l)) {
           const cadence = cadenceDaysForLoan(l);
-          // Flexible: 1st cycle on the loan date → cycles + 1; Daily: elapsed − 1; Monthly: cycles.
+          // Flexible: 1st cycle on the loan date → cycles + 1; Daily: elapsed − 1;
+          // Monthly Interest & monthly-mode Vehicle/Property: completed cycles.
           const periods = l.type === 'FLEXIBLE' ? monthlyCyclesElapsed(l.loanDate, cadence) + 1
             : cadence === 1 ? Math.max(0, elapsedDaysSinceLoan(l.loanDate) - 1)
             : monthlyCyclesElapsed(l.loanDate, cadence);
@@ -326,13 +339,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // Keeps a meaningful residual even after closing.
         return Math.max(0, loan.principal - collected);
       }
-      if (isEmiLoan(loan.type)) {
-        // Vehicle/Property: full principal + flat interest, repaid by EMIs.
+      if (behavesEmi(loan)) {
+        // Vehicle/Property (EMI mode): full principal + flat interest, repaid by EMIs.
         // Outstanding = total payable − collected.
         return loan.status === 'CLOSED' ? 0 : Math.max(0, loan.principal + loan.interest - collected);
       }
-      // Interest-accruing (Daily/Monthly Interest, Flexible): remaining principal
-      // (settled via PRINCIPAL payments) + accrued unpaid interest.
+      // Interest-accruing (Daily/Monthly Interest, Flexible, monthly-mode Vehicle/
+      // Property): remaining principal (settled via PRINCIPAL payments) + accrued
+      // unpaid interest.
       const remainingPrincipal = Math.max(0, loan.principal - principalCollectedFor(loan.id));
       return loan.status === 'CLOSED' ? 0 : remainingPrincipal + totalDueForInterestOnly(loan);
     };
@@ -345,9 +359,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
      *  advances past today. CLOSED / fully-collected → null. */
     const nextDueFor = (loan: Loan): string | null => {
       if (loan.status === 'CLOSED') return null;
-      // Interest-accruing (Daily/Monthly Interest, Flexible): interest bucket ÷
-      // per-period × its cadence (Flexible cadence = numDays).
-      if (isInterestOnly(loan.type)) {
+      // Interest-accruing (Daily/Monthly Interest, Flexible, monthly-mode Vehicle/
+      // Property): interest bucket ÷ per-period × its cadence (Flexible = numDays).
+      if (behavesInterestOnly(loan)) {
         const per = loan.dailyAmount ?? loan.interest;
         if (per <= 0) return loan.nextDueDate ?? null;
         const paid = Math.floor(interestCollectedFor(loan.id) / per);
@@ -481,9 +495,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         setCollections((s) => s.filter((c) => c.id !== id));
       },
-      addExpense: (e) => setExpenses((s) => [{ ...e, id: uid() }, ...s]),
-      updateExpense: (id, patch) => setExpenses((s) => s.map((e) => (e.id === id ? { ...e, ...patch } : e))),
-      deleteExpense: (id) => setExpenses((s) => s.filter((e) => e.id !== id)),
+      // Expense mutations return a promise in API mode so the page can await
+      // and surface failures (server mints the id and validates every field).
+      addExpense: (e) => {
+        if (config.useApi) {
+          return expenseApi.create(e).then((created) => setExpenses((s) => [created, ...s]));
+        }
+        setExpenses((s) => [{ ...e, id: uid() }, ...s]);
+      },
+      updateExpense: (id, patch) => {
+        if (config.useApi) {
+          return expenseApi.update(id, patch).then((updated) =>
+            setExpenses((s) => s.map((e) => (e.id === id ? updated : e))));
+        }
+        setExpenses((s) => s.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+      },
+      deleteExpense: (id) => {
+        if (config.useApi) {
+          return expenseApi.remove(id).then(() => setExpenses((s) => s.filter((e) => e.id !== id)));
+        }
+        setExpenses((s) => s.filter((e) => e.id !== id));
+      },
       addDocument: (d) => setDocuments((s) => [{ ...d, id: uid() }, ...s]),
       deleteDocument: (id) => setDocuments((s) => s.filter((d) => d.id !== id)),
       collectedFor, interestCollectedFor, principalCollectedFor, outstandingFor, nextDueForDaily, nextDueFor, totalDueForDaily, totalDueForMonthly, totalDueForInterestOnly,

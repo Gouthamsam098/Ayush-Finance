@@ -12,6 +12,7 @@ func day(y int, m time.Month, d int) time.Time {
 }
 
 func ptrInt(n int) *int { return &n }
+func strPtr(s string) *string { return &s }
 
 func ptrPaise(p Paise) *Paise { return &p }
 
@@ -109,6 +110,47 @@ func TestEmiLoan(t *testing.T) {
 	want := principal.Add(interest).Sub(collected)
 	if got != want {
 		t.Errorf("EMI outstanding: got %s, want %s", got, want)
+	}
+}
+
+// A Vehicle/Property loan in MONTHLY_INTEREST mode behaves exactly like Monthly
+// Interest: interest = principal × rate% every 30 days, principal fixed until
+// settled. It must NOT use the EMI schedule.
+func TestVehicleMonthlyInterestMode(t *testing.T) {
+	principal := RupeesToPaise(500000)
+	in := LoanInput{
+		Type: LoanVehicle, RepaymentMode: RepayMonthlyInterest,
+		Principal: principal, Rate: 2, LoanDate: day(2026, 1, 1),
+		VehicleNumber: strPtr("KL-07-AB-1234"),
+	}
+	d := in.Derive()
+	perMonth := CalcInterest(principal, 2) // ₹10,000/mo
+	if d.DailyAmount == nil || *d.DailyAmount != perMonth {
+		t.Fatalf("derive: per-period interest got %v, want %s", d.DailyAmount, perMonth)
+	}
+	if d.NumDays != nil {
+		t.Errorf("derive: monthly-mode EMI should have no tenure, got %v", *d.NumDays)
+	}
+	loan := &Loan{
+		Type: LoanVehicle, RepaymentMode: RepayMonthlyInterest,
+		Principal: principal, Rate: 2, Interest: perMonth, DailyAmount: ptrPaise(perMonth),
+		LoanDate: day(2026, 1, 1), Status: StatusActive,
+	}
+	if !loan.BehavesInterestOnly() || loan.BehavesEMI() {
+		t.Fatal("monthly-mode Vehicle must behave interest-only, not EMI")
+	}
+	// Day 31 = 1 cycle → ₹10,000 interest due; principal stays → outstanding 510000.
+	if got := loan.Outstanding(Collected{}, day(2026, 1, 31)); got != RupeesToPaise(510000) {
+		t.Errorf("month 1 outstanding: got %s, want 510000", got)
+	}
+	// Day 61 = 2 cycles → ₹20,000 → outstanding 520000.
+	if got := loan.Outstanding(Collected{}, day(2026, 3, 2)); got != RupeesToPaise(520000) {
+		t.Errorf("month 2 outstanding: got %s, want 520000", got)
+	}
+	// Settle: 2 cycles interest (₹20,000) + full principal → outstanding 0.
+	full := Collected{Interest: RupeesToPaise(20000), Principal: principal}
+	if got := loan.Outstanding(full, day(2026, 3, 2)); got != 0 {
+		t.Errorf("settled: got %s, want 0", got)
 	}
 }
 

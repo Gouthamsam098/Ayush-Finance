@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { CountUp } from '@/components/motion';
 import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { ApiError } from '@/lib/api';
 
 const MODES: PayMode[] = ['CASH', 'UPI', 'BANK', 'CHEQUE'];
 const monthKey = (offset: number) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - offset); return isoLocal(d).slice(0, 7); };
@@ -40,12 +41,17 @@ export default function Expenses() {
   }, [d.expenses, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k: keyof EForm, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
-  const save = () => {
+  const save = async () => {
     if (!form) return;
-    if (!form.name || !Number(form.amount)) { toast('Name and amount are required', 'error'); return; }
-    const payload = { date: form.date, category: form.category, subCategory: form.subCategory || undefined, name: form.name, amount: Number(form.amount), mode: form.mode, remarks: form.remarks || undefined };
-    if (form.id) { d.updateExpense(form.id, payload); toast('Expense updated'); }
-    else { d.addExpense(payload); toast('Expense added'); }
+    if (!form.name.trim() || !Number(form.amount)) { toast('Name and amount are required', 'error'); return; }
+    const payload = { date: form.date, category: form.category, subCategory: form.subCategory || undefined, name: form.name.trim(), amount: Number(form.amount), mode: form.mode, remarks: form.remarks || undefined };
+    try {
+      if (form.id) { await d.updateExpense(form.id, payload); toast('Expense updated'); }
+      else { await d.addExpense(payload); toast('Expense added'); }
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Failed to save expense', 'error');
+      return; // keep the form open so the user can correct it
+    }
     setForm(null);
   };
 
@@ -129,8 +135,14 @@ export default function Expenses() {
 
       <Dialog open={!!confirm} onClose={() => setConfirm(null)} title="Delete expense?" subtitle={confirm ? `${confirm.name} · ${inr(confirm.amount)}` : ''}
         footer={<><Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
-          <Button variant="danger" onClick={() => { if (confirm) { d.deleteExpense(confirm.id); toast('Expense deleted', 'info'); } setConfirm(null); }}>Delete</Button></>}>
-        <p className="text-sm text-muted">This removes the expense from the demo dataset.</p>
+          <Button variant="danger" onClick={async () => {
+            if (confirm) {
+              try { await d.deleteExpense(confirm.id); toast('Expense deleted', 'info'); }
+              catch (e) { toast(e instanceof ApiError ? e.message : 'Failed to delete expense', 'error'); }
+            }
+            setConfirm(null);
+          }}>Delete</Button></>}>
+        <p className="text-sm text-muted">This permanently removes the expense.</p>
       </Dialog>
     </div>
   );

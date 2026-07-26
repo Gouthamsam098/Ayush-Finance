@@ -12,7 +12,7 @@
  *   DELETE /collections/{id}              remove a payment
  */
 
-import { api } from '@/lib/api';
+import { api, type ListResult } from '@/lib/api';
 import type { Collection, CollectionKind, PayMode } from '@/mock/DataContext';
 
 interface CollectionWire {
@@ -53,12 +53,37 @@ function toWire(c: Partial<Collection>): Record<string, unknown> {
   return w;
 }
 
+/** Server-side date-range filter for the Reports export. */
+export interface CollectionReportFilters {
+  from?: string; // YYYY-MM-DD
+  to?: string;   // YYYY-MM-DD
+}
+
 export const collectionApi = {
   /** All payments across loans (optionally for a single day) — the feed. */
   async list(date?: string): Promise<Collection[]> {
     const q = date ? `?date=${date}&limit=500` : '?limit=500';
     const rows = await api.get<CollectionWire[]>(`/collections${q}`);
     return (rows ?? []).map(toCollection);
+  },
+
+  /** Fetch EVERY payment within a date range, paging through the server's
+   *  paginated feed (from/to/page → envelope with meta). Complete + authoritative
+   *  for exports; the legacy list() caps at 500 and can't range. */
+  async fetchAllInRange(f: CollectionReportFilters = {}): Promise<Collection[]> {
+    const out: Collection[] = [];
+    let page = 1;
+    for (;;) {
+      const p = new URLSearchParams({ page: String(page), limit: '200' });
+      if (f.from) p.set('from', f.from);
+      if (f.to) p.set('to', f.to);
+      // page param alone triggers the server's paginated (envelope) mode.
+      const res: ListResult<CollectionWire> = await api.getList<CollectionWire>(`/collections?${p.toString()}`);
+      out.push(...res.data.map(toCollection));
+      if (page >= (res.meta?.total_pages ?? 1) || res.data.length === 0) break;
+      page += 1;
+    }
+    return out;
   },
 
   /** A single loan's ledger. */

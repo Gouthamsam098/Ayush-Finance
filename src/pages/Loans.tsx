@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useData, LOAN_LABELS, isDailyLoan, isEmiLoan, isInstalmentLoan, isInterestOnly, emiFor, upfrontDeduction, DAILY_COLLECTION_RETAINED_MONTHS, type Loan, type LoanType } from '@/mock/DataContext';
+import { useData, LOAN_LABELS, isDailyLoan, isEmiLoan, isInstalmentLoan, isInterestOnly, emiFor, upfrontDeduction, DAILY_COLLECTION_RETAINED_MONTHS, type Loan, type LoanType, type RepaymentMode } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -52,14 +52,20 @@ const daysUntil = (iso: string) => {
 };
 
 interface LoanForm {
-  id?: number; customerId: string; type: LoanType; principal: string; rate: string; loanDate: string;
+  id?: number; customerId: string; type: LoanType; repaymentMode: RepaymentMode; principal: string; rate: string; loanDate: string;
   contact: string; remarks: string; dailyAmount: string; numDays: string;
   vehicleNumber: string; vehicleBrand: string; vehicleName: string;
 }
 const blank = (): LoanForm => ({
-  customerId: '', type: 'DAILY_COLLECTION', principal: '', rate: '', loanDate: todayISO(),
+  customerId: '', type: 'DAILY_COLLECTION', repaymentMode: 'EMI', principal: '', rate: '', loanDate: todayISO(),
   contact: '', remarks: '', dailyAmount: '', numDays: '30', vehicleNumber: '', vehicleBrand: '', vehicleName: '',
 });
+
+/** Vehicle/Property repayment behavior: Tenure (EMI) or open-ended monthly interest. */
+const REPAY_OPTS: { value: RepaymentMode; label: string }[] = [
+  { value: 'EMI', label: 'Tenure (EMI)' },
+  { value: 'MONTHLY_INTEREST', label: 'Monthly interest' },
+];
 
 /** Per-field validation errors for the loan form. */
 type LoanErrors = Partial<Record<keyof LoanForm, string>>;
@@ -98,7 +104,9 @@ function validateLoanForm(f: LoanForm): LoanErrors {
   const e: LoanErrors = {};
   const P = Number(f.principal);
   const R = Number(f.rate);
-  const emi = isEmiLoan(f.type);
+  // EMI = Vehicle/Property in Tenure mode. In Monthly-interest mode they behave
+  // interest-only (open-ended), so no tenure is required.
+  const emi = isEmiLoan(f.type) && f.repaymentMode !== 'MONTHLY_INTEREST';
   const flex = f.type === 'FLEXIBLE';
 
   // Customer
@@ -221,9 +229,12 @@ export default function Loans() {
     const type = form?.type ?? 'DAILY_COLLECTION';
     const loanDate = form?.loanDate ?? todayISO();
 
+    // Vehicle/Property in Monthly-interest mode behaves exactly like Monthly
+    // Interest (30-day recurring interest, open-ended) rather than as an EMI.
+    const monthlyMode = isEmiLoan(type) && (form?.repaymentMode === 'MONTHLY_INTEREST');
     const instalment = isInstalmentLoan(type);      // Daily Collection — upfront interest
-    const emi = isEmiLoan(type);                     // Vehicle / Property — flat-interest EMI
-    const interestOnly = isInterestOnly(type);       // Daily / Monthly Interest + Flexible
+    const emi = isEmiLoan(type) && !monthlyMode;     // Vehicle / Property — flat-interest EMI
+    const interestOnly = isInterestOnly(type) || monthlyMode; // Daily/Monthly Interest, Flexible, monthly-mode Vehicle/Property
     // Interest cadence in days: Daily=1, Flexible=entered days, else 30.
     const cadenceDays = isDailyLoan(type) || type === 'DAILY_INTEREST' ? 1
       : type === 'FLEXIBLE' ? (form ? Number(form.numDays) || 30 : 30)
@@ -268,7 +279,7 @@ export default function Loans() {
 
     // Per-period figure label/value.
     const perLabel = cadenceDays === 1 ? 'Per day' : emi ? 'EMI / month'
-      : type === 'MONTHLY_INTEREST' ? 'Per month'
+      : type === 'MONTHLY_INTEREST' || monthlyMode ? 'Per month'
       : type === 'FLEXIBLE' ? `Every ${cadenceDays} days` : 'One cycle';
     const perValue = interestOnly ? interest : instalment ? daily : emi ? emiAmount : interest;
 
@@ -371,16 +382,19 @@ export default function Loans() {
       return;
     }
     setErrors({});
+    // Vehicle/Property in Monthly-interest mode behaves like Monthly Interest:
+    // open-ended, per-period = interest, next due +30 days (no EMI term).
+    const monthlyMode = isEmiLoan(form.type) && form.repaymentMode === 'MONTHLY_INTEREST';
     const instalment = isInstalmentLoan(form.type);
-    const interestOnly = isInterestOnly(form.type);
-    const emi = isEmiLoan(form.type);
+    const interestOnly = isInterestOnly(form.type) || monthlyMode;
+    const emi = isEmiLoan(form.type) && !monthlyMode;
     const principalNum = Number(form.principal);
     const monthsNum = Number(form.numDays);
     const cadenceDays = isDailyLoan(form.type) || form.type === 'DAILY_INTEREST' ? 1 : 30;
     const autoInterest = Math.round((principalNum * Number(form.rate)) / 100);
     // Term:
     //  • DAILY_COLLECTION: fixed 100-day term.  • EMI: tenure in months.
-    //  • Flexible: entered days.  • Interest-only: open-ended (no term).
+    //  • Flexible: entered days.  • Interest-only (incl. monthly-mode): open-ended.
     const term = form.type === 'DAILY_COLLECTION' ? DAILY_TERM
       : form.type === 'FLEXIBLE' ? monthsNum
       : emi ? monthsNum
@@ -392,7 +406,9 @@ export default function Loans() {
       : interestOnly ? autoInterest
       : undefined;
     const payload = {
-      customerId: Number(form.customerId), type: form.type, principal: principalNum, rate: Number(form.rate),
+      customerId: Number(form.customerId), type: form.type,
+      repaymentMode: isEmiLoan(form.type) ? form.repaymentMode : undefined,
+      principal: principalNum, rate: Number(form.rate),
       loanDate: form.loanDate, contact: form.contact || undefined, remarks: form.remarks || undefined,
       dailyAmount,
       numDays: term,
@@ -431,7 +447,7 @@ export default function Loans() {
   const editLoan = (l: Loan) => {
     setErrors({});
     setForm({
-      id: l.id, customerId: String(l.customerId), type: l.type, principal: String(l.principal), rate: String(l.rate), loanDate: l.loanDate,
+      id: l.id, customerId: String(l.customerId), type: l.type, repaymentMode: l.repaymentMode ?? 'EMI', principal: String(l.principal), rate: String(l.rate), loanDate: l.loanDate,
       contact: l.contact ?? '', remarks: l.remarks ?? '', dailyAmount: String(l.dailyAmount ?? ''), numDays: String(l.numDays ?? 30),
       vehicleNumber: l.vehicleNumber ?? '', vehicleBrand: l.vehicleBrand ?? '', vehicleName: l.vehicleName ?? '',
     });
@@ -536,7 +552,7 @@ export default function Loans() {
               <div
                 key={l.id}
                 className={`${GRID} group flex flex-col gap-2.5 rounded-[14px] border-[0.5px] border-slate-200/90 bg-white px-5 py-4 transition-all hover:border-slate-300 hover:shadow-[0_6px_20px_rgba(30,39,64,.08)] lg:hover:-translate-y-px dark:border-white/[.07] dark:bg-surface dark:hover:border-white/[.14] ${
-                  menuFor === l.id ? 'relative z-40' : ''
+                  menuFor === l.id ? 'relative z-50' : ''
                 } ${closed && menuFor !== l.id ? 'opacity-70' : ''}`}
               >
                 {/* Borrower — hover reveals the ⋮ actions menu */}
@@ -838,6 +854,10 @@ export default function Loans() {
                   }} error={errors.customerId}
                   options={[{ value: '', label: 'Select customer…' }, ...d.customers.map((c) => ({ value: String(c.id), label: `${c.name} (${c.code})` }))]} />
                 <Select label="Loan type *" value={form.type} onChange={(e) => set('type', e.target.value)} options={TYPE_OPTS} />
+                {/* Repayment mode — Vehicle/Property only. Tenure = EMI; Monthly = interest-only. */}
+                {isEmiLoan(form.type) && (
+                  <Select label="Repayment *" value={form.repaymentMode} onChange={(e) => set('repaymentMode', e.target.value)} options={REPAY_OPTS} />
+                )}
               </div>
               {/* type explainer chip */}
               <div className="mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-[12px]"

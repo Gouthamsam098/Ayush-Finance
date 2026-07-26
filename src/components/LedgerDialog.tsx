@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useData, LOAN_LABELS, isDailyLoan, isInstalmentLoan, isEmiLoan, isInterestOnly, cadenceDaysForLoan, upfrontDeduction, type Loan, type PayMode, type CollectionKind } from '@/mock/DataContext';
+import { useData, LOAN_LABELS, isDailyLoan, isInstalmentLoan, behavesEmi, behavesInterestOnly, cadenceDaysForLoan, upfrontDeduction, type Loan, type PayMode, type CollectionKind } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -52,9 +52,12 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   const daily = instalment;                   // alias kept for the row rendering below
   const totalTerm = loan.numDays ?? DAILY_TERM; // number of instalments
   const cust = d.customers.find((c) => c.id === loan.customerId);
-  const emiLoan = isEmiLoan(loan.type);        // Vehicle / Property — monthly EMI
+  // Behaviour, not category: a Vehicle/Property loan in Monthly-interest mode
+  // renders exactly like Monthly Interest (interest-only, open-ended), while a
+  // Tenure-mode one keeps the EMI schedule.
+  const emiLoan = behavesEmi(loan);            // Vehicle / Property (Tenure) — monthly EMI
   const isMonthly = emiLoan;                    // 30-day cadence rows
-  const interestOnly = isInterestOnly(loan.type); // Daily/Monthly Interest — no principal schedule
+  const interestOnly = behavesInterestOnly(loan); // Daily/Monthly Interest, Flexible, monthly-mode Vehicle/Property
   const hasSchedule = isInstalmentLoan(loan.type) || emiLoan; // fixed instalment schedule
   // "Simple" = no fixed schedule: Flexible + interest-only → payment-history view.
   const isSimple = !hasSchedule;

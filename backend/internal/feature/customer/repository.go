@@ -30,6 +30,8 @@ type ListParams struct {
 	Limit  int
 	Offset int
 	Search string
+	From   string // '' = no lower bound (YYYY-MM-DD, on created_at date)
+	To     string // '' = no upper bound (YYYY-MM-DD, on created_at date)
 }
 
 const customerColumns = `
@@ -110,6 +112,16 @@ func (r *Repository) List(ctx context.Context, p ListParams) ([]*domain.Customer
 		args = append(args, "%"+strings.ToLower(p.Search)+"%")
 		where += fmt.Sprintf(" AND (lower(name) LIKE $%d OR mobile LIKE $%d OR lower(code) LIKE $%d)",
 			len(args), len(args), len(args))
+	}
+	// created_at is a timestamp; compare on the local calendar day so an
+	// inclusive [from, to] range covers whole days regardless of time-of-day.
+	if p.From != "" {
+		args = append(args, p.From)
+		where += fmt.Sprintf(" AND created_at >= $%d::date", len(args))
+	}
+	if p.To != "" {
+		args = append(args, p.To)
+		where += fmt.Sprintf(" AND created_at < ($%d::date + 1)", len(args))
 	}
 
 	var total int64

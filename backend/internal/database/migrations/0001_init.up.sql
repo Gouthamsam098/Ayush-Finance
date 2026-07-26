@@ -68,6 +68,7 @@ CREATE TABLE loans (
     loan_number       VARCHAR(20) NOT NULL UNIQUE,           -- LN-####
     customer_id       BIGINT      NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
     type              VARCHAR(30) NOT NULL,
+    repayment_mode    VARCHAR(20) NOT NULL DEFAULT 'EMI',      -- EMI | MONTHLY_INTEREST (only Vehicle/Property)
     principal         BIGINT      NOT NULL,                   -- rupees
     rate              NUMERIC(6,3) NOT NULL,                 -- percent
     interest          BIGINT      NOT NULL,                   -- rupees, derived
@@ -91,6 +92,11 @@ CREATE TABLE loans (
         type IN ('DAILY_COLLECTION','VEHICLE','PROPERTY','DAILY_INTEREST','MONTHLY_INTEREST','FLEXIBLE')
     ),
     CONSTRAINT loans_status_valid CHECK (status IN ('ACTIVE','CLOSED')),
+    -- Repayment mode: valid values, and MONTHLY_INTEREST only on Vehicle/Property.
+    CONSTRAINT loans_repayment_mode_valid CHECK (
+        repayment_mode IN ('EMI','MONTHLY_INTEREST')
+        AND (repayment_mode = 'EMI' OR type IN ('VEHICLE','PROPERTY'))
+    ),
     CONSTRAINT loans_principal_positive CHECK (principal > 0),
     -- Disbursed is the net cash given: principal minus any upfront deduction.
     CONSTRAINT loans_disbursed_consistent CHECK (disbursed_amount = principal - COALESCE(deduction, 0)),
@@ -101,9 +107,11 @@ CREATE TABLE loans (
     CONSTRAINT loans_vehicle_number_required CHECK (
         CASE WHEN type = 'VEHICLE' THEN vehicle_number IS NOT NULL ELSE vehicle_number IS NULL END
     ),
-    -- num_days required except for open-ended interest-only loans.
+    -- num_days required except for open-ended interest-accruing loans: the
+    -- interest-only types, AND a Vehicle/Property in MONTHLY_INTEREST mode.
     CONSTRAINT loans_num_days_by_type CHECK (
-        CASE WHEN type IN ('DAILY_INTEREST','MONTHLY_INTEREST') THEN num_days IS NULL
+        CASE WHEN type IN ('DAILY_INTEREST','MONTHLY_INTEREST') OR repayment_mode = 'MONTHLY_INTEREST'
+             THEN num_days IS NULL
              ELSE num_days IS NOT NULL AND num_days > 0 END
     ),
     -- instalment_amount (per-period amount / interest) required for every type.
@@ -157,7 +165,8 @@ CREATE TABLE expenses (
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
     deleted_at   TIMESTAMPTZ,
     CONSTRAINT expenses_amount_positive CHECK (amount > 0),
-    CONSTRAINT expenses_mode_valid CHECK (mode IN ('CASH','UPI','BANK','CHEQUE'))
+    CONSTRAINT expenses_mode_valid CHECK (mode IN ('CASH','UPI','BANK','CHEQUE')),
+    CONSTRAINT expenses_category_valid CHECK (category IN ('Personal','Office','Savings'))
 );
 CREATE INDEX idx_expenses_category ON expenses(category) WHERE deleted_at IS NULL;
 CREATE INDEX idx_expenses_date ON expenses(date DESC);
@@ -176,7 +185,7 @@ CREATE TABLE documents (
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
     deleted_at  TIMESTAMPTZ,
     CONSTRAINT documents_size_positive CHECK (size_bytes > 0),
-    CONSTRAINT documents_type_valid CHECK (type IN ('AADHAAR','PAN','LICENSE','RC','PROPERTY'))
+    CONSTRAINT documents_type_valid CHECK (type IN ('AADHAAR','PAN','LICENSE','RC','PROPERTY','PHOTO','OTHER'))
 );
 CREATE INDEX idx_documents_customer_id ON documents(customer_id) WHERE deleted_at IS NULL;
 

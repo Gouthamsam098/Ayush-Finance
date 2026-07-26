@@ -187,6 +187,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		Number: atoiDefault(r.URL.Query().Get("page"), 1),
 		Limit:  atoiDefault(r.URL.Query().Get("limit"), defaultLimit),
 		Search: strings.TrimSpace(r.URL.Query().Get("search")),
+		From:   strings.TrimSpace(r.URL.Query().Get("from")),
+		To:     strings.TrimSpace(r.URL.Query().Get("to")),
 	}.Normalize()
 
 	customers, total, err := h.service.List(r.Context(), page)

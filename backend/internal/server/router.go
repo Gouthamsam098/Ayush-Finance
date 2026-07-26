@@ -13,6 +13,7 @@ import (
 	"github.com/anush-capitals/lms-backend/internal/feature/collection"
 	"github.com/anush-capitals/lms-backend/internal/feature/customer"
 	"github.com/anush-capitals/lms-backend/internal/feature/document"
+	"github.com/anush-capitals/lms-backend/internal/feature/expense"
 	"github.com/anush-capitals/lms-backend/internal/feature/loan"
 	"github.com/anush-capitals/lms-backend/internal/httpx"
 	"github.com/go-chi/chi/v5"
@@ -57,6 +58,10 @@ func NewRouter(deps Dependencies) http.Handler {
 	collectionService := collection.NewService(collectionRepo, loanRepo)
 	collectionHandler := collection.NewHandler(collectionService)
 
+	expenseRepo := expense.NewRepository(deps.Pool)
+	expenseService := expense.NewService(expenseRepo)
+	expenseHandler := expense.NewHandler(expenseService)
+
 	r := chi.NewRouter()
 
 	// Global middleware, outermost first.
@@ -91,6 +96,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			protected.Mount("/loans", loanHandler.Routes())
 			protected.Mount("/loans/{loanId}/collections", collectionHandler.LoanRoutes())
 			protected.Mount("/collections", collectionHandler.FlatRoutes())
+			protected.Mount("/expenses", expenseHandler.Routes())
 		})
 	})
 

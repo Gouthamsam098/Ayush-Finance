@@ -31,6 +31,8 @@ type Page struct {
 	Number int
 	Limit  int
 	Search string
+	From   string // '' = no lower bound (YYYY-MM-DD, on created_at date)
+	To     string // '' = no upper bound (YYYY-MM-DD, on created_at date)
 }
 
 // Normalize clamps a raw page request into safe bounds, applying defaults.
@@ -69,6 +71,8 @@ func (s *Service) List(ctx context.Context, page Page) ([]*domain.Customer, int6
 		Limit:  page.Limit,
 		Offset: page.offset(),
 		Search: page.Search,
+		From:   page.From,
+		To:     page.To,
 	})
 }
 

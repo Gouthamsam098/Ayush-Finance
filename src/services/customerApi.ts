@@ -83,11 +83,40 @@ function toWire(c: Partial<Customer>): Record<string, unknown> {
   return w;
 }
 
+/** Server-side filters for the Reports export. Empty fields are omitted. */
+export interface CustomerReportFilters {
+  from?: string; // YYYY-MM-DD, on created_at date
+  to?: string;   // YYYY-MM-DD, on created_at date
+  search?: string;
+}
+
+function customerQuery(f: CustomerReportFilters, page: number): string {
+  const p = new URLSearchParams({ page: String(page), limit: '100' });
+  if (f.from) p.set('from', f.from);
+  if (f.to) p.set('to', f.to);
+  if (f.search) p.set('search', f.search);
+  return p.toString();
+}
+
 export const customerApi = {
   async list(): Promise<Customer[]> {
     // Pull a large page; server caps at 100. Pagination UI can refine later.
     const res: ListResult<CustomerWire> = await api.getList<CustomerWire>('/customers?limit=100');
     return res.data.map(toCustomer);
+  },
+
+  /** Fetch EVERY customer matching the filters, paging through the server so an
+   *  export is never truncated (the server caps a single page at 100). */
+  async fetchAll(f: CustomerReportFilters = {}): Promise<Customer[]> {
+    const out: Customer[] = [];
+    let page = 1;
+    for (;;) {
+      const res: ListResult<CustomerWire> = await api.getList<CustomerWire>(`/customers?${customerQuery(f, page)}`);
+      out.push(...res.data.map(toCustomer));
+      if (page >= (res.meta?.total_pages ?? 1) || res.data.length === 0) break;
+      page += 1;
+    }
+    return out;
   },
 
   async create(c: Partial<Customer>): Promise<Customer> {
