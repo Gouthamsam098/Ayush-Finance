@@ -7,10 +7,10 @@ import { Select } from '@/components/ui/select';
 import { Dialog } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
-import { PageHeader } from '@/components/PageHeader';
+import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { CountUp } from '@/components/motion';
 import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Wallet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 
 const MODES: PayMode[] = ['CASH', 'UPI', 'BANK', 'CHEQUE'];
@@ -63,9 +63,14 @@ export default function Expenses() {
   ];
 
   return (
-    <div className="space-y-5 p-3.5 sm:p-5">
-      <PageHeader title="Expenses" subtitle={`${d.expenses.length} entries`}
-        action={<Button onClick={() => setForm(blank())}><Plus size={16} /> Add Expense</Button>} />
+    <div className="flex min-h-full flex-col">
+      <PageHeader
+        icon={<Wallet size={20} />}
+        title="Expenses"
+        subtitle={`${d.expenses.length} entries`}
+        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setForm(blank())}>Add Expense</HeaderPrimaryButton>}
+      />
+      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
       {/* current + previous 2 months */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -116,6 +121,7 @@ export default function Expenses() {
           </table>
         </div>
       </Card>
+      </div>
 
       <Dialog open={!!form} onClose={() => setForm(null)} title={form?.id ? 'Edit expense' : 'Add expense'}
         footer={<><Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button><Button onClick={save}>{form?.id ? 'Save changes' : 'Save'}</Button></>}>

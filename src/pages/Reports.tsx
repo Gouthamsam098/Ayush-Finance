@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Drawer } from '@/components/ui/drawer';
 import { FilterCard, SegGroup, Seg, MatchPreview } from '@/components/ui/filter-kit';
 import { useToast } from '@/components/ui/toast';
-import { PageHeader } from '@/components/PageHeader';
+import { PageHeader, HeaderGhostButton } from '@/components/layout/PageHeader';
 import { buildDatasetReportPDF, shareOrDownloadPDF, type ReportSummaryItem } from '@/lib/pdfReport';
 import { inr, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -264,19 +264,21 @@ export default function Reports() {
   };
 
   return (
-    <div className="space-y-5 p-3.5 sm:p-5">
+    <div className="flex min-h-full flex-col">
       <PageHeader
+        icon={<FileText size={20} />}
         title="Reports"
         subtitle="Export portfolio records as CSV or formatted PDF"
-        action={
-          <Button variant="ghost" onClick={openFilters} className="relative">
-            <SlidersHorizontal size={16} /> Filters
+        actions={
+          <HeaderGhostButton onClick={openFilters} icon={<SlidersHorizontal size={16} />}>
+            Filters
             {activeCount > 0 && (
               <span className="ml-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[11px] font-bold text-white">{activeCount}</span>
             )}
-          </Button>
+          </HeaderGhostButton>
         }
       />
+      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
       {/* Portfolio KPI band */}
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
@@ -376,6 +378,7 @@ export default function Reports() {
             </div>
           )}
         </div>
+      </div>
       </div>
 
       {/* Filters — premium right-side drawer (draft, applied on button) — same pattern as Loans */}

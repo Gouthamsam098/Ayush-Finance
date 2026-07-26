@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { Dialog } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
-import { PageHeader } from '@/components/PageHeader';
+import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { fmtDate, todayISO, initials } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { config } from '@/lib/config';
@@ -219,8 +219,9 @@ export default function Documents() {
   const closeViewer = () => { if (viewerUrl?.startsWith('blob:')) URL.revokeObjectURL(viewerUrl); setViewer(null); setViewerUrl(null); };
 
   return (
-    <div className="space-y-5 p-3.5 sm:p-5">
+    <div className="flex min-h-full flex-col">
       <PageHeader
+        icon={<Files size={20} />}
         title="Document Vault"
         subtitle={
           loading
@@ -229,8 +230,9 @@ export default function Documents() {
               ? 'KYC & supporting files — upload or add them from a customer profile'
               : `${totalDocs} ${totalDocs === 1 ? 'file' : 'files'} across ${grouped.size} ${grouped.size === 1 ? 'customer' : 'customers'} · view & download anytime`
         }
-        action={<Button onClick={() => setOpen(true)}><Plus size={16} /> Upload Document</Button>}
+        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setOpen(true)}>Upload Document</HeaderPrimaryButton>}
       />
+      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
       {/* KPI band */}
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-3">
@@ -317,6 +319,7 @@ export default function Documents() {
             );
           })
         )}
+      </div>
       </div>
 
       {/* Upload dialog */}

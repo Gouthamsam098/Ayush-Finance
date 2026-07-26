@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
-import { PageHeader } from '@/components/PageHeader';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { cn } from '@/lib/utils';
 import {
   ShieldCheck, UserPlus, Trash2, LayoutDashboard, Users, FileText,
@@ -90,10 +90,15 @@ export default function Settings() {
     setUsers((s) => s.map((u) => (u.id === id ? { ...u, status: u.status === 'Disabled' ? 'Active' : 'Disabled' } : u)));
 
   return (
-    <div className="space-y-5 p-3.5 sm:p-5">
-      <PageHeader title="Settings" subtitle="Security and user access" />
+    <div className="flex min-h-full flex-col">
+      <PageHeader
+        icon={<SettingsIcon size={20} />}
+        title="Settings"
+        subtitle="Security and user access"
+      />
 
-      <div className="grid grid-cols-1 gap-5">
+      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+        <div className="grid grid-cols-1 gap-5">
         <Card className="anim-pop">
           <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck size={17} className="text-primary" /> Security</CardTitle></CardHeader>
           <CardBody>
@@ -247,6 +252,7 @@ export default function Settings() {
             </div>
           </CardBody>
         </Card>
+      </div>
       </div>
     </div>
   );
