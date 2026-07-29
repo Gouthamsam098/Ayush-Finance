@@ -67,7 +67,7 @@ export default function Expenses() {
       <PageHeader
         icon={<Wallet size={20} />}
         title="Expenses"
-        subtitle={`${d.expenses.length} entries`}
+        subtitle={`${rows.length} entries`}
         actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setForm(blank())}>Add Expense</HeaderPrimaryButton>}
       />
       <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
@@ -83,7 +83,7 @@ export default function Expenses() {
         ))}
       </div>
 
-      <Card className="anim-pop p-4" style={{ animationDelay: '200ms' }}>
+      <Card className="anim-pop overflow-hidden p-4" style={{ animationDelay: '200ms' }}>
         <div className="mb-4 flex flex-wrap gap-2">
           {chips.map((c) => (
             <button key={c.key} onClick={() => setFilter(c.key as typeof filter)}
@@ -94,20 +94,20 @@ export default function Expenses() {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[650px] text-sm">
-            <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted">
-              <th className="py-2.5 pr-3">Date</th><th className="py-2.5 pr-3">Category</th><th className="py-2.5 pr-3">Sub Category</th><th className="py-2.5 pr-3">Name</th><th className="py-2.5 pr-3">Amount</th><th className="py-2.5 pr-3">Mode</th><th className="py-2.5 text-right">Actions</th>
+            <thead><tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
+              <th className="px-5 py-4">Date</th><th className="px-5 py-4">Category</th><th className="px-5 py-4">Sub Category</th><th className="px-5 py-4">Name</th><th className="px-5 py-4">Amount</th><th className="px-5 py-4">Mode</th><th className="px-5 py-4 text-right">Actions</th>
             </tr></thead>
-            <tbody>
+            <tbody className="divide-y divide-slate-100 dark:divide-white/[.05]">
               {rows.map((e, i) => (
                 <tr key={e.id} style={{ animationDelay: `${Math.min(i * 30, 350)}ms` }}
-                  className="anim-pop border-t border-slate-100 dark:border-white/[.06] transition-colors hover:bg-primary-50/40 dark:hover:bg-primary/[.06]">
-                  <td className="py-3 pr-3">{fmtDate(e.date)}</td>
-                  <td className="py-3 pr-3"><Badge tone="info">{e.category}</Badge></td>
-                  <td className="py-3 pr-3">{e.subCategory ? <Badge tone="neutral">{e.subCategory}</Badge> : <span className="text-muted">—</span>}</td>
-                  <td className="py-3 pr-3 font-medium">{e.name}</td>
-                  <td className="py-3 pr-3 font-display font-semibold text-danger">{inr(e.amount)}</td>
-                  <td className="py-3 pr-3"><Badge tone="neutral">{e.mode}</Badge></td>
-                  <td className="py-3">
+                  className="anim-pop transition-colors hover:bg-blue-50/50 dark:hover:bg-blue-500/[.06]">
+                  <td className="px-5 py-4">{fmtDate(e.date)}</td>
+                  <td className="px-5 py-4"><Badge tone="info">{e.category}</Badge></td>
+                  <td className="px-5 py-4">{e.subCategory ? <Badge tone="neutral">{e.subCategory}</Badge> : <span className="text-muted">—</span>}</td>
+                  <td className="px-5 py-4 font-medium">{e.name}</td>
+                  <td className="px-5 py-4 font-display font-semibold text-danger">{inr(e.amount)}</td>
+                  <td className="px-5 py-4"><Badge tone="neutral">{e.mode}</Badge></td>
+                  <td className="px-5 py-4">
                     <div className="flex justify-end gap-1.5">
                       <button onClick={() => setForm({ id: e.id, date: e.date, category: e.category, subCategory: e.subCategory ?? '', name: e.name, amount: String(e.amount), mode: e.mode, remarks: e.remarks ?? '' })}
                         className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-primary-50 hover:text-primary" title="Edit"><Pencil size={15} /></button>
@@ -148,7 +148,7 @@ export default function Expenses() {
             }
             setConfirm(null);
           }}>Delete</Button></>}>
-        <p className="text-sm text-muted">This permanently removes the expense.</p>
+        <p className="text-sm text-muted">Are you sure you want to delete?</p>
       </Dialog>
     </div>
   );

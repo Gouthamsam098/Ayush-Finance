@@ -97,7 +97,7 @@ function buildReport(tab: ReportKey, data: Dataset, f: BuildArgs): BuiltReport {
     if (q) rows = rows.filter((l) => l.loanNumber.toLowerCase().includes(q) || custName(l.customerId).toLowerCase().includes(q));
     const principal = rows.reduce((s, l) => s + l.principal, 0);
     return {
-      head: ['Loan #', 'Customer', 'Type', 'Principal', 'Interest', 'Loan Date', 'Status'],
+      head: ['Loan #', 'Customer', 'Loan Type', 'Principal', 'Interest', 'Loan Date', 'Status'],
       body: rows.map((l) => [l.loanNumber, custName(l.customerId), LOAN_LABELS[l.type], inr(l.principal), inr(l.interest), fmtDate(l.loanDate), l.status]),
       rightAlignCols: [3, 4],
       kpis: [
@@ -291,7 +291,7 @@ export default function Reports() {
       {/* One unified panel: tabs → toolbar → chart → table */}
       <div className="overflow-hidden rounded-[18px] border-[0.5px] border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(30,39,64,.04)] dark:border-white/[.08] dark:bg-surface">
         {/* report tabs */}
-        <div className="flex flex-wrap gap-2 border-b border-slate-100 px-4 pb-3.5 pt-4 dark:border-white/[.06]">
+        <div className="flex flex-wrap gap-2 border-b border-slate-100 px-6 pb-4 pt-5 dark:border-white/[.06]">
           {REPORTS.map((r) => {
             const Icon = r.icon;
             const active = tab === r.key;
@@ -312,8 +312,8 @@ export default function Reports() {
         </div>
 
         {/* toolbar: summary + search + export */}
-        <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3.5 dark:border-white/[.06] lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2 text-[13px]">
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-white/[.06] lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2.5 text-[13px] mb-5 lg:mb-0">
             <span className="text-muted">Showing</span>
             <span className="font-semibold text-ink">{report.body.length}</span>
             <span className="text-muted">{report.body.length === 1 ? 'record' : 'records'}</span>
@@ -324,7 +324,7 @@ export default function Reports() {
               <button onClick={clearAll} className="text-[12px] font-semibold text-blue-500 hover:underline">Clear filters</button>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <div className="flex w-full items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] focus-within:border-blue-400 sm:w-52 dark:border-white/[.08] dark:bg-surface">
               <Search size={16} className="shrink-0 text-slate-400" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${meta.label.toLowerCase()}…`} className="w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-muted" />
@@ -345,7 +345,7 @@ export default function Reports() {
         </div>
 
         {/* preview table */}
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto px-6 pb-6">
           {report.body.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
               <FileText size={30} className="text-slate-300 dark:text-white/20" />
@@ -353,19 +353,19 @@ export default function Reports() {
               <p className="text-[12px] text-muted/70">Try a wider period or clear the filters.</p>
             </div>
           ) : (
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
               <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/60 text-left text-[11px] uppercase tracking-wide text-muted dark:border-white/[.06] dark:bg-white/[.02]">
+                <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
                   {report.head.map((h, i) => (
-                    <th key={h} className={cn('px-4 py-3 font-semibold', report.rightAlignCols.includes(i) && 'text-right')}>{h}</th>
+                    <th key={h} className={cn('h-14 align-middle whitespace-nowrap px-6 first:pl-6 last:pr-6', report.rightAlignCols.includes(i) && 'text-right')}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {report.body.slice(0, 50).map((row, ri) => (
-                  <tr key={ri} className="border-t border-slate-50 transition-colors hover:bg-primary-50/40 dark:border-white/[.04] dark:hover:bg-primary/[.06]">
+                  <tr key={ri} className="border-t border-[#EEF2F7] transition-colors hover:bg-blue-50/30 odd:bg-slate-50/20 dark:border-white/[.05] dark:hover:bg-blue-500/[.04] dark:odd:bg-white/[.01]">
                     {row.map((cell, ci) => (
-                      <td key={ci} className={cn('px-4 py-2.5 tabular-nums', report.rightAlignCols.includes(ci) ? 'text-right font-semibold text-ink' : 'text-ink/80', ci === 0 && 'font-mono text-xs text-ink')}>{cell}</td>
+                      <td key={ci} className={cn('h-[60px] align-middle whitespace-nowrap px-6 tabular-nums', report.rightAlignCols.includes(ci) ? 'text-right font-semibold text-ink' : 'text-ink/80', ci === 0 && 'font-mono text-xs text-ink')}>{cell}</td>
                     ))}
                   </tr>
                 ))}
@@ -373,7 +373,7 @@ export default function Reports() {
             </table>
           )}
           {report.body.length > 50 && (
-            <div className="border-t border-slate-100 px-4 py-2.5 text-center text-[12px] text-muted dark:border-white/[.06]">
+            <div className="border-t border-[#EEF2F7] px-6 py-3 text-center text-[12px] text-muted dark:border-white/[.06]">
               Preview shows first 50 of {report.body.length} rows · export includes all
             </div>
           )}

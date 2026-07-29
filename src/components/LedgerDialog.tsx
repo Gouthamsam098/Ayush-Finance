@@ -353,9 +353,11 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       tableHead = [unit, 'Collection Date', `${isMonthly ? 'Monthly' : 'Daily'} Due`, 'Amount', 'Principal Remaining', 'Payment Mode', 'Status', 'Remarks'];
       tableBody = rows.filter((r) => r.date <= todayISO()).map((r) => [r.sn, fmtDate(r.date), inr(r.due), r.collected ? inr(r.collected) : '—', inr(r.remaining), r.mode ?? '—', r.status, r.remarks ?? '—']);
     } else {
-      tableTitle = 'Recorded Payments';
+      tableTitle = 'Payment History';
       tableHead = ['Date', 'Amount', 'Mode'];
-      tableBody = d.collections.filter((c) => c.loanId === loan.id).sort((a, b) => (a.date < b.date ? 1 : -1)).map((c) => [fmtDate(c.date), inr(c.amount), c.mode]);
+      tableBody = rows
+        .filter((r) => r.date <= todayISO())
+        .map((r) => [fmtDate(r.date), r.collected ? inr(r.collected) : r.due ? inr(r.due) : '—', r.mode ?? '—']);
     }
     // Statement tab → bank-style Payment Schedule PDF over the flat model.
     // A foreclosed loan collapses to its settlement row (Bajaj-style).

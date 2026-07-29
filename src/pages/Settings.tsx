@@ -3,19 +3,21 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { Dialog } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { cn } from '@/lib/utils';
 import {
   ShieldCheck, UserPlus, Trash2, LayoutDashboard, Users, FileText,
   Receipt, Wallet, FolderOpen, Settings as SettingsIcon, Eye, Pencil,
+  Check, Plus, Mail,
 } from 'lucide-react';
 
 type AccessLevel = 'none' | 'view' | 'edit';
 interface ModuleAccess { module: string; access: AccessLevel; }
 interface AppUser {
-  id: string; username: string; role: string; status: 'Active' | 'Pending' | 'Disabled';
+  id: string; email: string; username: string; role: string; status: 'Active' | 'Pending' | 'Disabled';
   moduleAccess: ModuleAccess[];
 }
 
@@ -59,31 +61,53 @@ export default function Settings() {
   const [gaEnabled, setGaEnabled] = useState(true);
 
   const [users, setUsers] = useState<AppUser[]>([
-    { id: 'u1', username: 'admin', role: 'Owner', status: 'Active', moduleAccess: defaultAccess().map((m) => ({ ...m, access: 'edit' as AccessLevel })) },
-    { id: 'u2', username: 'priya.manager', role: 'Manager', status: 'Active', moduleAccess: defaultAccess().map((m) => ({ ...m, access: 'edit' as AccessLevel })) },
+    { id: 'u1', email: 'admin@anush.com', username: 'admin', role: 'Admin', status: 'Active', moduleAccess: defaultAccess().map((m) => ({ ...m, access: 'edit' as AccessLevel })) },
+    { id: 'u2', email: 'priya@anush.com', username: 'priya.manager', role: 'Viewer', status: 'Active', moduleAccess: defaultAccess().map((m) => ({ ...m, access: 'view' as AccessLevel })) },
   ]);
-  const [newUser, setNewUser] = useState('');
-  const [newRole, setNewRole] = useState('Staff');
-  const [newAccess, setNewAccess] = useState<ModuleAccess[]>(defaultAccess());
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteUsername, setInviteUsername] = useState('');
+  const [inviteRole, setInviteRole] = useState('Viewer');
+  const [inviteAccess, setInviteAccess] = useState<ModuleAccess[]>(defaultAccess());
 
-  const isViewer = newRole === 'Viewer';
+  const isViewer = inviteRole === 'Viewer';
 
-  const setAccess = (module: string, level: AccessLevel) => {
-    setNewAccess((prev) => prev.map((a) => (a.module === module ? { ...a, access: level } : a)));
+  const toggleModule = (module: string) => {
+    setInviteAccess((prev) =>
+      prev.map((a) =>
+        a.module === module
+          ? { ...a, access: a.access === 'edit' ? 'view' : 'edit' as AccessLevel }
+          : a,
+      ),
+    );
   };
 
-  const grant = () => {
-    if (!newUser.trim()) { toast('Enter a username', 'error'); return; }
+  const inviteUser = () => {
+    if (!inviteEmail.trim() || !inviteUsername.trim()) {
+      toast('Enter email and username', 'error');
+      return;
+    }
+    const checkedModules = inviteAccess.filter((a) => a.access === 'edit');
+    const access = isViewer
+      ? defaultAccess().map((m) => {
+          const found = checkedModules.find((c) => c.module === m.module);
+          return { ...m, access: found ? ('edit' as AccessLevel) : ('view' as AccessLevel) };
+        })
+      : defaultAccess().map((m) => ({ ...m, access: 'edit' as AccessLevel }));
     setUsers((s) => [...s, {
       id: Math.random().toString(36).slice(2, 8),
-      username: newUser.trim(),
-      role: newRole,
+      email: inviteEmail.trim(),
+      username: inviteUsername.trim(),
+      role: inviteRole,
       status: 'Pending',
-      moduleAccess: isViewer ? newAccess : defaultAccess().map((m) => ({ ...m, access: 'edit' as AccessLevel })),
+      moduleAccess: access,
     }]);
-    setNewUser('');
-    setNewAccess(defaultAccess());
-    toast('Access request created (pending approval)');
+    toast('User invited successfully');
+    setInviteOpen(false);
+    setInviteEmail('');
+    setInviteUsername('');
+    setInviteRole('Viewer');
+    setInviteAccess(defaultAccess());
   };
 
   const toggleStatus = (id: string) =>
@@ -95,6 +119,7 @@ export default function Settings() {
         icon={<SettingsIcon size={20} />}
         title="Settings"
         subtitle="Security and user access"
+        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setInviteOpen(true)}>Invite User</HeaderPrimaryButton>}
       />
 
       <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
@@ -116,67 +141,15 @@ export default function Settings() {
         </Card>
 
         <Card className="anim-pop" style={{ animationDelay: '70ms' }}>
-          <CardHeader><CardTitle className="flex items-center gap-2"><UserPlus size={17} className="text-primary" /> User Access</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="flex items-center gap-2"><UserPlus size={17} className="text-primary" /> User Management</CardTitle></CardHeader>
           <CardBody className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px_auto] sm:items-end">
-              <Input label="Grant access to username" value={newUser} onChange={(e) => setNewUser(e.target.value)} placeholder="e.g. ramesh.staff" />
-              <Select label="Role" value={newRole} onChange={(e) => setNewRole(e.target.value)} options={['Manager', 'Staff', 'Viewer'].map((r) => ({ value: r, label: r }))} />
-              <Button onClick={grant}><UserPlus size={15} /> Grant access</Button>
-            </div>
-
-            {isViewer && (
-              <div className="overflow-hidden rounded-2xl border-[0.5px] border-slate-200/80 bg-white shadow-[0_1px_3px_rgba(15,23,42,.04)] dark:border-white/[.08] dark:bg-surface2">
-                <div className="relative overflow-hidden bg-gradient-to-r from-violet-700 via-violet-600 to-purple-600 px-5 py-4">
-                  <span className="pointer-events-none absolute -right-8 -top-10 h-20 w-20 rounded-full bg-white/10 blur-xl" />
-                  <div className="relative flex items-center gap-3">
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/15 ring-1 ring-white/20">
-                      <Eye size={16} className="text-white" />
-                    </span>
-                    <div>
-                      <div className="text-[14px] font-bold tracking-tight text-white">Module Permissions</div>
-                      <div className="text-[11px] text-white/65">Configure what this Viewer can access</div>
-                    </div>
-                    <div className="ml-auto flex items-center gap-3 text-[11px] font-semibold text-white/70">
-                      <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-white/50" /> View</span>
-                      <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-white" /> Edit</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="divide-y divide-slate-100 dark:divide-white/[.05]">
-                  {newAccess.map((a) => (
-                    <div key={a.module} className="flex items-center gap-4 px-5 py-3 transition-colors hover:bg-slate-50/60 dark:hover:bg-white/[.02]">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500 dark:bg-white/[.06] dark:text-slate-400">
-                        {MODULE_ICONS[a.module]}
-                      </span>
-                      <span className="flex-1 text-[13.5px] font-medium text-ink">{a.module}</span>
-                      <div className="flex items-center gap-5">
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                          <Toggle
-                            on={a.access === 'view' || a.access === 'edit'}
-                            onChange={() => setAccess(a.module, a.access === 'none' ? 'view' : a.access === 'view' ? 'none' : 'view')}
-                          />
-                          <span className="text-[12px] font-medium text-muted">View</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                          <Toggle
-                            on={a.access === 'edit'}
-                            onChange={() => setAccess(a.module, a.access === 'edit' ? 'view' : 'edit')}
-                          />
-                          <span className="text-[12px] font-medium text-muted">Edit</span>
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-white/[.06]">
               <table className="w-full min-w-[600px] text-sm">
                 <thead className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600">
                   <tr className="text-left text-[12px] font-bold uppercase tracking-[0.08em] text-white">
-                    <th className="px-5 py-3.5">Username</th>
+                    <th className="px-5 py-3.5">User</th>
+                    <th className="px-5 py-3.5">Email</th>
                     <th className="px-5 py-3.5">Role</th>
                     <th className="px-5 py-3.5">Permissions</th>
                     <th className="px-5 py-3.5">Status</th>
@@ -191,12 +164,11 @@ export default function Settings() {
                     return (
                       <tr key={u.id} className="transition-colors hover:bg-slate-50/60 dark:hover:bg-white/[.02]">
                         <td className="px-5 py-4 font-semibold text-[15px] text-ink">{u.username}</td>
+                        <td className="px-5 py-4 text-[13px] text-muted">{u.email}</td>
                         <td className="px-5 py-4">
                           <span className={cn(
                             'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold',
-                            u.role === 'Owner' && 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
-                            u.role === 'Manager' && 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300',
-                            u.role === 'Staff' && 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+                            u.role === 'Admin' && 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
                             u.role === 'Viewer' && 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
                           )}>
                             <span className="h-1.5 w-1.5 rounded-full bg-current opacity-50" />
@@ -227,14 +199,14 @@ export default function Settings() {
                           <div className="flex justify-center">
                             {u.status === 'Pending' ? (
                               <Button variant="success" className="!px-3 !py-1.5 text-xs" onClick={() => { toggleStatus(u.id); toast(`${u.username} approved`); }}>Approve</Button>
-                            ) : u.role !== 'Owner' ? (
+                            ) : u.role !== 'Admin' ? (
                               <Toggle on={u.status === 'Active'} onChange={() => { toggleStatus(u.id); toast(`${u.username} ${u.status === 'Active' ? 'disabled' : 'enabled'}`, 'info'); }} />
                             ) : null}
                           </div>
                         </td>
                         <td className="px-5 py-4">
                           <div className="flex justify-end">
-                            {u.role !== 'Owner' && (
+                            {u.role !== 'Admin' && (
                               <button
                                 onClick={() => { setUsers((s) => s.filter((x) => x.id !== u.id)); toast('User removed', 'info'); }}
                                 className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15 dark:hover:text-red-400"
@@ -254,6 +226,72 @@ export default function Settings() {
         </Card>
       </div>
       </div>
+
+      <Dialog
+        open={inviteOpen}
+        onClose={() => { setInviteOpen(false); setInviteEmail(''); setInviteUsername(''); setInviteRole('Viewer'); setInviteAccess(defaultAccess()); }}
+        title="Invite User"
+        subtitle="Add a new user and assign their role"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => { setInviteOpen(false); setInviteEmail(''); setInviteUsername(''); setInviteRole('Viewer'); setInviteAccess(defaultAccess()); }}>Cancel</Button>
+            <Button onClick={inviteUser}><UserPlus size={15} /> Add User</Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input label="Email Address *" type="email" placeholder="user@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+            <Input label="Username *" placeholder="e.g. ramesh.staff" value={inviteUsername} onChange={(e) => setInviteUsername(e.target.value)} />
+          </div>
+          <Select label="Role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} options={['Admin', 'Viewer'].map((r) => ({ value: r, label: r }))} />
+          <p className="text-[12px] text-muted -mt-3">
+            {inviteRole === 'Admin' ? 'Admin has full edit access to all modules.' : 'Viewer can be assigned specific module permissions below.'}
+          </p>
+
+          {isViewer && (
+            <div className="overflow-hidden rounded-2xl border-[0.5px] border-slate-200/80 bg-white shadow-[0_1px_3px_rgba(15,23,42,.04)] dark:border-white/[.08] dark:bg-surface2">
+              <div className="relative overflow-hidden bg-gradient-to-r from-violet-700 via-violet-600 to-purple-600 px-5 py-4">
+                <span className="pointer-events-none absolute -right-8 -top-10 h-20 w-20 rounded-full bg-white/10 blur-xl" />
+                <div className="relative flex items-center gap-3">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/15 ring-1 ring-white/20">
+                    <Eye size={16} className="text-white" />
+                  </span>
+                  <div>
+                    <div className="text-[14px] font-bold tracking-tight text-white">Module Permissions</div>
+                    <div className="text-[11px] text-white/65">Check modules to grant edit access — unchecked get view-only</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="divide-y divide-slate-100 dark:divide-white/[.05]">
+                {inviteAccess.map((a) => (
+                  <label key={a.module} className="flex cursor-pointer items-center gap-4 px-5 py-3.5 transition-colors hover:bg-slate-50/60 dark:hover:bg-white/[.02]">
+                    <input
+                      type="checkbox"
+                      checked={a.access === 'edit'}
+                      onChange={() => toggleModule(a.module)}
+                      className="h-4 w-4 shrink-0 rounded border-slate-300 text-violet-600 focus:ring-violet-500 dark:border-slate-600 dark:bg-slate-800"
+                    />
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500 dark:bg-white/[.06] dark:text-slate-400">
+                      {MODULE_ICONS[a.module]}
+                    </span>
+                    <span className="flex-1 text-[13.5px] font-medium text-ink">{a.module}</span>
+                    <span className={cn(
+                      'rounded-full px-2.5 py-0.5 text-[11px] font-semibold',
+                      a.access === 'edit'
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300'
+                        : 'bg-slate-100 text-slate-500 dark:bg-white/[.06] dark:text-slate-400',
+                    )}>
+                      {a.access === 'edit' ? 'Edit' : 'View only'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </Dialog>
     </div>
   );
 }
