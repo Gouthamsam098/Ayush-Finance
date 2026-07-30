@@ -349,7 +349,7 @@ function TableCard({ children, note }: { children: ReactNode; note: string }) {
 /** Full-width gradient header row matching the Loans table treatment. */
 function HeaderRow({ cols }: { cols: string[] }) {
   return (
-    <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-[12px] font-bold uppercase tracking-[0.08em] text-white">
+    <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-[12px] font-bold uppercase tracking-[0.08em] text-white">
       {cols.map((c, i) => (
         <th key={c} className={`whitespace-nowrap px-5 py-3.5 ${c === 'Actions' ? 'text-center' : 'text-left'} ${i === 0 ? 'rounded-l-none' : ''}`}>{c}</th>
       ))}

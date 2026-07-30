@@ -264,14 +264,6 @@ export default function LoginForm({ onSubmit, loading = false, mode, onModeChang
           : <ArrowRight size={18} className="relative z-10 transition-transform duration-300 group-hover:translate-x-1" />}
       </button>
 
-      <div className="h-px w-full bg-white/10" />
-
-      <button type="button" onClick={() => onModeChange('signup')}
-        className="flex h-[48px] w-full items-center justify-center gap-2 rounded-2xl border-2 border-white/10 bg-white/[.04] text-[14px] font-semibold text-slate-200 transition-all duration-300 hover:border-[#188BFC]/40 hover:bg-white/[.07] hover:text-white">
-        <UserPlus size={17} />
-        Create an account
-      </button>
-
       {!config.useApi && (
         <p className="text-center text-[12px] text-slate-500">Enter any username and password to continue</p>
       )}

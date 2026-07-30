@@ -527,7 +527,7 @@ export default function Loans() {
         </div>
 
         {/* Column header — solid full-color band */}
-        <div className={`${GRID} hidden rounded-xl bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 px-5 py-3.5 text-[12px] font-bold uppercase tracking-[0.08em] text-white shadow-[0_4px_14px_rgba(37,99,235,.35)] lg:grid`}>
+        <div className={`${GRID} hidden rounded-xl bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-5 py-3.5 text-[12px] font-bold uppercase tracking-[0.08em] text-white shadow-[0_4px_14px_rgba(2,41,153,.35)] lg:grid`}>
           <div>Borrower</div>
           <div>Loan</div>
           <div>Principal</div>
@@ -584,7 +584,7 @@ export default function Loans() {
                       <MoreVertical size={16} />
                     </button>
                     {menuFor === l.id && (
-                      <div className="absolute left-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900">
+                      <div className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900 lg:left-0 lg:right-auto">
                           <MenuItem icon={<FileText size={14} />} label="Statement" onClick={() => { setMenuFor(null); setLedger(l); }} />
                           <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { setMenuFor(null); editLoan(l); }} />
                           {l.status === 'ACTIVE' ? (

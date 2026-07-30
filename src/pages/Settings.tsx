@@ -17,7 +17,7 @@ import {
 type AccessLevel = 'none' | 'view' | 'edit';
 interface ModuleAccess { module: string; access: AccessLevel; }
 interface AppUser {
-  id: string; email: string; username: string; role: string; status: 'Active' | 'Pending' | 'Disabled';
+  id: string; email: string; username: string; password?: string; role: string; status: 'Active' | 'Pending' | 'Disabled';
   moduleAccess: ModuleAccess[];
 }
 
@@ -67,8 +67,19 @@ export default function Settings() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteUsername, setInviteUsername] = useState('');
+  const [invitePassword, setInvitePassword] = useState('');
+  const [inviteConfirmPassword, setInviteConfirmPassword] = useState('');
   const [inviteRole, setInviteRole] = useState('Viewer');
   const [inviteAccess, setInviteAccess] = useState<ModuleAccess[]>(defaultAccess());
+
+  const resetInviteForm = () => {
+    setInviteEmail('');
+    setInviteUsername('');
+    setInvitePassword('');
+    setInviteConfirmPassword('');
+    setInviteRole('Viewer');
+    setInviteAccess(defaultAccess());
+  };
 
   const isViewer = inviteRole === 'Viewer';
 
@@ -87,6 +98,18 @@ export default function Settings() {
       toast('Enter email and username', 'error');
       return;
     }
+    if (!invitePassword) {
+      toast('Password is required', 'error');
+      return;
+    }
+    if (invitePassword.length < 8) {
+      toast('Password must be at least 8 characters', 'error');
+      return;
+    }
+    if (invitePassword !== inviteConfirmPassword) {
+      toast('Passwords do not match', 'error');
+      return;
+    }
     const checkedModules = inviteAccess.filter((a) => a.access === 'edit');
     const access = isViewer
       ? defaultAccess().map((m) => {
@@ -98,16 +121,14 @@ export default function Settings() {
       id: Math.random().toString(36).slice(2, 8),
       email: inviteEmail.trim(),
       username: inviteUsername.trim(),
+      password: invitePassword,
       role: inviteRole,
       status: 'Pending',
       moduleAccess: access,
     }]);
     toast('User invited successfully');
     setInviteOpen(false);
-    setInviteEmail('');
-    setInviteUsername('');
-    setInviteRole('Viewer');
-    setInviteAccess(defaultAccess());
+    resetInviteForm();
   };
 
   const toggleStatus = (id: string) =>
@@ -146,7 +167,7 @@ export default function Settings() {
 
             <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-white/[.06]">
               <table className="w-full min-w-[600px] text-sm">
-                <thead className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600">
+                <thead className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8]">
                   <tr className="text-left text-[12px] font-bold uppercase tracking-[0.08em] text-white">
                     <th className="px-5 py-3.5">User</th>
                     <th className="px-5 py-3.5">Email</th>
@@ -229,12 +250,12 @@ export default function Settings() {
 
       <Dialog
         open={inviteOpen}
-        onClose={() => { setInviteOpen(false); setInviteEmail(''); setInviteUsername(''); setInviteRole('Viewer'); setInviteAccess(defaultAccess()); }}
+        onClose={() => { setInviteOpen(false); resetInviteForm(); }}
         title="Invite User"
         subtitle="Add a new user and assign their role"
         footer={
           <>
-            <Button variant="ghost" onClick={() => { setInviteOpen(false); setInviteEmail(''); setInviteUsername(''); setInviteRole('Viewer'); setInviteAccess(defaultAccess()); }}>Cancel</Button>
+            <Button variant="ghost" onClick={() => { setInviteOpen(false); resetInviteForm(); }}>Cancel</Button>
             <Button onClick={inviteUser}><UserPlus size={15} /> Add User</Button>
           </>
         }
@@ -243,6 +264,10 @@ export default function Settings() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input label="Email Address *" type="email" placeholder="user@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
             <Input label="Username *" placeholder="e.g. ramesh.staff" value={inviteUsername} onChange={(e) => setInviteUsername(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input label="Password *" type="password" placeholder="Min 8 characters" value={invitePassword} onChange={(e) => setInvitePassword(e.target.value)} />
+            <Input label="Confirm Password *" type="password" placeholder="Re-enter password" value={inviteConfirmPassword} onChange={(e) => setInviteConfirmPassword(e.target.value)} />
           </div>
           <Select label="Role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} options={['Admin', 'Viewer'].map((r) => ({ value: r, label: r }))} />
           <p className="text-[12px] text-muted -mt-3">
