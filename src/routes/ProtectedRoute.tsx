@@ -8,3 +8,11 @@ export function ProtectedRoute() {
   if (!token) return <Navigate to="/login" replace />;
   return <Outlet />;
 }
+
+/** Admin-only guard; non-admins are redirected to the dashboard. Backed by the
+ *  server (admin-only API), this is UX only — it hides admin screens. */
+export function AdminRoute() {
+  const role = useSelector((s: RootState) => s.auth.user?.role);
+  if (role !== 'ADMIN') return <Navigate to="/" replace />;
+  return <Outlet />;
+}

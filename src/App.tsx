@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
-import { ProtectedRoute } from '@/routes/ProtectedRoute';
+import { ProtectedRoute, AdminRoute } from '@/routes/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
 import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
@@ -30,7 +30,7 @@ export default function App() {
       .me()
       .then((me) => {
         dispatch(setTokens({ accessToken: 'api' }));
-        dispatch(setUser({ id: me.id, username: me.email, fullName: me.full_name, role: 'ADMIN' }));
+        dispatch(setUser({ id: me.id, username: me.email, fullName: me.full_name, role: me.role, permissions: me.permissions }));
       })
       .catch(() => tokenStore.clear())
       .finally(() => setRestoring(false));
@@ -50,7 +50,9 @@ export default function App() {
           <Route path="/expenses" element={<Expenses />} />
           <Route path="/documents" element={<Documents />} />
           <Route path="/reports" element={<Reports />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route element={<AdminRoute />}>
+            <Route path="/settings" element={<Settings />} />
+          </Route>
         </Route>
       </Route>
     </Routes>

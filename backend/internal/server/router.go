@@ -15,6 +15,7 @@ import (
 	"github.com/anush-capitals/lms-backend/internal/feature/document"
 	"github.com/anush-capitals/lms-backend/internal/feature/expense"
 	"github.com/anush-capitals/lms-backend/internal/feature/loan"
+	"github.com/anush-capitals/lms-backend/internal/feature/user"
 	"github.com/anush-capitals/lms-backend/internal/httpx"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -62,6 +63,10 @@ func NewRouter(deps Dependencies) http.Handler {
 	expenseService := expense.NewService(expenseRepo)
 	expenseHandler := expense.NewHandler(expenseService)
 
+	userRepo := user.NewRepository(deps.Pool)
+	userService := user.NewService(userRepo, deps.Hasher)
+	userHandler := user.NewHandler(userService)
+
 	r := chi.NewRouter()
 
 	// Global middleware, outermost first.
@@ -90,13 +95,20 @@ func NewRouter(deps Dependencies) http.Handler {
 			protected.Use(httpx.Authenticate(deps.Tokens))
 			// Protected auth routes live under /me; the public /auth mount
 			// (login, refresh) owns the /auth path already.
+			// perm wraps a mount with RBAC for the given module (view for reads,
+			// edit for writes; admins bypass). authRepo.FindByID loads role+perms.
+			perm := func(module string) func(http.Handler) http.Handler {
+				return httpx.RequirePermission(module, authRepo.FindByID)
+			}
+
 			protected.Mount("/me", authHandler.ProtectedRoutes())
-			protected.Mount("/customers", customerHandler.Routes())
-			protected.Mount("/customers/{customerId}/documents", documentHandler.Routes())
-			protected.Mount("/loans", loanHandler.Routes())
-			protected.Mount("/loans/{loanId}/collections", collectionHandler.LoanRoutes())
-			protected.Mount("/collections", collectionHandler.FlatRoutes())
-			protected.Mount("/expenses", expenseHandler.Routes())
+			protected.With(perm("Customers")).Mount("/customers", customerHandler.Routes())
+			protected.With(perm("Documents")).Mount("/customers/{customerId}/documents", documentHandler.Routes())
+			protected.With(perm("Loans")).Mount("/loans", loanHandler.Routes())
+			protected.With(perm("Collections")).Mount("/loans/{loanId}/collections", collectionHandler.LoanRoutes())
+			protected.With(perm("Collections")).Mount("/collections", collectionHandler.FlatRoutes())
+			protected.With(perm("Expenses")).Mount("/expenses", expenseHandler.Routes())
+			protected.Mount("/users", userHandler.Routes()) // admin-only, guarded in handler
 		})
 	})
 

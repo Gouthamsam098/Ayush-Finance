@@ -6,6 +6,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -13,6 +14,19 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// scanUserPerms applies stored permissions to u (admins get implicit full edit).
+func scanUserPerms(u *domain.User, raw []byte) {
+	perms := domain.Permissions{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &perms)
+	}
+	if u.Role == domain.RoleAdmin {
+		u.Permissions = domain.AdminPermissions()
+	} else {
+		u.Permissions = perms.Normalize()
+	}
+}
 
 // Repository provides user data access. All queries are parameterised; no SQL
 // string is ever built from user input.
@@ -28,14 +42,16 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 // domain error. Email is matched in lower case to align with the stored form.
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
 	const query = `
-		SELECT id, email, full_name, password_hash, mfa_enabled, is_active,
+		SELECT id, email, full_name, password_hash, role, permissions, mfa_enabled, is_active,
 		       last_login_at, created_at, updated_at
 		FROM users
-		WHERE email = $1 AND is_active = TRUE`
+		WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL`
 
 	var u domain.User
+	var role string
+	var perms []byte
 	err := r.pool.QueryRow(ctx, query, email).Scan(
-		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &u.MFAEnabled,
+		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &role, &perms, &u.MFAEnabled,
 		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -44,20 +60,24 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.Use
 	if err != nil {
 		return nil, err
 	}
+	u.Role = domain.Role(role)
+	scanUserPerms(&u, perms)
 	return &u, nil
 }
 
 // FindByID returns the active user with the given ID, or a NotFound error.
 func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, error) {
 	const query = `
-		SELECT id, email, full_name, password_hash, mfa_enabled, is_active,
+		SELECT id, email, full_name, password_hash, role, permissions, mfa_enabled, is_active,
 		       last_login_at, created_at, updated_at
 		FROM users
-		WHERE id = $1 AND is_active = TRUE`
+		WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL`
 
 	var u domain.User
+	var role string
+	var perms []byte
 	err := r.pool.QueryRow(ctx, query, id).Scan(
-		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &u.MFAEnabled,
+		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &role, &perms, &u.MFAEnabled,
 		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -66,6 +86,8 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, erro
 	if err != nil {
 		return nil, err
 	}
+	u.Role = domain.Role(role)
+	scanUserPerms(&u, perms)
 	return &u, nil
 }
 

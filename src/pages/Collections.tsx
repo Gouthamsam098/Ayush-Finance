@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/toast';
 import { ApiError } from '@/lib/api';
 import { StatCard } from '@/components/ui/stat-card';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
+import { usePermissions } from '@/lib/permissions';
 import { LedgerDialog } from '@/components/LedgerDialog';
 import { CollectionProgress } from '@/components/CollectionProgress';
 import { inr, inrShort, fmtDate, todayISO, isoLocal, addDays, initials, DAILY_TERM } from '@/lib/format';
@@ -44,6 +45,7 @@ const blank = (): CForm => ({ customerId: '', loanId: '', amount: '', date: toda
 export default function Collections() {
   const d = useData();
   const toast = useToast();
+  const { canEdit } = usePermissions();
   const [form, setForm] = useState<CForm | null>(null);
   const [typeFilter, setTypeFilter] = useState<LoanType | 'ALL'>('ALL');
   const [ledger, setLedger] = useState<Loan | null>(null);
@@ -152,7 +154,7 @@ export default function Collections() {
         icon={<HandCoins size={20} />}
         title="Collections"
         subtitle={`${d.collections.length} payments recorded · ${kpis.activeCount} active loans`}
-        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openAdd}>Add Collection</HeaderPrimaryButton>}
+        actions={canEdit('Collections') ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openAdd}>Add Collection</HeaderPrimaryButton> : undefined}
       />
 
       <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">

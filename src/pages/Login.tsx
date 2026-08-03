@@ -20,7 +20,7 @@ export default function Login() {
     if (!config.useApi) {
       setTimeout(() => {
         dispatch(setTokens({ accessToken: 'demo-token' }));
-        dispatch(setUser({ id: 0, username, fullName: 'Administrator', role: 'ADMIN' }));
+        dispatch(setUser({ id: 0, username, fullName: 'Administrator', role: 'ADMIN', permissions: {} }));
         navigate('/');
       }, 450);
       return;
@@ -29,7 +29,7 @@ export default function Login() {
       await authApi.login(username, password);
       const me = await authApi.me();
       dispatch(setTokens({ accessToken: 'api' }));
-      dispatch(setUser({ id: me.id, username: me.email, fullName: me.full_name, role: 'ADMIN' }));
+      dispatch(setUser({ id: me.id, username: me.email, fullName: me.full_name, role: me.role, permissions: me.permissions }));
       navigate('/');
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Unable to sign in. Please try again.');

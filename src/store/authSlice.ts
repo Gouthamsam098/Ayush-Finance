@@ -4,7 +4,11 @@ export type AuthStage = 'PASSWORD_CHANGE' | 'TOTP_SETUP' | 'TOTP_REQUIRED' | nul
 
 interface AuthState {
   accessToken: string | null;
-  user: { id: number; username: string; fullName: string; role: 'ADMIN' } | null;
+  user: {
+    id: number; username: string; fullName: string;
+    role: 'ADMIN' | 'VIEWER';
+    permissions: Record<string, 'none' | 'view' | 'edit'>;
+  } | null;
   preAuthToken: string | null;
   stage: AuthStage;
 }

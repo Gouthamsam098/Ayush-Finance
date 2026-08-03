@@ -7,6 +7,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { Drawer } from '@/components/ui/drawer';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
+import { usePermissions } from '@/lib/permissions';
 import { inr, inrShort, fmtDate, todayISO, addDays, initials, DAILY_TERM } from '@/lib/format';
 import { emptyNum, matchNum, numActive, type NumFilter } from '@/lib/customerFilters';
 import { FilterCard, SegGroup, Seg, NumFilterRow, MatchPreview } from '@/components/ui/filter-kit';
@@ -199,6 +200,7 @@ const countLoanFilters = (f: LoanFilters) =>
 
 export default function Loans() {
   const d = useData();
+  const { canEdit } = usePermissions();
   const toast = useToast();
   const [form, setForm] = useState<LoanForm | null>(null);
   const [ledger, setLedger] = useState<Loan | null>(null);
@@ -464,7 +466,7 @@ export default function Loans() {
         icon={<Layers size={20} />}
         title="Loans"
         subtitle={`${stats.count} loans across ${TYPE_OPTS.length} types · automatic interest`}
-        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openCreate}>Create Loan</HeaderPrimaryButton>}
+        actions={canEdit('Loans') ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openCreate}>Create Loan</HeaderPrimaryButton> : undefined}
       />
 
       <div className="flex flex-1 flex-col gap-4 p-3.5 sm:px-5">

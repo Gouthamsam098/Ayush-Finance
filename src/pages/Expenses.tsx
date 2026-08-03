@@ -8,6 +8,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
+import { usePermissions } from '@/lib/permissions';
 import { CountUp } from '@/components/motion';
 import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { Plus, Pencil, Trash2, Wallet } from 'lucide-react';
@@ -26,6 +27,8 @@ const blank = (): EForm => ({ date: todayISO(), category: EXPENSE_CATEGORIES[0],
 export default function Expenses() {
   const d = useData();
   const toast = useToast();
+  const { canEdit } = usePermissions();
+  const editable = canEdit('Expenses');
   const [form, setForm] = useState<EForm | null>(null);
   const [confirm, setConfirm] = useState<Expense | null>(null);
   const months = [monthKey(0), monthKey(1), monthKey(2)];
@@ -68,7 +71,7 @@ export default function Expenses() {
         icon={<Wallet size={20} />}
         title="Expenses"
         subtitle={`${rows.length} entries`}
-        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setForm(blank())}>Add Expense</HeaderPrimaryButton>}
+        actions={editable ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setForm(blank())}>Add Expense</HeaderPrimaryButton> : undefined}
       />
       <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
@@ -109,9 +112,11 @@ export default function Expenses() {
                   <td className="px-5 py-4"><Badge tone="neutral">{e.mode}</Badge></td>
                   <td className="px-5 py-4">
                     <div className="flex justify-end gap-1.5">
+                      {editable ? (<>
                       <button onClick={() => setForm({ id: e.id, date: e.date, category: e.category, subCategory: e.subCategory ?? '', name: e.name, amount: String(e.amount), mode: e.mode, remarks: e.remarks ?? '' })}
                         className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-primary-50 hover:text-primary" title="Edit"><Pencil size={15} /></button>
                       <button onClick={() => setConfirm(e)} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-danger-50 hover:text-danger" title="Delete"><Trash2 size={15} /></button>
+                      </>) : <span className="text-[12px] text-muted">—</span>}
                     </div>
                   </td>
                 </tr>

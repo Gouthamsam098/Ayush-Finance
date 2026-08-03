@@ -18,6 +18,7 @@ import { ApiError } from '@/lib/api';
 import type { LoanType } from '@/mock/DataContext';
 import { LOAN_LABELS as LOAN_TYPE_LABELS } from '@/mock/DataContext';
 import { PageHeader, HeaderGhostButton, HeaderPrimaryButton } from '@/components/layout/PageHeader';
+import { usePermissions } from '@/lib/permissions';
 import {
   type CustomerFilters, defaultFilters, factsFor, passesFilters,
   countActive, numActive,
@@ -109,6 +110,7 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50];
 export default function Customers() {
   const d = useData();
   const toast = useToast();
+  const { canEdit } = usePermissions();
   const [q, setQ] = useState('');
   // Applied (live) filters drive the table; `draft` is edited in the drawer and
   // committed on Apply so numeric inputs don't re-filter on every keystroke.
@@ -356,7 +358,7 @@ export default function Customers() {
         actions={
           <>
             <HeaderGhostButton icon={<Download size={14} />}>Export</HeaderGhostButton>
-            <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openAdd}>Add customer</HeaderPrimaryButton>
+            {canEdit('Customers') && <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openAdd}>Add customer</HeaderPrimaryButton>}
           </>
         }
       />
@@ -563,7 +565,7 @@ export default function Customers() {
                 <p className="mt-1 max-w-xs text-sm text-muted">
                   {filtersActive ? 'Try adjusting your search or filters.' : 'Add your first customer to get started.'}
                 </p>
-                {!filtersActive && (
+                {!filtersActive && canEdit('Customers') && (
                   <button
                     onClick={openAdd}
                     className="mt-5 inline-flex items-center gap-2 rounded-lg bg-blue-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-600"

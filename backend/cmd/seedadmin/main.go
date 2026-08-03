@@ -62,12 +62,14 @@ func run() error {
 	}
 
 	// Upsert on email: re-running rotates the password rather than erroring.
+	// The bootstrap account is always an ADMIN (RBAC).
 	_, err = pool.Exec(ctx, `
-		INSERT INTO users (email, full_name, password_hash, is_active)
-		VALUES ($1, $2, $3, TRUE)
+		INSERT INTO users (email, full_name, password_hash, role, is_active)
+		VALUES ($1, $2, $3, 'ADMIN', TRUE)
 		ON CONFLICT (email) DO UPDATE
 		SET password_hash = EXCLUDED.password_hash,
 		    full_name      = EXCLUDED.full_name,
+		    role           = 'ADMIN',
 		    is_active      = TRUE,
 		    updated_at     = now()`,
 		email, fullName, hash,

@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/select';
 import { Dialog } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
+import { usePermissions } from '@/lib/permissions';
 import { fmtDate, todayISO, initials } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { config } from '@/lib/config';
@@ -49,6 +50,8 @@ const fmtBytes = (n: number): string => {
 export default function Documents() {
   const d = useData();
   const toast = useToast();
+  const { canEdit } = usePermissions();
+  const editable = canEdit('Documents');
   const accessToken = useSelector((s: RootState) => s.auth.accessToken);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -230,7 +233,7 @@ export default function Documents() {
               ? 'KYC & supporting files — upload or add them from a customer profile'
               : `${totalDocs} ${totalDocs === 1 ? 'file' : 'files'} across ${grouped.size} ${grouped.size === 1 ? 'customer' : 'customers'} · view & download anytime`
         }
-        actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setOpen(true)}>Upload Document</HeaderPrimaryButton>}
+        actions={editable ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setOpen(true)}>Upload Document</HeaderPrimaryButton> : undefined}
       />
       <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
@@ -309,7 +312,7 @@ export default function Documents() {
                           <button onClick={() => download(doc)} disabled={busy} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-emerald-50 hover:text-emerald-600 disabled:opacity-50 dark:hover:bg-emerald-500/15" title="Download">
                             {busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                           </button>
-                          <button onClick={() => remove(doc)} disabled={busy} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-500/15" title="Delete"><Trash2 size={16} /></button>
+                          {editable && <button onClick={() => remove(doc)} disabled={busy} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-500/15" title="Delete"><Trash2 size={16} /></button>}
                         </div>
                       );
                     })}

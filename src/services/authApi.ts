@@ -17,6 +17,8 @@ export interface BackendUser {
   id: number;
   email: string;
   full_name: string;
+  role: 'ADMIN' | 'VIEWER';
+  permissions: Record<string, 'none' | 'view' | 'edit'>;
   mfa_enabled: boolean;
 }
 

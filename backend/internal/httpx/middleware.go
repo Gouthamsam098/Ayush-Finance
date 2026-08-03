@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +103,47 @@ func UserID(ctx context.Context) string {
 		return id
 	}
 	return ""
+}
+
+// UserLoader fetches the authenticated user (with role + permissions) by id.
+// Satisfied by the auth repository's FindByID.
+type UserLoader func(ctx context.Context, id int64) (*domain.User, error)
+
+// RequirePermission enforces RBAC on a route group for the given module. Reads
+// (GET/HEAD/OPTIONS) need at least `view`; writes (POST/PATCH/PUT/DELETE) need
+// `edit`. Admins bypass. This is the authoritative check — the UI hiding
+// buttons is cosmetic; this is what actually blocks the API.
+func RequirePermission(module string, load UserLoader) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(UserID(r.Context()), 10, 64)
+			if err != nil {
+				Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+				return
+			}
+			user, err := load(r.Context(), id)
+			if err != nil {
+				Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+				return
+			}
+			if user.IsAdmin() {
+				next.ServeHTTP(w, r)
+				return
+			}
+			need := domain.AccessEdit
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+				need = domain.AccessView
+			}
+			have := user.Permissions[module]
+			ok := have == domain.AccessEdit || (need == domain.AccessView && have == domain.AccessView)
+			if !ok {
+				Error(w, r, domain.NewForbidden("you do not have permission to perform this action"))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 type statusRecorder struct {

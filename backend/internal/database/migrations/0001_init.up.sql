@@ -16,13 +16,17 @@ CREATE TABLE users (
     email         VARCHAR(255) NOT NULL UNIQUE,
     full_name     VARCHAR(255) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,       -- bcrypt; never exposed in any API
+    role          VARCHAR(20)  NOT NULL DEFAULT 'VIEWER',  -- ADMIN | VIEWER (RBAC)
+    permissions   JSONB        NOT NULL DEFAULT '{}'::jsonb, -- per-module access: {"Loans":"edit",...} (VIEWER only; ADMIN implicitly edits all)
     mfa_enabled   BOOLEAN      NOT NULL DEFAULT FALSE,
     mfa_secret    VARCHAR(64),
     is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
     last_login_at TIMESTAMPTZ,
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    CONSTRAINT users_email_lower CHECK (email = lower(email))
+    deleted_at    TIMESTAMPTZ,                              -- soft delete for managed users
+    CONSTRAINT users_email_lower CHECK (email = lower(email)),
+    CONSTRAINT users_role_valid CHECK (role IN ('ADMIN','VIEWER'))
 );
 
 -- ─────────────── customers ───────────────

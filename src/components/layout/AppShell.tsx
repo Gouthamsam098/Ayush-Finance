@@ -1,7 +1,8 @@
 import { createContext, useContext, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '@/store/authSlice';
+import type { RootState } from '@/store';
 import { useData } from '@/mock/DataContext';
 import { todayISO } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -11,31 +12,31 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-interface NavItem { to: string; label: string; icon: LucideIcon; badgeKey?: 'overdue' }
+interface NavItem { to: string; label: string; icon: LucideIcon; badgeKey?: 'overdue'; adminOnly?: boolean; module?: string }
 interface NavSection { heading: string; items: NavItem[] }
 
 const NAV: NavSection[] = [
   {
     heading: 'Main',
     items: [
-      { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-      { to: '/customers', label: 'Customers', icon: Users },
-      { to: '/loans', label: 'Loans', icon: FileText, badgeKey: 'overdue' },
-      { to: '/collections', label: 'Collections', icon: Receipt },
+      { to: '/', label: 'Dashboard', icon: LayoutDashboard, module: 'Dashboard' },
+      { to: '/customers', label: 'Customers', icon: Users, module: 'Customers' },
+      { to: '/loans', label: 'Loans', icon: FileText, badgeKey: 'overdue', module: 'Loans' },
+      { to: '/collections', label: 'Collections', icon: Receipt, module: 'Collections' },
     ],
   },
   {
     heading: 'Finance',
     items: [
-      { to: '/expenses', label: 'Expenses', icon: Wallet },
-      { to: '/reports', label: 'Reports', icon: BarChart3 },
+      { to: '/expenses', label: 'Expenses', icon: Wallet, module: 'Expenses' },
+      { to: '/reports', label: 'Reports', icon: BarChart3, module: 'Dashboard' },
     ],
   },
   {
     heading: 'System',
     items: [
-      { to: '/documents', label: 'Documents', icon: FolderOpen },
-      { to: '/settings', label: 'Settings', icon: Settings },
+      { to: '/documents', label: 'Documents', icon: FolderOpen, module: 'Documents' },
+      { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true, module: 'Settings' },
     ],
   },
 ];
@@ -52,6 +53,16 @@ export function AppShell() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const d = useData();
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'ADMIN');
+  const perms = useSelector((s: RootState) => s.auth.user?.permissions);
+  // A nav item is visible when: admin (sees all), or the module isn't restricted,
+  // or the viewer has view/edit (not 'none') on that module.
+  const canSee = (it: NavItem) => {
+    if (isAdmin) return true;
+    if (it.adminOnly) return false;
+    if (!it.module) return true;
+    return (perms?.[it.module] ?? 'none') !== 'none';
+  };
 
   const toggleTheme = () => {
     setDark((prev) => {
@@ -122,9 +133,12 @@ export function AppShell() {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-[7px] py-2">
-          {NAV.map((section) => (
+          {NAV.map((section) => {
+            const items = section.items.filter(canSee);
+            if (items.length === 0) return null;
+            return (
             <div key={section.heading}>
-              {section.items.map(({ to, label, icon: Icon, badgeKey }) => {
+              {items.map(({ to, label, icon: Icon, badgeKey }) => {
                 const badge = badgeFor(badgeKey);
                 return (
                   <NavLink
@@ -177,7 +191,7 @@ export function AppShell() {
                 );
               })}
             </div>
-          ))}
+          );})}
         </nav>
 
         {/* Footer — user + logout */}

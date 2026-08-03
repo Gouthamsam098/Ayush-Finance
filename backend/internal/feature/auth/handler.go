@@ -114,10 +114,12 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 // userResponse is the public projection of a user. It deliberately omits
 // password_hash and any other sensitive field.
 type userResponse struct {
-	ID         int64  `json:"id"`
-	Email      string `json:"email"`
-	FullName   string `json:"full_name"`
-	MFAEnabled bool   `json:"mfa_enabled"`
+	ID          int64             `json:"id"`
+	Email       string            `json:"email"`
+	FullName    string            `json:"full_name"`
+	Role        string            `json:"role"`
+	Permissions map[string]string `json:"permissions"`
+	MFAEnabled  bool              `json:"mfa_enabled"`
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
@@ -132,10 +134,16 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	perms := make(map[string]string, len(user.Permissions))
+	for m, a := range user.Permissions {
+		perms[m] = string(a)
+	}
 	httpx.JSON(w, http.StatusOK, userResponse{
-		ID:         user.ID,
-		Email:      user.Email,
-		FullName:   user.FullName,
-		MFAEnabled: user.MFAEnabled,
+		ID:          user.ID,
+		Email:       user.Email,
+		FullName:    user.FullName,
+		Role:        string(user.Role),
+		Permissions: perms,
+		MFAEnabled:  user.MFAEnabled,
 	})
 }
