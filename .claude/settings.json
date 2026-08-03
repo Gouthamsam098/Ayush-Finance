@@ -13,7 +13,13 @@
       "Bash(timeout 15 curl -s --max-time 10 -X POST http://localhost:4000/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"admin@anushcapitals.com\",\"password\":\"ChangeMe_Str0ng!\"}')",
       "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{let o=JSON.parse\\(s\\);o.success?console.log\\('LOGIN OK · token len '+o.data.access_token.length+' · expires_in '+o.data.expires_in_seconds+'s'\\):console.log\\('LOGIN FAILED: '+JSON.stringify\\(o.error\\)\\)}\\)\")",
       "Bash(go build *)",
-      "Bash(go vet *)"
+      "Bash(go vet *)",
+      "Bash(curl -s --max-time 4 -o /dev/null -w \"dev server \\(5173\\): %{http_code}\\\\n\" http://localhost:5173)",
+      "Bash(echo \"dev server launching \\(pid $!\\)\")",
+      "Bash(curl -s --max-time 3 -o /dev/null http://localhost:5173)",
+      "Bash(echo \"tsc-exit=$?\")",
+      "Bash(curl -s --max-time 4 -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5173)",
+      "Bash(curl -s --max-time 4 -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:4000/health)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Goutham.P\\Downloads"
