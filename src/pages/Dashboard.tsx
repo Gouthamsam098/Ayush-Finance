@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  useData, LOAN_LABELS, isDailyLoan, cadenceDaysForLoan, type Loan,
+  useData, LOAN_LABELS, isDailyLoan, cadenceDaysForLoan, behavesInterestOnly, type Loan,
 } from '@/mock/DataContext';
 import { inr, inrShort, todayISO, isoLocal } from '@/lib/format';
 import { useOpenSidebar } from '@/components/layout/AppShell';
@@ -97,12 +97,28 @@ export default function Dashboard() {
   })();
 
   // Cash flow = all cash in − out (used by the Cash Flow Trend chart).
-  // Profit = INTEREST income earned this month (the business's real earnings).
-  // Principal repayments are the customer returning our own money, so they are
-  // NOT income. Interest income = collections marked INTEREST (unset kind counts
-  // as interest, the app default). Expenses are tracked as a separate KPI.
+  //
+  // Profit = INTEREST actually COLLECTED this month. Interest is realised only
+  // when the customer pays it — and only INTEREST-BEHAVING loans collect interest
+  // as a payment. The three economic behaviours differ:
+  //   • Instalment (Daily Collection) & EMI (Vehicle/Property): interest is taken
+  //     UPFRONT at disbursal; monthly/daily collections repay PRINCIPAL only →
+  //     they add ₹0 to profit (no interest is "collected").
+  //   • Interest-only (Daily/Monthly Interest, Flexible, monthly-mode Vehicle/
+  //     Property): each periodic payment IS interest income → counts. A PRINCIPAL
+  //     settlement (returning our own money) does not.
+  // This is keyed off loan BEHAVIOUR, not the collection's kind flag alone —
+  // the Collections page doesn't set kind, so every payment looks like INTEREST
+  // otherwise. Overdue interest collected this month correctly lands this month.
+  const loanById = useMemo(() => new Map(d.loans.map((l) => [l.id, l])), [d.loans]);
   const interestInMonth = (key: string) =>
-    d.collections.filter((c) => c.date.slice(0, 7) === key && c.kind !== 'PRINCIPAL').reduce((s, c) => s + c.amount, 0);
+    d.collections.reduce((s, c) => {
+      if (c.date.slice(0, 7) !== key) return s;
+      if (c.kind === 'PRINCIPAL') return s;          // principal/settlement is never income
+      const loan = loanById.get(c.loanId);
+      if (!loan || !behavesInterestOnly(loan)) return s; // instalment/EMI collections = principal
+      return s + c.amount;
+    }, 0);
   const monthInterest = interestInMonth(thisMonth);
   const lastInterest = interestInMonth(lastMonthKey);
 
@@ -132,7 +148,12 @@ export default function Dashboard() {
     for (const c of d.collections) if (c.date.slice(0, 7) === thisMonth) {
       const dd = Number(c.date.slice(8, 10));
       cById[dd] = (cById[dd] ?? 0) + c.amount;
-      if (c.kind !== 'PRINCIPAL') iById[dd] = (iById[dd] ?? 0) + c.amount; // interest income only
+      // Interest income = interest-kind payment on an interest-behaving loan
+      // (same rule as the Profit KPI, so the chart's Profit line agrees).
+      const loan = loanById.get(c.loanId);
+      if (c.kind !== 'PRINCIPAL' && loan && behavesInterestOnly(loan)) {
+        iById[dd] = (iById[dd] ?? 0) + c.amount;
+      }
     }
     for (const e of d.expenses) if (e.date.slice(0, 7) === thisMonth) { const dd = Number(e.date.slice(8, 10)); eById[dd] = (eById[dd] ?? 0) + e.amount; }
     let cc = 0, ci = 0, ce = 0;
@@ -143,7 +164,7 @@ export default function Dashboard() {
     }
     return pts;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thisMonth, today, d.collections, d.expenses]);
+  }, [thisMonth, today, d.collections, d.expenses, loanById]);
 
   // ── Section 3 — Overdue loans (real, ranked by days overdue) ──
   const overdueRows = useMemo(() => active
