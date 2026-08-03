@@ -1,5 +1,3 @@
-import { useState } from 'react';
-
 interface LogoProps { size?: 'sm' | 'md' | 'lg'; showText?: boolean; }
 
 const SIZES = {
@@ -9,16 +7,11 @@ const SIZES = {
 };
 
 export function LogoMark({ className = 'h-11 w-11 rounded-2xl', svg = 27 }: { className?: string; svg?: number }) {
-  const [imgFailed, setImgFailed] = useState(false);
   return (
-    <div className={`grid ${className} shrink-0 place-items-center overflow-hidden bg-gradient-to-br from-blue-900 via-blue-700 to-blue-500 shadow-lg shadow-blue-800/30 ring-1 ring-white/15`}>
-      {!imgFailed ? (
-        <img src="/logo.png" alt="Anush Finserv" className="h-full w-full object-cover" onError={() => setImgFailed(true)} />
-      ) : (
-        <svg width={svg} height={svg} viewBox="0 0 96 96" fill="none" stroke="#fff" strokeWidth="12" strokeLinecap="butt" strokeLinejoin="miter">
-          <path d="M16 88 L55 10" /><path d="M55 10 L64 88" /><path d="M48 40 L86 40" /><path d="M54 62 L80 62" />
-        </svg>
-      )}
+    <div className={`grid ${className} shrink-0 place-items-center overflow-hidden bg-gradient-to-br from-[#022999] via-[#0538cc] to-[#0AA8F8] shadow-lg shadow-[#022999]/30 ring-1 ring-white/15`}>
+      <svg width={svg} height={svg} viewBox="0 0 96 96" fill="none" stroke="#fff" strokeWidth="12" strokeLinecap="butt" strokeLinejoin="miter">
+        <path d="M16 88 L55 10" /><path d="M55 10 L64 88" /><path d="M48 40 L86 40" /><path d="M54 62 L80 62" />
+      </svg>
     </div>
   );
 }

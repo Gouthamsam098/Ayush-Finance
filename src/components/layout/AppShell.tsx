@@ -1,6 +1,5 @@
 import { createContext, useContext, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { LogoMark } from '@/components/Logo';
 import { useDispatch } from 'react-redux';
 import { logout } from '@/store/authSlice';
 import { useData } from '@/mock/DataContext';
@@ -96,11 +95,20 @@ export function AppShell() {
           'flex min-h-[58px] items-center gap-2.5 border-b border-slate-200 px-2.5 py-3 dark:border-white/[.07]',
           collapsed && 'justify-center gap-1 px-1.5',
         )}>
-          <LogoMark className="h-8 w-8 rounded-[9px]" svg={19} />
+          <div className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-[9px] bg-gradient-to-br from-[#022999] via-[#0538cc] to-[#0AA8F8] shadow-sm shadow-[#022999]/30 ring-1 ring-white/15">
+            <img
+              src="/logo-clean.svg"
+              alt="Anush Finserv"
+              style={{ width: '72%', height: '72%', objectFit: 'contain' }}
+            />
+          </div>
           {!collapsed && (
             <div className="min-w-0 flex-1 overflow-hidden">
-              <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-50">Anush <span className="text-blue-700 dark:text-blue-400">Finserv</span></div>
-              <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">Loan Management</div>
+              <div className="leading-none">
+                <span className="block text-[15px] font-extrabold uppercase tracking-tight text-blue-700 dark:text-slate-50">
+                  Anush <span className="text-blue-500 dark:text-blue-400">Finserv</span>
+                </span>
+              </div>
             </div>
           )}
           <button

@@ -57,7 +57,7 @@ export function StatementView({ loan }: { loan: Loan }) {
   return (
     <div className="overflow-hidden rounded-xl border-[0.5px] border-slate-200/80 bg-white text-ink shadow-card dark:border-white/[.08] dark:bg-surface">
       {/* Document header — brand band with title + reference */}
-      <div className="relative overflow-hidden bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 px-5 py-4 text-white">
+      <div className="relative overflow-hidden bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-5 py-4 text-white">
         <span className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
         <div className="relative flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -112,7 +112,7 @@ export function StatementView({ loan }: { loan: Loan }) {
           <div className="max-h-[44vh] overflow-auto rounded-xl border-[0.5px] border-slate-200/70 dark:border-white/[.06]">
             <table className="w-full min-w-[720px] border-collapse text-[12px] tabular-nums">
               <thead>
-                <tr className="text-left [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-gradient-to-r [&>th]:from-blue-600 [&>th]:to-blue-600 [&>th]:px-3 [&>th]:py-2.5 [&>th]:text-[11px] [&>th]:font-bold [&>th]:uppercase [&>th]:tracking-wide [&>th]:text-white">
+                <tr className="text-left [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-gradient-to-r [&>th]:from-[#022999] [&>th]:via-[#0538cc] [&>th]:to-[#0AA8F8] [&>th]:px-3 [&>th]:py-2.5 [&>th]:text-[11px] [&>th]:font-bold [&>th]:uppercase [&>th]:tracking-wide [&>th]:text-white">
                   <th className="!text-center">Instl</th>
                   <th>Due Date</th>
                   <th className="!text-right">Opening</th>

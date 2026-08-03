@@ -44,7 +44,7 @@ export function PageHeader({
             {subtitle && <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</div>}
           </div>
         </div>
-        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        {actions && <div className="flex flex-wrap items-center gap-2 ml-auto">{actions}</div>}
       </div>
     </div>
   );

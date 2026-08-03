@@ -471,7 +471,7 @@ export default function Customers() {
           <div className="min-h-0 flex-1 overflow-auto">
             <table className="w-full min-w-[800px] text-[15px]">
               <thead className="sticky top-0 z-10">
-                <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
+                <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer ID</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Mobile</th>
@@ -959,12 +959,18 @@ export default function Customers() {
           const loanIds = new Set(custLoanList.map((l) => l.id));
           const colCount = d.collections.filter((c) => loanIds.has(c.loanId)).length;
           const docCount = d.documents.filter((doc) => doc.customerId === confirm.id).length;
-          const parts = [`${custLoanList.length} loan${custLoanList.length === 1 ? '' : 's'}`, `${colCount} collection${colCount === 1 ? '' : 's'}`];
+          const activeLoanCount = custLoanList.filter((l) => l.status === 'ACTIVE').length;
+          const closedLoanCount = custLoanList.length - activeLoanCount;
+          const loanParts: string[] = [];
+          if (activeLoanCount) loanParts.push(`${activeLoanCount} active loan${activeLoanCount === 1 ? '' : 's'}`);
+          if (closedLoanCount) loanParts.push(`${closedLoanCount} closed loan${closedLoanCount === 1 ? '' : 's'}`);
+          const parts = [loanParts.join(', ') || `${custLoanList.length} loan${custLoanList.length === 1 ? '' : 's'}`, `${colCount} payment record${colCount === 1 ? '' : 's'}`];
           if (docCount) parts.push(`${docCount} document${docCount === 1 ? '' : 's'}`);
           return (
             <div className="space-y-2 text-sm text-slate-600">
               <p>This permanently removes <span className="font-semibold text-slate-900">{confirm.name}</span> and <span className="font-semibold text-red-600">all their linked records</span> from every screen (Loans, Collections, Documents, Reports).</p>
               <p>Will also delete: <span className="font-semibold">{parts.join(', ')}</span>.</p>
+              <p className="text-xs text-slate-500">Payment records include the full history for both active and closed loans.</p>
               <p>This cannot be undone.</p>
             </div>
           );

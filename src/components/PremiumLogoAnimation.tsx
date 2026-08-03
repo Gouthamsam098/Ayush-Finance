@@ -17,8 +17,6 @@ const NOISE_URI =
 
 const SPARK_COUNT = 12;
 
-const BG_COLOR = '#010114';
-const RADIAL_BG = 'radial-gradient(ellipse at center, #030d35 0%, #010114 55%, #000208 100%)';
 const DIVIDER_GLOW = '#188BFC';
 
 interface Spark {
@@ -93,8 +91,7 @@ export default function PremiumLogoAnimation() {
 
   if (reducedMotion) {
     return (
-      <div className="relative h-full w-full overflow-hidden" style={{ background: BG_COLOR }}>
-        <div className="absolute inset-0" style={{ background: RADIAL_BG }} />
+      <div className="relative h-full w-full overflow-hidden">
         <BackgroundParticles count={60} />
         <motion.div
           initial={{ opacity: 0 }}
@@ -118,7 +115,6 @@ export default function PremiumLogoAnimation() {
     <div
       ref={containerRef}
       className="relative h-full w-full overflow-hidden"
-      style={{ background: BG_COLOR }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -128,7 +124,6 @@ export default function PremiumLogoAnimation() {
         transition={{ duration: 0.8, ease: 'easeOut' }}
         className="absolute inset-0"
       >
-        <div className="absolute inset-0" style={{ background: RADIAL_BG }} />
         <AmbientLight />
         <BackgroundParticles count={110} />
         <FloatingDust count={35} />
@@ -204,7 +199,7 @@ export default function PremiumLogoAnimation() {
               animate={{ scaleY: 1, opacity: 1 }}
               transition={{ delay: 2.0, duration: 0.5, ease: 'easeOut' }}
               style={{ transformOrigin: 'top' }}
-              className="relative w-px self-stretch bg-gradient-to-b from-transparent via-blue-400/60 to-transparent"
+              className="relative w-px self-stretch bg-gradient-to-b from-transparent via-white/70 to-transparent"
             >
               <motion.div
                 initial={{ top: '0%', opacity: 0 }}
@@ -213,7 +208,7 @@ export default function PremiumLogoAnimation() {
                 className="absolute left-1/2 h-2 w-2 -translate-x-1/2 rounded-full"
                 style={{ background: DIVIDER_GLOW, boxShadow: `0 0 12px ${DIVIDER_GLOW}, 0 0 24px ${DIVIDER_GLOW}80` }}
               />
-              {idle && <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-400/30 to-transparent" style={{ filter: 'blur(2px)' }} />}
+              {idle && <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white/40 to-transparent" style={{ filter: 'blur(2px)' }} />}
             </motion.div>
 
             <motion.div
@@ -255,12 +250,12 @@ export default function PremiumLogoAnimation() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 3.8, duration: 0.6, ease: 'easeOut' }}
-            className="font-medium uppercase tracking-[0.25em] text-center"
-            style={{ color: '#a6a5ad', fontSize: 'clamp(0.4rem, 0.55vw, 0.55rem)', marginTop: '12px' }}
+            className="font-normal uppercase tracking-[0.25em] text-center"
+            style={{ color: '#cdd5e0', fontSize: 'clamp(0.4rem, 0.55vw, 0.55rem)', marginTop: '12px' }}
           >
-            <span className="inline-block h-px w-4 align-middle mr-2" style={{ background: '#a6a5ad55' }} />
+            <span className="inline-block h-px w-4 align-middle mr-2" style={{ background: '#cdd5e055' }} />
             {TAGLINE}
-            <span className="inline-block h-px w-4 align-middle ml-2" style={{ background: '#a6a5ad55' }} />
+            <span className="inline-block h-px w-4 align-middle ml-2" style={{ background: '#cdd5e055' }} />
           </motion.div>
         </motion.div>
       </motion.div>

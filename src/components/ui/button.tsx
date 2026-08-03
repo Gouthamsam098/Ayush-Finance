@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 type Variant = 'primary' | 'ghost' | 'success' | 'danger';
 
 const variants: Record<Variant, string> = {
-  primary: 'bg-gradient-to-b from-primary-400 to-primary text-white shadow-[0_1px_0_rgba(255,255,255,.15)_inset,0_4px_12px_-2px_rgba(37,99,235,.45)] hover:shadow-[0_1px_0_rgba(255,255,255,.15)_inset,0_6px_20px_-2px_rgba(37,99,235,.55)] hover:brightness-105',
+  primary: 'bg-gradient-to-b from-[#022999] via-[#0538cc] to-[#0AA8F8] text-white shadow-[0_1px_0_rgba(255,255,255,.15)_inset,0_4px_12px_-2px_rgba(2,41,153,.45)] hover:shadow-[0_1px_0_rgba(255,255,255,.15)_inset,0_6px_20px_-2px_rgba(10,168,248,.55)] hover:from-[#0538cc] hover:via-[#0AA8F8] hover:to-[#0AA8F8]',
   ghost: 'bg-transparent border border-slate-200 dark:border-slate-700/80 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/[.06] hover:border-slate-300 dark:hover:border-slate-600',
   success: 'bg-gradient-to-b from-success to-success-600 text-white shadow-[0_1px_0_rgba(255,255,255,.15)_inset,0_4px_12px_-2px_rgba(16,185,129,.4)] hover:brightness-105',
   danger: 'bg-gradient-to-b from-danger to-danger-600 text-white shadow-[0_1px_0_rgba(255,255,255,.15)_inset,0_4px_12px_-2px_rgba(225,29,72,.4)] hover:brightness-105',

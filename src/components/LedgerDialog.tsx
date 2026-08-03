@@ -84,6 +84,9 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   const slotStep = interestOnly ? cadenceDaysForLoan(loan) : stepDays;
   const slotDue = instalment;
   const slotCap = interestOnly ? Number.POSITIVE_INFINITY : totalTerm;
+  // Instalment loans lock a payment to the slot whose dueDate === payment.date;
+  // FIFO stays for row-count/next-slot helpers. Interest-only keeps its model.
+  const useStrictDateMatch = hasSchedule && !interestOnly;
   type Row = {
     sn: number; date: string; due: number; collected: number; remaining: number;
     status: 'Paid' | 'Partial' | 'Overdue' | 'Next due' | 'Settled'; isNext?: boolean;
@@ -168,16 +171,24 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       // A payment recorded on this exact date (or within the cycle window)
       // keeps its edit/delete affordance + mode/receipt on this row.
       const ws = isoLocal(new Date(ly, lm - 1, ld + dueOffsetDays - slotStep + 1));
-      const winColls = slotStep === 1
+      const winColls = useStrictDateMatch
         ? loanColls.filter((c) => c.date === dueDate)
-        : loanColls.filter((c) => c.date >= ws && c.date <= dueDate);
+        : slotStep === 1
+          ? loanColls.filter((c) => c.date === dueDate)
+          : loanColls.filter((c) => c.date >= ws && c.date <= dueDate);
+      const slotPaid = winColls.reduce((s, c) => s + c.amount, 0);
       const first = winColls[0];
+      const displayPaid = useStrictDateMatch ? slotPaid : alloc;
       const status: Row['status'] =
-        alloc >= slotDue ? 'Paid' : alloc > 0 ? 'Partial' : dueDate < todayISO() ? 'Overdue' : 'Next due';
+        (useStrictDateMatch ? slotPaid : alloc) >= slotDue
+          ? 'Paid'
+          : (useStrictDateMatch ? slotPaid : alloc) > 0
+            ? 'Partial'
+            : dueDate < todayISO() ? 'Overdue' : 'Next due';
       out.push({
-        sn: k, date: dueDate, due: slotDue, collected: alloc, remaining, status,
+        sn: k, date: dueDate, due: slotDue, collected: displayPaid, remaining, status,
         mode: first?.mode, receipt: first?.receiptNo, remarks: first?.remarks, id: first?.id, kind: first?.kind,
-        payAmount: first ? winColls.reduce((s, c) => s + c.amount, 0) : undefined,
+        payAmount: first ? slotPaid : undefined,
       });
     }
     // The settlement/foreclosure row: ONE row for everything cleared at

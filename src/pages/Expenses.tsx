@@ -94,7 +94,7 @@ export default function Expenses() {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[650px] text-sm">
-            <thead><tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
+            <thead><tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
               <th className="px-5 py-4">Date</th><th className="px-5 py-4">Category</th><th className="px-5 py-4">Sub Category</th><th className="px-5 py-4">Name</th><th className="px-5 py-4">Amount</th><th className="px-5 py-4">Mode</th><th className="px-5 py-4 text-right">Actions</th>
             </tr></thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/[.05]">

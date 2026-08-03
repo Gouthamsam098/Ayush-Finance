@@ -21,11 +21,11 @@ export function OutstandingTable({ rows, onViewAll }: { rows: OutstandingRow[]; 
     <Panel title="Top outstanding loans" action="View all" onAction={onViewAll}>
       <table className="w-full table-fixed border-collapse text-sm">
         <thead>
-          <tr className="text-left text-[13px] text-muted">
-            <th className="w-[34%] border-b-[0.5px] border-slate-200/70 pb-2.5 font-medium dark:border-white/[.06]">Loan</th>
-            <th className="w-[30%] border-b-[0.5px] border-slate-200/70 pb-2.5 font-medium dark:border-white/[.06]">Amount</th>
-            <th className="w-[18%] border-b-[0.5px] border-slate-200/70 pb-2.5 font-medium dark:border-white/[.06]">Status</th>
-            <th className="w-[18%] border-b-[0.5px] border-slate-200/70 pb-2.5 font-medium dark:border-white/[.06]">Due</th>
+          <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
+            <th className="w-[34%] px-5 py-3.5">Loan</th>
+            <th className="w-[30%] px-5 py-3.5">Amount</th>
+            <th className="w-[18%] px-5 py-3.5">Status</th>
+            <th className="w-[18%] px-5 py-3.5">Due</th>
           </tr>
         </thead>
         <tbody>

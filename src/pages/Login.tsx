@@ -39,17 +39,24 @@ export default function Login() {
   };
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden" style={{ background: '#020617' }}>
+    <div className="relative flex h-screen w-screen overflow-hidden" style={{ background: '#022999' }}>
       <div
         className="absolute inset-0"
-        style={{ background: 'radial-gradient(ellipse at center, #0a1f3d 0%, #020617 60%, #000510 100%)' }}
+        style={{ background: 'radial-gradient(ellipse at center, #0538cc 0%, #022999 60%, #011d6e 100%)' }}
       />
       <div className="relative z-10 flex h-full w-full flex-col overflow-y-auto md:flex-row md:overflow-hidden">
         <div className="relative hidden h-[42vh] w-full md:block md:h-full md:w-[58%]">
           <PremiumLogoAnimation />
         </div>
 
-        <div className="relative z-40 flex h-full w-full items-center justify-center p-6 md:p-10 md:w-[42%] md:h-full">
+        <div className="relative z-40 flex h-full w-full items-center justify-center overflow-hidden p-6 md:p-10 md:w-[42%] md:h-full">
+          <div
+            className="pla-noise"
+            style={{
+              backgroundImage:
+                'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'200\' height=\'200\'%3E%3Cfilter id=\'n\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.85\' numOctaves=\'2\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23n)\'/%3E%3C/svg%3E")',
+            }}
+          />
           <LoginCard onSubmit={handleSignIn} loading={loading} error={error} />
         </div>
       </div>

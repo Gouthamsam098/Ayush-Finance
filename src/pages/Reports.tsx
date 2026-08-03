@@ -355,7 +355,7 @@ export default function Reports() {
           ) : (
             <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
               <thead>
-                <tr className="bg-gradient-to-r from-blue-800 via-blue-700 to-blue-600 text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
+                <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
                   {report.head.map((h, i) => (
                     <th key={h} className={cn('h-14 align-middle whitespace-nowrap px-6 first:pl-6 last:pr-6', report.rightAlignCols.includes(i) && 'text-right')}>{h}</th>
                   ))}
