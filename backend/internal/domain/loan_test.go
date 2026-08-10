@@ -44,9 +44,13 @@ func TestMonthlyCyclesElapsed(t *testing.T) {
 		now  time.Time
 		want int
 	}{
-		{"day 30 -> 1 cycle", day(2026, 1, 30), 1},
+		// A cycle counts from its DUE day (cycle k due at day k·30 + 1) — never
+		// a day early, so accrual always matches the ledger's cycle rows.
+		{"day 30 -> 0 (cycle 1 falls due day 31)", day(2026, 1, 30), 0},
+		{"day 31 -> 1 cycle", day(2026, 1, 31), 1},
 		{"day 59 -> 1 cycle", day(2026, 2, 28), 1},
-		{"day 60 -> 2 cycles", day(2026, 3, 1), 2},
+		{"day 60 -> 1 (cycle 2 falls due day 61)", day(2026, 3, 1), 1},
+		{"day 61 -> 2 cycles", day(2026, 3, 2), 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -173,7 +177,7 @@ func TestUpfrontDeduction(t *testing.T) {
 }
 
 func TestOutstandingInterestOnly(t *testing.T) {
-	// MONTHLY_INTEREST: ₹1,00,000 at ₹5,000/month interest. At day 60 = 2 cycles,
+	// MONTHLY_INTEREST: ₹1,00,000 at ₹5,000/month interest. At day 61 = 2 cycles,
 	// due = 10,000, collected 5,000 → accrued 5,000. Principal stays fixed.
 	// Outstanding = 100000 + 5000 = 105000.
 	loan := &Loan{
@@ -186,7 +190,7 @@ func TestOutstandingInterestOnly(t *testing.T) {
 		Status:      StatusActive,
 	}
 	collected := Collected{Interest: RupeesToPaise(5000)}
-	got := loan.Outstanding(collected, day(2026, 3, 1))
+	got := loan.Outstanding(collected, day(2026, 3, 2))
 	want := RupeesToPaise(105000)
 	if got != want {
 		t.Errorf("got %s, want %s", got, want)
@@ -214,7 +218,7 @@ func TestOutstandingInterestOnly(t *testing.T) {
 
 // TestInterestOnlyPreclosure verifies a principal-kind payment settles the loan.
 func TestInterestOnlyPreclosure(t *testing.T) {
-	// MONTHLY_INTEREST ₹1,00,000, ₹5,000/mo. At day 60 = 2 cycles, ₹10,000 accrued.
+	// MONTHLY_INTEREST ₹1,00,000, ₹5,000/mo. At day 61 = 2 cycles, ₹10,000 accrued.
 	loan := &Loan{
 		Type:        LoanMonthlyInterest,
 		Principal:   RupeesToPaise(100000),
@@ -223,7 +227,7 @@ func TestInterestOnlyPreclosure(t *testing.T) {
 		LoanDate:    day(2026, 1, 1),
 		Status:      StatusActive,
 	}
-	now := day(2026, 3, 1) // 2 cycles → ₹10,000 interest accrued
+	now := day(2026, 3, 2) // day 61 = 2 cycles → ₹10,000 interest accrued
 
 	// Interest ₹10,000 fully paid, principal ₹1,00,000 paid → outstanding 0, settled.
 	full := Collected{Interest: RupeesToPaise(10000), Principal: RupeesToPaise(100000)}
@@ -435,7 +439,9 @@ func TestNextDue(t *testing.T) {
 }
 
 func TestFlexibleUsesOwnCycle(t *testing.T) {
-	// FLEXIBLE with 15-day cycle: at day 30 that is 2 cycles.
+	// FLEXIBLE with 15-day cycle: cycles fall due on days 1 / 16 / 31 (first on
+	// the loan date). At day 30, ONE full cycle has fallen due since day 1 —
+	// the accrual adds +1 for the same-day first cycle (see AccruedInterest).
 	principal := RupeesToPaise(150000)
 	loan := &Loan{
 		Type:      LoanFlexible,
@@ -447,7 +453,7 @@ func TestFlexibleUsesOwnCycle(t *testing.T) {
 		Status:    StatusActive,
 	}
 	cycles := MonthlyCyclesElapsed(loan.LoanDate, day(2026, 1, 30), loan.cycleDays())
-	if cycles != 2 {
-		t.Fatalf("expected 2 cycles for 15-day flexible loan at day 30, got %d", cycles)
+	if cycles != 1 {
+		t.Fatalf("expected 1 elapsed cycle for 15-day flexible loan at day 30, got %d", cycles)
 	}
 }

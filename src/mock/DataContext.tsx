@@ -62,8 +62,13 @@ export const elapsedDaysSinceLoan = (loanDate: string) => {
   const today = new Date(ty, tm - 1, td);
   return Math.max(0, Math.round((today.getTime() - start.getTime()) / 86400000) + 1);
 };
-/** Number of completed 30-day cycles since the loan date (day 30 = 1, day 59 = 1, day 60 = 2). */
-export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30) => Math.floor(elapsedDaysSinceLoan(loanDate) / cycleDays);
+/** Number of interest cycles FALLEN DUE since the loan date. Cycle k falls due
+ *  at loanDate + k·cycleDays (day k·cycleDays + 1, Day 1 = loan date), so it
+ *  counts from its due day — never a day early: day 30 = 0, day 31 = 1,
+ *  day 60 = 1, day 61 = 2. Keeps accrual in lock-step with the ledger's cycle
+ *  rows and nextDue (previously a cycle accrued one day before it was due). */
+export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30) =>
+  Math.floor(Math.max(0, elapsedDaysSinceLoan(loanDate) - 1) / cycleDays);
 /** Cycle length: Flexible uses its own chosen term, everything else a fixed 30-day cycle. */
 export const cycleDaysFor = (loan: Loan) => (loan.type === 'FLEXIBLE' ? loan.numDays ?? 30 : 30);
 /** Number of instalments to repay a principal at a given instalment amount = ceil(principal ÷ instalment). */

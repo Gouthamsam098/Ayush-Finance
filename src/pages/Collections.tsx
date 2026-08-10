@@ -24,19 +24,18 @@ const totalDaysFor = (l: Loan) => {
   if (l.type === 'FLEXIBLE') return l.numDays ?? 30;
   return 30; // Monthly Interest / Vehicle / Property
 };
-/** Calendar days elapsed since the loan date (Day 1 = loan date), capped at the loan's term. Local-calendar based to match the Ledger. */
-const elapsedDaysFor = (l: Loan) => {
-  const [ly, lm, ld] = l.loanDate.split('-').map(Number);
-  const [ty, tm, td] = todayISO().split('-').map(Number);
-  const start = new Date(ly, lm - 1, ld);
-  const today = new Date(ty, tm - 1, td);
-  const elapsed = Math.round((today.getTime() - start.getTime()) / 86400000) + 1;
-  return Math.max(0, Math.min(elapsed, totalDaysFor(l)));
-};
 /** Last day of the loan's term, local-calendar based (Day 1 = loan date, so end = loan date + term - 1). */
 const loanEndDateFor = (l: Loan) => {
   const [ly, lm, ld] = l.loanDate.split('-').map(Number);
   return isoLocal(new Date(ly, lm - 1, ld + totalDaysFor(l) - 1));
+};
+/** Day-slots actually FUNDED for a daily loan (payment pool ÷ daily amount,
+ *  capped at term). The progress bar shows money collected — NEVER calendar
+ *  days elapsed (a fresh loan with ₹0 paid must read 0/term). Mirrors the
+ *  Ledger's paid-slot count. */
+const paidDaysFor = (l: Loan, pool: number) => {
+  const per = l.dailyAmount ?? 0;
+  return per > 0 ? Math.min(Math.floor(pool / per), totalDaysFor(l)) : 0;
 };
 
 interface CForm { id?: number; customerId: string; loanId: string; amount: string; date: string; mode: PayMode; remarks: string; }
@@ -100,12 +99,13 @@ export default function Collections() {
    *  the oldest unpaid slot (a past date). */
   const onLoanPick = (loanId: string) => {
     const loan = d.loans.find((l) => l.id === Number(loanId));
+    // RECEIPT-DATE RULE: default the payment date to TODAY (when the money is
+    // actually received), clamped to the loan date — never the next scheduled
+    // slot, which can sit weeks ahead after a bulk/advance payment and would
+    // future-date the receipt (corrupting profit-by-month). FIFO allocation
+    // decides which slot the money covers; the date never drives it.
     let date = todayISO();
-    if (loan) {
-      const nd = d.nextDueFor(loan);
-      date = nd ?? todayISO();
-      if (date < loan.loanDate) date = loan.loanDate;
-    }
+    if (loan && date < loan.loanDate) date = loan.loanDate;
     setForm((f) => (f ? { ...f, loanId, date, amount: f.amount || (loan?.dailyAmount ? String(loan.dailyAmount) : '') } : f));
   };
 
@@ -130,10 +130,8 @@ export default function Collections() {
       if (form.date > maxDate) {
         toast(`Payment date cannot be beyond the next due (${fmtDate(maxDate)})`, 'error'); return;
       }
-      const dailyCadence = selectedLoan.type === 'DAILY_COLLECTION' || selectedLoan.type === 'DAILY_INTEREST';
-      if (!form.id && dailyCadence && nd && form.date < nd) {
-        toast(`Already collected for ${fmtDate(form.date)} — next due is ${fmtDate(nd)}`, 'error'); return;
-      }
+      // NOTE: no "date < next due" guard — payments are a FIFO pool; the date is
+      // the receipt date and never drives slot allocation (see LedgerDialog).
     }
     const payload = { loanId: Number(form.loanId), date: form.date, amount: Number(form.amount), mode: form.mode, remarks: form.remarks || undefined };
     try {
@@ -190,7 +188,7 @@ export default function Collections() {
 
       {/* Empty state */}
       {loansToShow.length === 0 ? (
-        <EmptyState typed={typeFilter !== 'ALL'} onAdd={openAdd} />
+        <EmptyState typed={typeFilter !== 'ALL'} onAdd={canEdit('Collections') ? openAdd : undefined} />
       ) : (
       <>
       {/* ── Mobile / tablet: premium card list (touch-first, CRED-style) ── */}
@@ -209,9 +207,11 @@ export default function Collections() {
           <tbody>
             {loansToShow.map((l) => {
               const cust = d.customers.find((c) => c.id === l.customerId);
-              const paid = elapsedDaysFor(l);
               const collected = d.collectedFor(l.id);
-              const totalDue = Math.max(0, paid * (l.dailyAmount ?? 0) - collected);
+              // Progress = instalments FUNDED; shortfall from the shared helper
+              // so it always matches the Ledger's "Total Due" tile.
+              const paid = paidDaysFor(l, collected);
+              const totalDue = d.totalDueForDaily(l);
               const balance = d.outstandingFor(l); // Principal − Collected, for Daily Collection
               return (
                 <Row key={l.id}>
@@ -276,17 +276,33 @@ export default function Collections() {
           </tbody>
         </TableCard>
       ) : (
-        /* ── One row per loan, for every other loan type (incl. ALL) — live progress ── */
+        /* ── One row per loan, for every other loan type (incl. ALL). A term
+              progress bar only makes sense for fixed-term loans (Daily
+              Collection); interest-only loans are OPEN-ENDED — "1/30 days" is
+              meaningless there. The universal, always-truthful column for a
+              collections worklist is NEXT DUE: when the next payment is
+              expected, red when it's already late. Amount-based via
+              d.nextDueFor, so it always matches the Ledger. ── */
         <TableCard note="Amount Paid is the total collected so far for each loan. Open View Report to add, edit, or delete individual payments.">
-          <thead><HeaderRow cols={['Customer', 'Collection Progress', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
+          <thead><HeaderRow cols={['Customer', 'Next Due', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
           <tbody>
             {loansToShow.map((l) => {
               const cust = d.customers.find((c) => c.id === l.customerId);
-              const paid = isDailyLoan(l.type) ? elapsedDaysFor(l) : d.collections.filter((c) => c.loanId === l.id).length;
+              const nd = d.nextDueFor(l);
+              const today = todayISO();
               return (
                 <Row key={l.id}>
                   <Td className="font-medium">{cust?.name ?? '—'}</Td>
-                  <Td><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></Td>
+                  <Td>
+                    {nd ? (
+                      <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                        <span className={nd < today ? 'font-semibold text-danger' : nd === today ? 'font-semibold text-warning-600 dark:text-warning' : ''}>{fmtDate(nd)}</span>
+                        {nd < today ? <Badge tone="err">Overdue</Badge> : nd === today ? <Badge tone="warn">Today</Badge> : null}
+                      </span>
+                    ) : (
+                      <span className="text-muted">Fully collected</span>
+                    )}
+                  </Td>
                   <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
                   <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
                   <Td>{fmtDate(l.loanDate)}</Td>
@@ -385,7 +401,9 @@ function CollectionCard({ loan, d, onView }: { loan: Loan; d: ReturnType<typeof 
   const collected = d.collectedFor(loan.id);
   const outstanding = d.outstandingFor(loan);
   const hasTerm = isDailyLoan(loan.type) || loan.type === 'FLEXIBLE';
-  const paid = isDailyLoan(loan.type) ? elapsedDaysFor(loan) : d.collections.filter((c) => c.loanId === loan.id).length;
+  const paid = isDailyLoan(loan.type)
+    ? paidDaysFor(loan, d.collectedFor(loan.id))
+    : d.collections.filter((c) => c.loanId === loan.id).length;
   const total = totalDaysFor(loan);
   const pct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
   const per = loan.type === 'FLEXIBLE' ? '' : isDailyLoan(loan.type) || loan.type === 'DAILY_INTEREST' ? '/day' : '/mo';
@@ -450,13 +468,13 @@ function CollectionCard({ loan, d, onView }: { loan: Loan; d: ReturnType<typeof 
   );
 }
 
-function EmptyState({ typed, onAdd }: { typed: boolean; onAdd: () => void }) {
+function EmptyState({ typed, onAdd }: { typed: boolean; onAdd?: () => void }) {
   return (
     <div className="anim-pop flex flex-col items-center gap-3 rounded-card border border-slate-200/90 bg-white px-6 py-16 text-center shadow-card dark:border-white/[.07] dark:bg-surface">
       <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-primary-400 to-primary text-white shadow-soft anim-float"><Inbox size={30} /></div>
       <div className="font-display text-lg font-bold">No collections yet</div>
       <p className="max-w-sm text-sm text-muted">{typed ? 'No active loans of this type yet.' : 'Record your first payment to get started.'}</p>
-      <Button onClick={onAdd}><Plus size={16} /> Record first collection</Button>
+      {onAdd && <Button onClick={onAdd}><Plus size={16} /> Record first collection</Button>}
     </div>
   );
 }

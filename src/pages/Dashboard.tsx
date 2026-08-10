@@ -6,8 +6,8 @@ import {
 import { inr, inrShort, todayISO, isoLocal } from '@/lib/format';
 import { useOpenSidebar } from '@/components/layout/AppShell';
 import {
-  ChartCard, PeriodPill, KpiCard, LoanPerformanceChart, CashFlowChart, EfficiencyGauge, C,
-  type LoanPerfPoint, type CashFlowPoint, type KpiTrend,
+  ChartCard, KpiCard, LoanPerformanceChart, CashFlowChart, EfficiencyGauge, RangeToggle, C,
+  type LoanPerfPoint, type CashFlowPoint, type KpiTrend, type Range,
 } from '@/components/dashboard/Charts';
 import {
   Wallet, CalendarClock, IndianRupee, Gauge, TrendingUp, Plus, Menu,
@@ -54,6 +54,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const openSidebar = useOpenSidebar();
   const [overdueQuery, setOverdueQuery] = useState('');
+  const [cashRange, setCashRange] = useState<Range>('month');
+  const [perfRange, setPerfRange] = useState<Range>('6m');
 
   const active = d.loans.filter((l) => l.status === 'ACTIVE');
   const today = todayISO();
@@ -82,9 +84,9 @@ export default function Dashboard() {
   const totalOutstanding = active.reduce((s, l) => s + d.outstandingFor(l), 0);
 
   const todayColl = d.collections.filter((c) => c.date === today).reduce((s, c) => s + c.amount, 0);
+  const totalCollected = d.collections.reduce((s, c) => s + c.amount, 0); // all-time collections
   const dueTodayLoans = active.filter((l) => d.nextDueFor(l) === today);
   const dueToday = dueTodayLoans.reduce((s, l) => s + dueFor(l), 0);
-  const dailyTargetPct = todayColl + dueToday > 0 ? Math.round((todayColl / (todayColl + dueToday)) * 100) : 0;
 
   // Collection efficiency = collected ÷ (collected + still-due) this month.
   // NULL when there's no collection activity at all — showing "100%" with zero
@@ -96,37 +98,65 @@ export default function Dashboard() {
     return lc > 0 ? Math.round((lc / (denom || lc)) * 100) : null;
   })();
 
-  // Cash flow = all cash in − out (used by the Cash Flow Trend chart).
-  //
-  // Profit = INTEREST actually COLLECTED this month. Interest is realised only
-  // when the customer pays it — and only INTEREST-BEHAVING loans collect interest
-  // as a payment. The three economic behaviours differ:
-  //   • Instalment (Daily Collection) & EMI (Vehicle/Property): interest is taken
-  //     UPFRONT at disbursal; monthly/daily collections repay PRINCIPAL only →
-  //     they add ₹0 to profit (no interest is "collected").
-  //   • Interest-only (Daily/Monthly Interest, Flexible, monthly-mode Vehicle/
-  //     Property): each periodic payment IS interest income → counts. A PRINCIPAL
-  //     settlement (returning our own money) does not.
-  // This is keyed off loan BEHAVIOUR, not the collection's kind flag alone —
-  // the Collections page doesn't set kind, so every payment looks like INTEREST
-  // otherwise. Overdue interest collected this month correctly lands this month.
   const loanById = useMemo(() => new Map(d.loans.map((l) => [l.id, l])), [d.loans]);
-  const interestInMonth = (key: string) =>
-    d.collections.reduce((s, c) => {
-      if (c.date.slice(0, 7) !== key) return s;
-      if (c.kind === 'PRINCIPAL') return s;          // principal/settlement is never income
-      const loan = loanById.get(c.loanId);
-      if (!loan || !behavesInterestOnly(loan)) return s; // instalment/EMI collections = principal
-      return s + c.amount;
-    }, 0);
-  const monthInterest = interestInMonth(thisMonth);
-  const lastInterest = interestInMonth(lastMonthKey);
+
+  // ── Profit recognition (realised only as money is COLLECTED) ──────────────
+  // Two economic behaviours, each recognised differently:
+  //  • Interest-only (Daily/Monthly Interest, Flexible, monthly-mode Vehicle/
+  //    Property): every interest-kind payment IS profit; a PRINCIPAL settlement
+  //    (returning our own money) is not.
+  //  • Upfront/EMI (Daily Collection, Vehicle/Property EMI): the customer repays
+  //    MORE than we disbursed; the surplus is profit. We recognise PROFIT-LAST —
+  //    the first `disbursed` collected is principal return (₹0 profit); every
+  //    rupee collected ABOVE `disbursed` is profit, capped at the total margin
+  //    (deduction, or interest for EMI). A foreclosure's big final payment pushes
+  //    cumulative collections over `disbursed`, so its profit portion lands in
+  //    that month automatically.
+  // profitByCollectionId maps each collection → the profit realised by THAT
+  // payment, so summing by month gives profit-per-month correctly.
+  const profitByCollectionId = useMemo(() => {
+    const map = new Map<number, number>();
+    // group collections per loan, chronological (date, then id for same-day order)
+    const byLoan = new Map<number, typeof d.collections>();
+    for (const c of d.collections) {
+      const arr = byLoan.get(c.loanId) ?? [];
+      arr.push(c); byLoan.set(c.loanId, arr);
+    }
+    for (const [loanId, colls] of byLoan) {
+      const loan = loanById.get(loanId);
+      if (!loan) continue;
+      const ordered = [...colls].sort((a, b) => (a.date === b.date ? a.id - b.id : a.date < b.date ? -1 : 1));
+      if (behavesInterestOnly(loan)) {
+        for (const c of ordered) map.set(c.id, c.kind === 'PRINCIPAL' ? 0 : c.amount);
+      } else {
+        // Upfront/EMI, profit-last. Profit band = collections above `disbursed`,
+        // capped at the total margin.
+        const disbursed = loan.disbursed ?? Math.max(0, loan.principal - (loan.deduction ?? 0));
+        const margin = (loan.deduction ?? 0) > 0 ? (loan.deduction ?? 0) : loan.interest; // Daily=deduction, EMI=interest
+        let cum = 0;
+        for (const c of ordered) {
+          const before = cum;
+          cum += c.amount;
+          // profit portion of THIS payment = part landing in (disbursed, disbursed+margin]
+          const lo = Math.max(before, disbursed);
+          const hi = Math.min(cum, disbursed + margin);
+          map.set(c.id, Math.max(0, hi - lo));
+        }
+      }
+    }
+    return map;
+  }, [d.collections, loanById]);
+
+  const profitInMonth = (key: string) =>
+    d.collections.reduce((s, c) => (c.date.slice(0, 7) === key ? s + (profitByCollectionId.get(c.id) ?? 0) : s), 0);
+  const monthInterest = profitInMonth(thisMonth);   // "Profit" this month (name kept for downstream use)
+  const lastInterest = profitInMonth(lastMonthKey);
 
   // ── Section 1 KPIs ──
   const kpis = [
     { icon: Wallet, tint: 'bg-indigo-50 dark:bg-indigo-500/15', iconColor: 'text-indigo-600 dark:text-indigo-400', label: 'Total Outstanding', value: inr(totalOutstanding), hint: 'Across active loans', trend: null as KpiTrend | null },
     { icon: CalendarClock, tint: 'bg-amber-50 dark:bg-amber-500/15', iconColor: 'text-amber-600 dark:text-amber-400', label: 'Due Today', value: inr(dueToday), hint: `${dueTodayLoans.length} loan${dueTodayLoans.length === 1 ? '' : 's'}`, trend: null },
-    { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Collected Today', value: inr(todayColl), hint: `${dailyTargetPct}% of daily target`, trend: null },
+    { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Total Collections', value: inr(totalCollected), hint: `${inr(todayColl)} collected today`, trend: null },
     { icon: Gauge, tint: 'bg-blue-50 dark:bg-blue-500/15', iconColor: 'text-blue-600 dark:text-blue-400', label: 'Collection Efficiency', value: efficiency == null ? '—' : `${efficiency}%`, hint: efficiency == null ? 'No activity yet' : 'This month', trend: efficiency != null && lastEff != null ? trendOf(efficiency, lastEff) : null },
     { icon: TrendingUp, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Profit', value: inr(monthInterest), hint: 'Interest earned this month', trend: trendOf(monthInterest, lastInterest) },
     { icon: Receipt, tint: 'bg-rose-50 dark:bg-rose-500/15', iconColor: 'text-rose-600 dark:text-rose-400', label: 'Expenses', value: inr(monthExp), hint: 'This month', trend: trendOf(monthExp, lastExp) },
@@ -134,37 +164,54 @@ export default function Dashboard() {
 
   // ── Section 2a — Loan Performance: money OUT (disbursed) vs money IN
   //    (collected) per month, so you see business volume + repayment health. ──
-  const loanPerf: LoanPerfPoint[] = useMemo(() => lastMonths(6).map(({ key, label }) => ({
-    month: label,
-    disbursed: d.loans.filter((l) => l.loanDate.slice(0, 7) === key).reduce((s, l) => s + l.principal, 0),
-    collected: d.collections.filter((c) => c.date.slice(0, 7) === key).reduce((s, c) => s + c.amount, 0),
-  })), [d.loans, d.collections]);
+  const loanPerf: LoanPerfPoint[] = useMemo(() => {
+    const n = perfRange === 'month' ? 1 : perfRange === '3m' ? 3 : perfRange === '6m' ? 6 : 12;
+    return lastMonths(n).map(({ key, label }) => ({
+      month: label,
+      disbursed: d.loans.filter((l) => l.loanDate.slice(0, 7) === key).reduce((s, l) => s + l.principal, 0),
+      collected: d.collections.filter((c) => c.date.slice(0, 7) === key).reduce((s, c) => s + c.amount, 0),
+    }));
+  }, [perfRange, d.loans, d.collections]);
 
-  // ── Section 2b — Cash Flow (this month, daily cumulative). "Net Profit" line =
-  //    interest income − expenses (principal repayments are NOT income). ──
+  // ── Section 2b — Cash Flow Trend. Per-PERIOD (not cumulative) so the lines
+  //    spike day-to-day / month-to-month. THREE INDEPENDENT lines: Collections,
+  //    Expenses, and Profit (pure interest earned — matches the Profit KPI).
+  //    Profit does NOT subtract expenses: mixing them made the line dip negative
+  //    on any expense day, which read as a lending loss. Expenses have their own
+  //    line for that story.
+  //    Range: 'month' = every day of the current month; 3m/6m/1y = monthly totals.
+  // Profit realised by a single collection (profit-last / interest rules above).
+  const profitOf = (c: { id: number }) => profitByCollectionId.get(c.id) ?? 0;
   const cashFlow: CashFlowPoint[] = useMemo(() => {
-    const todayDay = Number(today.slice(8, 10));
-    const cById: Record<number, number> = {}, iById: Record<number, number> = {}, eById: Record<number, number> = {};
-    for (const c of d.collections) if (c.date.slice(0, 7) === thisMonth) {
-      const dd = Number(c.date.slice(8, 10));
-      cById[dd] = (cById[dd] ?? 0) + c.amount;
-      // Interest income = interest-kind payment on an interest-behaving loan
-      // (same rule as the Profit KPI, so the chart's Profit line agrees).
-      const loan = loanById.get(c.loanId);
-      if (c.kind !== 'PRINCIPAL' && loan && behavesInterestOnly(loan)) {
-        iById[dd] = (iById[dd] ?? 0) + c.amount;
+    if (cashRange === 'month') {
+      const [y, m] = thisMonth.split('-').map(Number);
+      const days = new Date(y, m, 0).getDate(); // days in this month
+      const coll = new Array(days + 1).fill(0), intr = new Array(days + 1).fill(0), exp = new Array(days + 1).fill(0);
+      for (const c of d.collections) if (c.date.slice(0, 7) === thisMonth) {
+        const dd = Number(c.date.slice(8, 10));
+        coll[dd] += c.amount;
+        intr[dd] += profitOf(c);
       }
+      for (const e of d.expenses) if (e.date.slice(0, 7) === thisMonth) exp[Number(e.date.slice(8, 10))] += e.amount;
+      // HONESTY: plot only days that have actually happened — rendering the
+      // rest of the month as ₹0 fabricates a "collections collapsed" cliff.
+      const lastDay = Math.min(days, Number(todayISO().slice(8, 10)));
+      const pts: CashFlowPoint[] = [];
+      for (let day = 1; day <= lastDay; day++) {
+        pts.push({ label: String(day), collections: coll[day], expenses: exp[day], net: intr[day] });
+      }
+      return pts;
     }
-    for (const e of d.expenses) if (e.date.slice(0, 7) === thisMonth) { const dd = Number(e.date.slice(8, 10)); eById[dd] = (eById[dd] ?? 0) + e.amount; }
-    let cc = 0, ci = 0, ce = 0;
-    const pts: CashFlowPoint[] = [];
-    for (let day = 1; day <= Math.max(todayDay, 1); day++) {
-      cc += cById[day] ?? 0; ci += iById[day] ?? 0; ce += eById[day] ?? 0;
-      pts.push({ label: String(day), collections: cc, expenses: ce, net: ci - ce });
-    }
-    return pts;
+    // monthly totals over N months
+    const n = cashRange === '3m' ? 3 : cashRange === '6m' ? 6 : 12;
+    return lastMonths(n).map(({ key, label }) => {
+      let coll = 0, intr = 0, exp = 0;
+      for (const c of d.collections) if (c.date.slice(0, 7) === key) { coll += c.amount; intr += profitOf(c); }
+      for (const e of d.expenses) if (e.date.slice(0, 7) === key) exp += e.amount;
+      return { label, collections: coll, expenses: exp, net: intr };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thisMonth, today, d.collections, d.expenses, loanById]);
+  }, [cashRange, thisMonth, d.collections, d.expenses, profitByCollectionId]);
 
   // ── Section 3 — Overdue loans (real, ranked by days overdue) ──
   const overdueRows = useMemo(() => active
@@ -186,9 +233,6 @@ export default function Dashboard() {
   const loanPerfView = loanPerf;
   const cashFlowView = cashFlow;
   const overdueView = overdueRows;
-  const sumColl = monthColl;
-  const sumExp = monthExp;
-  const sumNet = monthInterest - monthExp; // net profit (interest − expenses)
   const kpisView = kpis;
   const efficiencyView = efficiency;
 
@@ -221,23 +265,24 @@ export default function Dashboard() {
           {kpisView.map((k) => <KpiCard key={k.label} {...k} />)}
         </div>
 
-        {/* SECTION 2 — Business Performance (2 equal charts) */}
+        {/* SECTION 2 — Business Performance (2 columns: Cash Flow left, Loan Performance right) */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <ChartCard title="Loan Performance" subtitle="(Last 6 Months)" right={<PeriodPill>This Month</PeriodPill>}>
+          {/* flex column + flex-1 wrapper: the chart stretches to the full card
+              height (the row's height is set by the taller right card), instead
+              of leaving dead space under the plot. min-h keeps it sane when the
+              grid collapses to one column on mobile. */}
+          <ChartCard className="flex flex-col" title="Cash Flow Trend" subtitle={`(${cashRange === 'month' ? 'This Month' : cashRange === '3m' ? 'Last 3 Months' : cashRange === '6m' ? 'Last 6 Months' : 'Last 12 Months'})`} right={<RangeToggle value={cashRange} onChange={setCashRange} />}>
+            <div className="min-h-[320px] flex-1">
+              <CashFlowChart data={cashFlowView} height="100%" />
+            </div>
+          </ChartCard>
+
+          <ChartCard title="Loan Performance" subtitle={`(${perfRange === 'month' ? 'This Month' : perfRange === '3m' ? 'Last 3 Months' : perfRange === '6m' ? 'Last 6 Months' : 'Last 12 Months'})`} right={<RangeToggle value={perfRange} onChange={setPerfRange} />}>
             <LoanPerformanceChart data={loanPerfView} />
             <div className="mt-3 grid grid-cols-3 gap-3 border-t border-slate-100 pt-3 dark:border-white/[.06]">
               <Summary label="Active" value={String(activeCount)} color="text-indigo-600 dark:text-indigo-400" />
               <Summary label="Overdue" value={String(overdueCount)} color="text-amber-600 dark:text-amber-400" />
               <Summary label="Closed" value={String(closedCount)} color="text-emerald-600 dark:text-emerald-400" />
-            </div>
-          </ChartCard>
-
-          <ChartCard title="Cash Flow Trend" subtitle="(This Month)" right={<PeriodPill>This Month</PeriodPill>}>
-            <CashFlowChart data={cashFlowView} />
-            <div className="mt-3 grid grid-cols-3 gap-3 border-t border-slate-100 pt-3 dark:border-white/[.06]">
-              <Summary label="Total Collections" value={inr(sumColl)} color="text-emerald-600 dark:text-emerald-400" />
-              <Summary label="Total Expenses" value={inr(sumExp)} color="text-red-500 dark:text-red-400" />
-              <Summary label="Profit" value={inr(sumNet)} color="text-indigo-600 dark:text-indigo-400" />
             </div>
           </ChartCard>
         </div>
@@ -315,7 +360,7 @@ export default function Dashboard() {
             <EfficiencyGauge pct={efficiencyView} />
             <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 dark:bg-white/[.03]">
               <GaugeStat label="Interest" value={inrShort(monthInterest)} color="text-emerald-600 dark:text-emerald-400" />
-              <GaugeStat label="Expenses" value={inrShort(sumExp)} color="text-red-500 dark:text-red-400" />
+              <GaugeStat label="Expenses" value={inrShort(monthExp)} color="text-red-500 dark:text-red-400" />
               <GaugeStat label="Profit" value={inrShort(monthInterest)} color="text-indigo-600 dark:text-indigo-400" />
             </div>
             <button onClick={() => navigate('/reports')} className="mt-4 inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold" style={{ color: C.primary }}>View Collection Reports <ArrowRight size={14} /></button>

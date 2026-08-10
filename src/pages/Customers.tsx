@@ -543,8 +543,11 @@ export default function Customers() {
                       <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1 opacity-60 transition-opacity group-hover:opacity-100">
                           <RowAction icon={<Eye size={16} />} title="View" onClick={() => setView(c)} hover="hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/15" />
-                          <RowAction icon={<Pencil size={16} />} title="Edit" onClick={() => openEdit(c)} hover="hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/15" />
-                          <RowAction icon={<Trash2 size={16} />} title="Delete" onClick={() => setConfirm(c)} hover="hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15" />
+                          {/* Mutations only for edit access — view-only users get an honest read-only row (backend 403s regardless). */}
+                          {canEdit('Customers') && <>
+                            <RowAction icon={<Pencil size={16} />} title="Edit" onClick={() => openEdit(c)} hover="hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/15" />
+                            <RowAction icon={<Trash2 size={16} />} title="Delete" onClick={() => setConfirm(c)} hover="hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15" />
+                          </>}
                         </div>
                       </td>
                     </motion.tr>

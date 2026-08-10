@@ -124,6 +124,23 @@ export default function Settings() {
     finally { setBusyId(null); }
   };
 
+  // Settings is ADMIN-only. The backend guards /users regardless; this stops a
+  // non-admin who deep-links to /settings from seeing a broken page of 403s.
+  if (me && me.role !== 'ADMIN') {
+    return (
+      <div className="flex min-h-full flex-col">
+        <PageHeader icon={<SettingsIcon size={20} />} title="Settings" subtitle="User access & roles" />
+        <div className="grid flex-1 place-items-center p-8">
+          <div className="anim-pop flex max-w-sm flex-col items-center gap-3 rounded-card border border-slate-200/90 bg-white px-8 py-12 text-center shadow-card dark:border-white/[.07] dark:bg-surface">
+            <div className="grid h-14 w-14 place-items-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400"><ShieldCheck size={26} /></div>
+            <div className="font-display text-lg font-bold">Admins only</div>
+            <p className="text-sm text-muted">User management is restricted to administrator accounts. Ask an admin if you need access changed.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-full flex-col">
       <PageHeader
@@ -206,10 +223,11 @@ export default function Settings() {
         </Card>
       </div>
 
-      {/* Add / Edit user */}
+      {/* Add / Edit user — wide: the per-module permission matrix needs the room */}
       <Dialog
         open={!!form}
         onClose={() => setForm(null)}
+        wide
         title={form?.id ? 'Edit user' : 'Add user'}
         subtitle={form?.id ? 'Update details, role or password' : 'Create a new account and assign a role'}
         footer={<><Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button><Button onClick={save} loading={saving}><UserPlus size={15} /> {form?.id ? 'Save changes' : 'Add user'}</Button></>}

@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/toast';
 import { CollectionProgress } from '@/components/CollectionProgress';
 import { StatementView } from '@/components/StatementView';
 import { ApiError } from '@/lib/api';
+import { usePermissions } from '@/lib/permissions';
 import { buildLedgerReportPDF, shareOrDownloadPDF } from '@/lib/pdfReport';
 import { buildSchedule } from '@/lib/loanSchedule';
 import { inr, fmtDate, todayISO, initials, isoLocal, addDays, DAILY_TERM } from '@/lib/format';
@@ -25,6 +26,11 @@ const MODES: PayMode[] = ['CASH', 'UPI', 'BANK', 'CHEQUE'];
 export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }: { loan: Loan; onClose: () => void; statementOnly?: boolean }) {
   const d = useData();
   const toast = useToast();
+  // RBAC: every mutation in this dialog is a Collections write. View-only users
+  // get the full read-only ledger — no Add / edit / Clear Overdue / Foreclose.
+  // The backend rejects unauthorized writes regardless; this keeps the UI honest.
+  const { canEdit: canEditModule } = usePermissions();
+  const canCollect = !statementOnly && canEditModule('Collections');
   // Always render from the LIVE loan record: payments recorded inside this
   // dialog mutate the loan (auto-close on foreclosure, outstanding, next due),
   // while the prop is only a snapshot from when the dialog was opened. Without
@@ -37,6 +43,12 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   const [mode, setMode] = useState<PayMode>('CASH');
   const [kind, setKind] = useState<CollectionKind>('INTEREST');
   const [remarks, setRemarks] = useState('');
+  // When editing a PARTIAL slot, remember the day's scheduled due + amount
+  // already paid, so the dialog can show "paid so far" and "still pending".
+  const [editSlot, setEditSlot] = useState<{ due: number; paid: number } | null>(null);
+  // Clear-overdue mode: one bulk receipt prefilled with everything due till
+  // today (FIFO spreads it across the overdue slots). Display-only flag.
+  const [clearDues, setClearDues] = useState(false);
   // Settlement mode (foreclose / settle principal): a lump-sum payoff, not a
   // scheduled slot — exempt from the "next due slot" date discipline below.
   const [isSettlement, setIsSettlement] = useState(false);
@@ -84,14 +96,15 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   const slotStep = interestOnly ? cadenceDaysForLoan(loan) : stepDays;
   const slotDue = instalment;
   const slotCap = interestOnly ? Number.POSITIVE_INFINITY : totalTerm;
-  // Instalment loans lock a payment to the slot whose dueDate === payment.date;
-  // FIFO stays for row-count/next-slot helpers. Interest-only keeps its model.
-  const useStrictDateMatch = hasSchedule && !interestOnly;
   type Row = {
     sn: number; date: string; due: number; collected: number; remaining: number;
     status: 'Paid' | 'Partial' | 'Overdue' | 'Next due' | 'Settled'; isNext?: boolean;
     mode?: PayMode; receipt?: string; remarks?: string; id?: number; kind?: CollectionKind;
-    payAmount?: number; // the actual payment record on this date (for editing)
+    payAmount?: number; // the actual payment record's amount (for editing)
+    // DUE DATE vs COLLECTION DATE are separate concepts and separate columns:
+    // dueDate = the schedule slot's date; paidOn = the funding payment's actual
+    // receipt date. `date` stays as each view's primary date for sorting/stats.
+    dueDate?: string; paidOn?: string;
   };
 
   const rows = useMemo<Row[]>(() => {
@@ -110,10 +123,6 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       ? loanColls.filter((c) => c.kind !== 'PRINCIPAL').reduce((s, c) => s + c.amount, 0)
       : loanColls.reduce((s, c) => s + c.amount, 0);
     const paidSlots = Math.floor(pool / slotDue);
-    // Append the upcoming actionable slot when every elapsed slot is funded
-    // (fresh loan → slot 1; paid ahead → the first genuinely unpaid slot).
-    const nextSlot = loan.status === 'ACTIVE' && paidSlots >= elapsed && elapsed < slotCap
-      ? Math.min(paidSlots + 1, slotCap) : 0;
     // Foreclosure collapse (CLOSED loans, Bajaj-style): regular rows only up to
     // the last slot fully funded BEFORE the settlement payment, then one
     // "Settled" row carrying the exact payoff (remaining → 0), nothing after.
@@ -143,19 +152,40 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     const collapse = !!settle && fundedBefore < slotCap && (!interestOnly || settleTotal > 0);
     // Slots to render. On a CLOSED loan without collapse, funded-but-not-yet-
     // elapsed slots stay visible (interest paid in advance still happened).
+    // An ACTIVE loan always shows ONE slot beyond max(elapsed, funded) — the
+    // upcoming "Next due" — INCLUDING when the borrower is behind (previously
+    // the table ended at the last overdue cycle and the next due never showed).
+    // Exception: if the borrower is behind and the last elapsed slot falls due
+    // exactly TODAY, that slot already IS the upcoming one — appending another
+    // would show two "Next due" rows.
     const funded = Number.isFinite(slotCap) ? Math.min(paidSlots, slotCap) : paidSlots;
+    const lastElapsedDue = elapsed > 0
+      ? isoLocal(new Date(ly, lm - 1, ld + (flexSameDay ? elapsed - 1 : elapsed) * slotStep))
+      : '';
+    const upcoming = paidSlots < elapsed && lastElapsedDue >= todayISO() ? 0 : 1;
+    // Collapse renders ONLY the slots funded by regular payments — everything
+    // beyond them was cleared by the settlement payoff (the Settled row), so
+    // rendering them as "Overdue" on a CLOSED loan would be a lie.
     const count = collapse
-      ? Math.max(fundedBefore, elapsed)
-      : nextSlot > 0
-        ? nextSlot
-        : loan.status === 'CLOSED'
-          ? Math.max(elapsed, funded)
-          : elapsed;
+      ? fundedBefore
+      : loan.status === 'CLOSED'
+        ? Math.max(elapsed, funded)
+        : Math.min(Math.max(elapsed, paidSlots) + upcoming, slotCap);
     // For interest-only collapse, cap the FIFO pool used by cycle rows to the
     // regular (non-settlement) interest, so pre-settlement rows allocate correctly.
     const rowPool = collapse
       ? (interestOnly ? regularInterestPool : Math.max(0, pool - settle!.amount))
       : pool;
+    // FIFO funding attribution: the same pool that funds the slots, as ordered
+    // payments with cumulative ranges. The record shown on a slot row (mode /
+    // receipt / edit) is the payment that funds it — so a BULK or clear-overdue
+    // payment stamps its mode on EVERY slot it fills, not just the one slot
+    // whose date-window happened to contain the receipt date.
+    const attributable = (interestOnly ? loanColls.filter((c) => c.kind !== 'PRINCIPAL') : loanColls)
+      .filter((c) => !collapse || (interestOnly ? !settleBundle.some((s) => s.id === c.id) : c.id !== settle!.id))
+      .sort((a, b) => (a.date === b.date ? a.id - b.id : a.date < b.date ? -1 : 1));
+    let acc = 0;
+    const funders = attributable.map((c) => { const start = acc; acc += c.amount; return { start, end: acc, c }; });
     const out: Row[] = [];
     for (let k = 1; k <= count; k++) {
       // Paid-ahead slots between the elapsed range and the actionable one are
@@ -168,27 +198,26 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       const alloc = Math.max(0, Math.min(rowPool - (k - 1) * slotDue, slotDue));
       const payableBase = loan.principal;
       const remaining = interestOnly ? 0 : Math.max(0, payableBase - Math.min(rowPool, k * slotDue));
-      // A payment recorded on this exact date (or within the cycle window)
-      // keeps its edit/delete affordance + mode/receipt on this row.
-      const ws = isoLocal(new Date(ly, lm - 1, ld + dueOffsetDays - slotStep + 1));
-      const winColls = useStrictDateMatch
-        ? loanColls.filter((c) => c.date === dueDate)
-        : slotStep === 1
-          ? loanColls.filter((c) => c.date === dueDate)
-          : loanColls.filter((c) => c.date >= ws && c.date <= dueDate);
-      const slotPaid = winColls.reduce((s, c) => s + c.amount, 0);
-      const first = winColls[0];
-      const displayPaid = useStrictDateMatch ? slotPaid : alloc;
+      // Status & amount use FIFO allocation from the pool, so a BULK / advance
+      // payment automatically fills subsequent slots instead of leaving them
+      // "Next due". The payment RECORD follows the same FIFO attribution: the
+      // (last) payment whose cumulative range overlaps this slot carries its
+      // mode/receipt/edit here.
+      const lo = (k - 1) * slotDue;
+      const rec = alloc > 0
+        ? funders.filter((f) => f.end > lo && f.start < lo + alloc).pop()?.c
+        : undefined;
       const status: Row['status'] =
-        (useStrictDateMatch ? slotPaid : alloc) >= slotDue
+        alloc >= slotDue
           ? 'Paid'
-          : (useStrictDateMatch ? slotPaid : alloc) > 0
+          : alloc > 0
             ? 'Partial'
             : dueDate < todayISO() ? 'Overdue' : 'Next due';
       out.push({
-        sn: k, date: dueDate, due: slotDue, collected: displayPaid, remaining, status,
-        mode: first?.mode, receipt: first?.receiptNo, remarks: first?.remarks, id: first?.id, kind: first?.kind,
-        payAmount: first ? slotPaid : undefined,
+        sn: k, date: dueDate, due: slotDue, collected: alloc, remaining, status,
+        mode: rec?.mode, receipt: rec?.receiptNo, remarks: rec?.remarks, id: rec?.id, kind: rec?.kind,
+        payAmount: rec?.amount,
+        dueDate, paidOn: rec?.date, // slot's due vs the funding payment's receipt date
       });
     }
     // The settlement/foreclosure row: ONE row for everything cleared at
@@ -198,7 +227,12 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       out.push({
         sn: out.length + 1, date: settle.date, due: amount, collected: amount, remaining: 0,
         status: 'Settled', mode: settle.mode, receipt: settle.receiptNo,
-        remarks: 'Full settlement', id: settle.id, kind: settle.kind, payAmount: amount,
+        // payAmount must be the RECORD's own amount (what an edit prefills) —
+        // the row's displayed total may span several records (interest bundle)
+        // or include money FIFO'd from earlier payments; writing that computed
+        // total back onto this one record would fabricate money.
+        remarks: 'Full settlement', id: settle.id, kind: settle.kind, payAmount: settle.amount,
+        dueDate: settle.date, paidOn: settle.date,
       });
     }
     // Exactly one actionable row: the first not fully funded (FIFO order).
@@ -208,6 +242,21 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     }
     return out;
   }, [loan, d.collections, slotDue, slotStep, slotCap, interestOnly]);
+
+  // ── Display rows ──────────────────────────────────────────────────────────
+  // For ACTIVE scheduled loans (Daily Collection / EMI) show ONE row per ACTUAL
+  // payment with its REAL amount (so a bulk/advance payment shows e.g. ₹67,000
+  // on the day it was made — not FIFO-split ₹1,000 filler rows), followed by a
+  // single "Next due" row for the next unpaid instalment. Interest-only,
+  // foreclosed (CLOSED), and simple loans keep the slot-based `rows` above.
+  // ONE ledger shape for EVERY loan type: the slot ledger above. Each row is a
+  // DUE (day / EMI / interest cycle) with its FIFO-funded amount; "Due Date"
+  // and "Collection Date" are separate columns, so a BULK payment shows as
+  // Paid on each due it clears while the Collection Date reveals the single
+  // day the money actually arrived. CLOSED loans collapse to funded rows plus
+  // one Settled payoff row. (The old payment-per-row view for scheduled loans
+  // is retired — it hid which dues a bulk covered.)
+  const displayRows = rows;
 
   const collected = d.collectedFor(loan.id);
   const todayStr = todayISO();
@@ -263,35 +312,68 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   const flexInterestDue = d.totalDueForInterestOnly(loan);      // accrued, unpaid interest
   const flexOutstanding = remainingPrincipal + flexInterestDue; // = outstanding
   const openFlexSettle = () => {
-    setEditId(null); setIsSettlement(true); setFlexSettle(true);
+    setEditId(null); setIsSettlement(true); setFlexSettle(true); setEditSlot(null); setClearDues(false);
     setAmount(String(flexOutstanding)); setDate(settlementDate()); setMode('CASH');
     setKind('PRINCIPAL'); setRemarks('Full settlement'); setAddOpen(true);
   };
   /** Foreclosure (non-interest-only): prefill the full outstanding as one payment;
    *  recording it drives outstanding to 0 and the loan auto-closes. Same-day. */
-  const openForeclose = () => { setEditId(null); setIsSettlement(true); setFlexSettle(false); setAmount(String(outstanding)); setDate(settlementDate()); setMode('CASH'); setKind('INTEREST'); setRemarks('Foreclosure — full settlement'); setAddOpen(true); };
-  const openEdit = (c: { id: number; amount: number; date: string; mode: PayMode; kind?: CollectionKind; remarks?: string }) => {
-    setEditId(c.id); setIsSettlement(false); setFlexSettle(false); setAmount(String(c.amount)); setDate(c.date); setMode(c.mode); setKind(c.kind ?? 'INTEREST'); setRemarks(c.remarks ?? ''); setAddOpen(true);
+  const openForeclose = () => { setEditId(null); setIsSettlement(true); setFlexSettle(false); setEditSlot(null); setClearDues(false); setAmount(String(outstanding)); setDate(settlementDate()); setMode('CASH'); setKind('INTEREST'); setRemarks('Foreclosure — full settlement'); setAddOpen(true); };
+  /** Clear overdue: ONE bulk receipt (dated today) prefilled with the unpaid
+   *  portion of STRICTLY overdue slots — due date before today, exactly the
+   *  rows the ledger badges 'Overdue' (a slot due today is 'Next due' and must
+   *  NOT count). Works for every behavior: the slot rows already carry FIFO
+   *  allocation, and their pool excludes PRINCIPAL for interest-only loans.
+   *  It's a normal collection: FIFO fills oldest first, the loan stays ACTIVE. */
+  const overdueRows = rows.filter((r) => r.date < todayStr && r.status !== 'Paid' && r.status !== 'Settled');
+  const overdueTotal = overdueRows.reduce((s, r) => s + Math.max(0, r.due - r.collected), 0);
+  const openClearDues = () => {
+    setEditId(null); setIsSettlement(false); setFlexSettle(false); setEditSlot(null); setClearDues(true);
+    setAmount(String(overdueTotal)); setDate(settlementDate()); setMode('CASH');
+    setKind('INTEREST'); setRemarks('Overdue cleared'); setAddOpen(true);
   };
-  const openRow = (r: { id?: number; date: string; collected: number; payAmount?: number; mode?: PayMode; kind?: CollectionKind; remarks?: string }) => {
-    // Edit the actual payment record on this date (payAmount), not the FIFO
-    // allocation shown in the row's Amount column.
-    if (r.id) openEdit({ id: r.id, amount: r.payAmount ?? r.collected, date: r.date, mode: r.mode ?? 'CASH', kind: r.kind, remarks: r.remarks });
-    else { setEditId(null); setIsSettlement(false); setFlexSettle(false); setAmount(defaultAmount()); setDate(r.date); setMode('CASH'); setKind('INTEREST'); setRemarks(''); setAddOpen(true); }
+  const openEdit = (c: { id: number; amount: number; date: string; mode: PayMode; kind?: CollectionKind; remarks?: string }) => {
+    // PLAIN edit of the payment record: the field holds the record's actual
+    // amount and saves exactly what's typed — up OR down (corrections must be
+    // possible). Collecting a partial slot's PENDING is the Add button's job
+    // (a NEW receipt dated today, FIFO-allocated); topping up an existing
+    // record would re-date money onto an old receipt and, when the funder is
+    // a BULK payment, inflate it from the wrong base.
+    setEditId(c.id); setIsSettlement(false); setFlexSettle(false); setClearDues(false); setEditSlot(null);
+    setAmount(String(c.amount));
+    setDate(c.date); setMode(c.mode); setKind(c.kind ?? 'INTEREST'); setRemarks(c.remarks ?? ''); setAddOpen(true);
+  };
+  const openRow = (r: { id?: number; date: string; paidOn?: string; collected: number; payAmount?: number; mode?: PayMode; kind?: CollectionKind; remarks?: string; due?: number; status?: Row['status']; pending?: number }) => {
+    // Edit the actual payment record (payAmount), not the FIFO allocation shown
+    // in the row's Amount column. The edit form must carry the payment's REAL
+    // receipt date (paidOn) — never the slot's due date — or saving would
+    // silently re-date the payment onto the schedule.
+    if (r.id) {
+      openEdit({ id: r.id, amount: r.payAmount ?? r.collected, date: r.paidOn ?? r.date, mode: r.mode ?? 'CASH', kind: r.kind, remarks: r.remarks });
+    }
+    else {
+      // Adding the pending amount for a PARTIAL slot: carry the same due/paid
+      // context so the dialog shows the Due / Paid / Pending breakdown.
+      const slot = r.status === 'Partial' && r.due != null ? { due: r.due, paid: r.collected } : null;
+      setEditId(null); setIsSettlement(false); setFlexSettle(false); setEditSlot(slot); setClearDues(false);
+      // RECEIPT-DATE RULE: a collection is dated when the money is actually
+      // received — default TODAY (clamped to the loan date), never the slot's
+      // scheduled due date. After a bulk/advance payment the next slot can sit
+      // weeks ahead; auto-dating a fresh receipt there corrupts profit-by-month
+      // and the ledger. Allocation to slots is FIFO — the date never drives it.
+      const receiptDate = todayISO() < minPaymentDate ? minPaymentDate : todayISO();
+      setAmount(r.pending != null ? String(r.pending) : defaultAmount()); setDate(receiptDate); setMode('CASH'); setKind('INTEREST'); setRemarks(''); setAddOpen(true);
+    }
   };
   const addColl = async () => {
+    if (!canCollect) { toast('You have view-only access to Collections', 'error'); return; }
     if (!Number(amount)) { toast('Enter an amount', 'error'); return; }
     if (date < minPaymentDate) { toast(`Payment date cannot be before the loan date (${fmtDate(minPaymentDate)})`, 'error'); return; }
     if (date > maxPaymentDate) { toast(`Payment date cannot be beyond the next due (${fmtDate(maxPaymentDate)})`, 'error'); return; }
-    // Daily loans collect one slot per day: a day that is already fully funded
-    // cannot be paid again — the picker advances to the next unpaid slot. A
-    // settlement/foreclosure is a lump-sum payoff and is exempt; a payment on
-    // kind=PRINCIPAL (settling principal) likewise isn't a scheduled slot.
-    const dailyCadence = loan.type === 'DAILY_COLLECTION' || loan.type === 'DAILY_INTEREST';
-    if (!editId && !isSettlement && kind !== 'PRINCIPAL' && dailyCadence && nextDue && date < nextDue) {
-      toast(`Already collected for ${fmtDate(date)} — next due is ${fmtDate(nextDue)}`, 'error');
-      return;
-    }
+    // NOTE: no "date < next due" guard. Payments are a FIFO pool — the date is
+    // the RECEIPT date (when money arrived), and allocation to schedule slots
+    // is independent of it. Blocking dates before the next due slot forced
+    // advance payers' receipts to be future-dated, corrupting profit-by-month.
     // kind only matters for interest-only loans; always send INTEREST otherwise.
     const k: CollectionKind = interestOnly ? kind : 'INTEREST';
     try {
@@ -310,6 +392,8 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
         }
         toast('Loan settled — interest + principal cleared');
       } else if (editId) {
+        // Plain edit: save the record exactly as typed (never top-up math — a
+        // partial slot's pending is collected via Add as a NEW receipt).
         await d.updateCollection(editId, { amount: Number(amount), date, mode, kind: k, remarks: remarks || undefined });
         toast('Collection updated');
       } else {
@@ -321,7 +405,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       toast(e instanceof ApiError ? e.message : 'Failed to save collection', 'error');
       return; // keep the form open so the user can correct it
     }
-    setAddOpen(false); setEditId(null); setFlexSettle(false); setAmount(defaultAmount()); setRemarks('');
+    setAddOpen(false); setEditId(null); setFlexSettle(false); setEditSlot(null); setClearDues(false); setAmount(defaultAmount()); setRemarks('');
   };
 
   // Per-period interest label, cadence-aware: Daily / Monthly / Every N days.
@@ -361,8 +445,10 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     const unit = isMonthly ? 'Month' : 'Day';
     if (!isSimple) {
       tableTitle = `${unit}-by-${unit} Ledger`;
-      tableHead = [unit, 'Collection Date', `${isMonthly ? 'Monthly' : 'Daily'} Due`, 'Amount', 'Principal Remaining', 'Payment Mode', 'Status', 'Remarks'];
-      tableBody = rows.filter((r) => r.date <= todayISO()).map((r) => [r.sn, fmtDate(r.date), inr(r.due), r.collected ? inr(r.collected) : '—', inr(r.remaining), r.mode ?? '—', r.status, r.remarks ?? '—']);
+      tableHead = [unit, 'Due Date', 'Collection Date', `${isMonthly ? 'Monthly' : 'Daily'} Due`, 'Amount', 'Principal Remaining', 'Payment Mode', 'Status', 'Remarks'];
+      // Elapsed slots + anything already funded (a bulk can pay slots whose due
+      // dates are still in the future — those Paid rows belong in the report).
+      tableBody = displayRows.filter((r) => r.date <= todayISO() || r.collected > 0).map((r) => [r.sn, fmtDate(r.dueDate ?? r.date), r.paidOn ? fmtDate(r.paidOn) : '—', inr(r.due), r.collected ? inr(r.collected) : '—', inr(r.remaining), r.mode ?? '—', r.status, r.remarks ?? '—']);
     } else {
       tableTitle = 'Payment History';
       tableHead = ['Date', 'Amount', 'Mode'];
@@ -422,7 +508,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   };
 
   return (
-    <Dialog open onClose={onClose} title={`${statementOnly && !isSimple ? 'Loan Statement' : 'Collection Ledger'} · ${loan.loanNumber}`} subtitle={isSimple ? `${LOAN_LABELS[loan.type]} · Payment history` : `${LOAN_LABELS[loan.type]} · ${totalTerm} ${isMonthly ? 'months' : 'days'}`} wide
+    <Dialog open onClose={onClose} title={`${statementOnly && !isSimple ? 'Loan Statement' : 'Collection Ledger'} · ${loan.loanNumber}`} subtitle={isSimple ? `${LOAN_LABELS[loan.type]} · Payment history` : `${LOAN_LABELS[loan.type]} · ${totalTerm} ${isMonthly ? 'months' : 'days'}`} xl
       footer={<><Button variant="ghost" onClick={generateReport} title="Download or share a PDF"><FileDown size={15} /> {tab === 'statement' ? 'Generate Statement' : 'Generate Report'}</Button><Button onClick={onClose}>Close</Button></>}>
       {/* Customer information */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
@@ -491,25 +577,32 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       </div>
       )}
 
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-sm text-muted">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 basis-[260px] text-sm text-muted">
           {interestOnly
             ? `Interest payments since ${fmtDate(loan.loanDate)} · ${loan.type === 'DAILY_INTEREST' ? 'daily' : loan.type === 'MONTHLY_INTEREST' ? 'monthly' : `every ${cadenceDaysForLoan(loan)} days`} · principal stays until settled`
             : isSimple
               ? `Payment history for this loan · ${progressTotal}-day cycle`
               : `${isMonthly ? 'Monthly' : 'Daily'} ledger from ${fmtDate(loan.loanDate)} · ${totalTerm} ${isMonthly ? 'months' : 'days'} · instalments repay the principal`}
         </div>
-        {!statementOnly && (
-          <div className="flex flex-wrap items-center gap-2">
+        {canCollect && (
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {/* Clear everything overdue in one bulk receipt — loan stays ACTIVE.
+                Hidden when nothing is due (or the loan is closed). */}
+            {loan.status === 'ACTIVE' && overdueTotal > 0 && (
+              <Button onClick={openClearDues} className="!bg-warning-600 !px-3 !py-1.5 text-xs whitespace-nowrap transition-transform hover:scale-105 hover:!bg-warning-600/90" title={`Collect everything due till today (${inr(overdueTotal)}) as one bulk payment — the loan stays active`}>
+                Clear Overdue · {inr(overdueTotal)}
+              </Button>
+            )}
             {/* Interest-only (Daily/Monthly Interest + Flexible): settle the FULL
                 outstanding (accrued interest + principal) in one shot → auto-close. */}
             {interestOnly && flexOutstanding > 0 && (
-              <Button onClick={openFlexSettle} className="!bg-emerald-600 !px-3 !py-1.5 text-xs transition-transform hover:scale-105" title={`Collect the full outstanding (${inr(flexOutstanding)}) — interest + principal — and close the loan`}>
+              <Button onClick={openFlexSettle} className="!bg-emerald-600 !px-3 !py-1.5 text-xs whitespace-nowrap transition-transform hover:scale-105" title={`Collect the full outstanding (${inr(flexOutstanding)}) — interest + principal — and close the loan`}>
                 Settle & close · {inr(flexOutstanding)}
               </Button>
             )}
             {!interestOnly && outstanding > 0 && (
-              <Button onClick={openForeclose} className="!bg-emerald-600 !px-3 !py-1.5 text-xs transition-transform hover:scale-105" title="Record the full outstanding and close the loan">
+              <Button onClick={openForeclose} className="!bg-emerald-600 !px-3 !py-1.5 text-xs whitespace-nowrap transition-transform hover:scale-105" title="Record the full outstanding and close the loan">
                 Foreclose
               </Button>
             )}
@@ -524,6 +617,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
         <table className="w-full min-w-[760px] text-sm">
           <thead><tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 [&>th]:shadow-[0_1px_0_rgba(15,23,42,0.08)] dark:[&>th]:bg-slate-800">
             <th>{loan.type === 'FLEXIBLE' ? 'Cycle' : isMonthly || loan.type === 'MONTHLY_INTEREST' ? 'Month' : 'Day'}</th>
+            <th>Due Date</th>
             <th>Collection Date</th>
             <th>{interestOnly ? 'Interest Due' : loan.type === 'FLEXIBLE' ? 'Amount Due' : `${isMonthly ? 'Monthly' : 'Daily'} Due`}</th>
             <th>Amount</th>
@@ -531,33 +625,38 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
             <th>Payment Mode</th><th>Status</th><th className="text-right">Action</th><th>Remarks</th>
           </tr></thead>
           <tbody>
-            {rows.map((r) => {
+            {displayRows.map((r) => {
               const border = r.status === 'Paid' || r.status === 'Settled' ? 'border-l-success' : r.status === 'Partial' ? 'border-l-warning' : r.status === 'Overdue' ? 'border-l-danger' : 'border-l-primary';
               return (
                 <tr key={r.sn} className={`border-t border-l-4 border-slate-100 dark:border-white/[.06] ${border} ${r.isNext ? 'bg-primary-50/40 dark:bg-primary/[.06]' : ''}`}>
                   <td className="px-3 py-2 text-muted">{r.sn}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.date)}{r.date === todayStr && <span className="ml-1 text-[10px] font-bold text-primary">• today</span>}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{fmtDate(r.dueDate ?? r.date)}{(r.dueDate ?? r.date) === todayStr && <span className="ml-1 text-[10px] font-bold text-primary">• today</span>}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{r.paidOn ? <>{fmtDate(r.paidOn)}{r.paidOn === todayStr && <span className="ml-1 text-[10px] font-bold text-primary">• today</span>}</> : <span className="text-muted">—</span>}</td>
                   <td className="px-3 py-2">{inr(r.due)}</td>
                   <td className="px-3 py-2">{r.collected ? inr(r.collected) : '—'}</td>
                   {!interestOnly && <td className="px-3 py-2 font-medium">{inr(r.remaining)}</td>}
                   <td className="px-3 py-2">{r.mode ? <Badge tone="neutral">{r.mode}</Badge> : <span className="text-muted">—</span>}</td>
                   <td className="px-3 py-2 whitespace-nowrap"><Badge tone={r.status === 'Paid' || r.status === 'Settled' ? 'ok' : r.status === 'Partial' ? 'warn' : r.status === 'Overdue' ? 'err' : 'info'}><span className="whitespace-nowrap">{r.status}</span></Badge></td>
                   <td className="px-3 py-2 text-right">
-                    {statementOnly ? <span className="text-muted">—</span> : (
+                    {!canCollect ? <span className="text-muted">—</span> : (
                       <div className="flex items-center justify-end gap-1">
-                        {r.isNext && loan.status === 'ACTIVE' && (
-                          <Button variant="success" onClick={() => openRow({ date: r.date, collected: 0 })}
-                            className="!px-2 !py-0.5 !text-[11px] whitespace-nowrap" title="Record this collection">
+                        {/* EVERY unpaid slot on an ACTIVE loan is collectable —
+                            Add shows on all Overdue/Partial/Next-due rows, not
+                            just the first (payments are FIFO, so any of them
+                            records against the oldest dues anyway). */}
+                        {loan.status === 'ACTIVE' && r.status !== 'Paid' && r.status !== 'Settled' && (
+                          <Button variant="success" onClick={() => openRow(
+                              r.status === 'Partial'
+                                ? { date: r.date, collected: r.collected, due: r.due, status: 'Partial', pending: Math.max(0, r.due - r.collected) }
+                                : { date: r.date, collected: 0 })}
+                            className="!px-2 !py-0.5 !text-[11px] whitespace-nowrap" title={r.status === 'Partial' ? 'Collect the pending amount for this slot' : 'Record this collection'}>
                             <Plus size={11} /> Add
                           </Button>
                         )}
-                        {r.id ? (
+                        {r.id && (
                           <button onClick={() => openRow(r)} title="Edit this payment" aria-label="Edit payment"
                             className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-primary-50 hover:text-primary"><Pencil size={14} /></button>
-                        ) : !r.isNext ? (
-                          <button onClick={() => openRow(r)} title="Record payment for this slot" aria-label="Record payment"
-                            className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-primary-50 hover:text-primary"><Pencil size={14} /></button>
-                        ) : null}
+                        )}
                       </div>
                     )}
                   </td>
@@ -565,8 +664,8 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
                 </tr>
               );
             })}
-            {rows.length === 0 && (
-              <tr><td colSpan={interestOnly ? 8 : 9} className="px-3 py-6 text-center text-muted">No schedule to show yet.</td></tr>
+            {displayRows.length === 0 && (
+              <tr><td colSpan={interestOnly ? 9 : 10} className="px-3 py-6 text-center text-muted">No schedule to show yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -574,7 +673,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       </>
       )}
 
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={editId ? 'Edit collection' : isSettlement ? 'Settle & close' : 'Add collection'} subtitle={cust?.name ? `${cust.name} · ${loan.loanNumber}` : loan.loanNumber}
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={editId ? 'Edit collection' : isSettlement ? 'Settle & close' : clearDues ? 'Clear overdue' : 'Add collection'} subtitle={cust?.name ? `${cust.name} · ${loan.loanNumber}` : loan.loanNumber}
         footer={<><Button variant="ghost" onClick={() => setAddOpen(false)}>Cancel</Button>
           <Button variant={isSettlement ? 'success' : 'primary'} onClick={addColl}>
             {editId ? 'Save changes' : isSettlement ? <><CheckCircle2 size={15} /> Settle &amp; close</> : <><Plus size={15} /> Record payment</>}
@@ -586,6 +685,33 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
               <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
               <div className="text-[12px] leading-snug text-emerald-800 dark:text-emerald-300">
                 <span className="font-bold">Full settlement.</span> The entire outstanding{interestOnly ? ' (principal + accrued interest)' : ''} is collected and the loan is closed.
+              </div>
+            </div>
+          ) : clearDues ? (
+            <div className="rounded-xl border-[0.5px] border-amber-200 bg-amber-50 px-3.5 py-3 dark:border-amber-500/25 dark:bg-amber-500/10">
+              <div className="flex items-center gap-2 text-[12px] font-bold text-amber-700 dark:text-amber-300">
+                <Wallet size={15} className="shrink-0" /> Clearing all overdue
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-center">
+                <div><div className="text-[11px] text-muted">{interestOnly ? 'Cycles overdue' : `Overdue ${isMonthly ? 'months' : 'days'}`}</div><div className="font-display text-[15px] font-bold tabular-nums text-ink">{overdueRows.length}</div></div>
+                <div><div className="text-[11px] text-muted">Total overdue</div><div className="font-display text-[15px] font-bold tabular-nums text-amber-600 dark:text-amber-400">{inr(overdueTotal)}</div></div>
+              </div>
+              <div className="mt-2 text-[11px] leading-snug text-muted">
+                One bulk receipt dated today — it automatically covers the oldest {isMonthly ? 'months' : 'days'} first. The loan stays active.
+              </div>
+            </div>
+          ) : editSlot ? (
+            <div className="rounded-xl border-[0.5px] border-amber-200 bg-amber-50 px-3.5 py-3 dark:border-amber-500/25 dark:bg-amber-500/10">
+              <div className="flex items-center gap-2 text-[12px] font-bold text-amber-700 dark:text-amber-300">
+                <Wallet size={15} className="shrink-0" /> Partial payment for this day
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+                <div><div className="text-[11px] text-muted">Due</div><div className="font-display text-[15px] font-bold tabular-nums text-ink">{inr(editSlot.due)}</div></div>
+                <div><div className="text-[11px] text-muted">Paid so far</div><div className="font-display text-[15px] font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{inr(editSlot.paid)}</div></div>
+                <div><div className="text-[11px] text-muted">Pending</div><div className="font-display text-[15px] font-bold tabular-nums text-amber-600 dark:text-amber-400">{inr(Math.max(0, editSlot.due - editSlot.paid))}</div></div>
+              </div>
+              <div className="mt-2 text-[11px] leading-snug text-muted">
+                Collecting the <span className="font-semibold text-ink">{inr(Math.max(0, editSlot.due - editSlot.paid))}</span> pending for this day — this completes the day’s full {inr(editSlot.due)}.
               </div>
             </div>
           ) : editId ? null : interestOnly ? (
@@ -640,7 +766,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           {/* Date + remarks */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input label="Date" type="date" value={date}
-              min={!editId && !isSettlement && (loan.type === 'DAILY_COLLECTION' || loan.type === 'DAILY_INTEREST') && nextDue ? (nextDue > minPaymentDate ? nextDue : minPaymentDate) : minPaymentDate}
+              min={minPaymentDate}
               max={maxPaymentDate} onChange={(e) => setDate(e.target.value)}
               error={date && date < minPaymentDate ? `On/after loan date (${fmtDate(minPaymentDate)})` : date && date > maxPaymentDate ? `Not beyond next due (${fmtDate(maxPaymentDate)})` : undefined} />
             <Input label="Remarks" placeholder="Optional note" value={remarks} onChange={(e) => setRemarks(e.target.value)} />

@@ -72,11 +72,22 @@ Six `LoanType`s collapse into **three economic behaviors** — get this wrong an
 
 Key derived helpers (frontend `DataContext`, mirrored on backend `Loan`):
 - `elapsedDaysSinceLoan(loanDate)` — calendar days, Day 1 = loan date, uncapped.
-- `monthlyCyclesElapsed(loanDate, cycleDays)` — completed cycles (day 30 → 1, day 59 → 1, day 60 → 2).
+- `monthlyCyclesElapsed(loanDate, cycleDays)` — cycles **fallen due**: cycle k falls due at loanDate + k·cycleDays (day k·cycleDays + 1), so it counts from its due day, never a day early (day 30 → 0, day 31 → 1, day 60 → 1, day 61 → 2). Accrual must always match the ledger's cycle rows / nextDue.
 - `outstandingFor(loan)` — the type dispatch above; returns 0 for `CLOSED` loans (except `DAILY_COLLECTION`).
 - `interest = calcInterest(principal, rate) = round(principal × rate / 100)`.
 
 Extend these helpers rather than recalculating inline in pages, and preserve the three-behavior grouping. **If you change loan math on one side, change it on the other** — the two implementations must stay in lock-step.
+
+## Collections, profit & ledger — binding rules (MANDATORY)
+
+These rules exist because violating any one of them silently corrupts money reporting. Do not weaken them for UX convenience.
+
+1. **Receipt-date rule.** A collection's `date` is when the money was **actually received** — it defaults to today (clamped to ≥ `loanDate`), never to a schedule slot's due date. Allocation of payments to schedule slots is **FIFO from the total pool** — the date NEVER drives allocation, and no guard may force `date ≥ nextDue` (after a bulk payment the next slot sits weeks ahead; forcing receipts there future-dates them and corrupts profit-by-month). Max date stays `max(today+1, nextDue)` (explicit forward-dating allowed, never the default). Applies to both entry points: `LedgerDialog.openRow` and `Collections.tsx onLoanPick/save`.
+2. **Profit recognition (profit-last).** Implemented in `Dashboard.tsx profitByCollectionId` — profit is attributed **per collection**, bucketed by its receipt month:
+   - *Interest-only behavior* (`behavesInterestOnly`: Daily/Monthly Interest, Flexible, EMI types in monthly-interest mode) → every non-`PRINCIPAL` payment is profit in full; `PRINCIPAL` payments are never profit.
+   - *Upfront/EMI behavior* (Daily Collection, EMI-mode Vehicle/Property) → profit = the portion of **cumulative** collections falling in the band `(disbursed, disbursed + margin]`, where `margin = deduction` (Daily) or `interest` (EMI). Early payments recover the disbursed cash (₹0 profit); the tail is profit. Foreclosure needs no special case — the payoff payment crosses the band and carries the remaining margin. Lifetime profit always equals the margin, capped even on overpay.
+3. **Ledger display — ONE slot ledger for every loan type** (`rows` in `LedgerDialog.tsx`; `displayRows` is an alias). Each row is a DUE (day / EMI / interest cycle) with **two separate date columns**: `Due Date` (the schedule slot) and `Collection Date` (`paidOn` — the funding payment's actual receipt date). Amounts AND payment records follow **FIFO attribution**: a bulk payment renders as `Paid` on every due it clears, each row carrying the bulk's mode/receipt/edit and its single receipt date (this is deliberate — the retired payment-per-row view hid which dues a bulk covered). Rendered range: all funded slots + every elapsed unpaid slot (`Overdue`) + **one** upcoming `Next due` (suppressed when the last elapsed slot is due today — never two upcoming rows). Every unpaid row on an ACTIVE loan gets an Add action (FIFO makes them equivalent). CLOSED loans **collapse**: only regular-funded rows render, then one `Settled` payoff row — never `Overdue` ghosts after settlement. Editing a payment from a slot row must carry `paidOn` (the receipt date), never the slot's due date.
+4. **Edge-case matrix (test before done).** Any change touching collections, ledger rendering, or profit must be re-verified against: each of the three behaviors × {normal cadence, partial payment, bulk/advance payment, payment recorded *after* a bulk (must default to today), overdue, foreclosure/settlement}, plus month-bucketing of profit and same-day ordering (sort by `date`, then `id`). Then run `npm run build`. Fixing one cell of this matrix while breaking another is the historical failure mode here.
 
 ## Money is never a float
 

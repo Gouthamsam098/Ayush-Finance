@@ -321,18 +321,24 @@ export default function Loans() {
     return nd ? daysUntil(nd) : null;
   };
 
+  /** Daily-cadence loans (Daily Collection, Daily Interest) are due EVERY day, so
+   *  "due within 3 days" is meaningless noise for them — they're always ≤3 days
+   *  out. The card only counts loans with a periodic (monthly/EMI) schedule
+   *  genuinely approaching. Overdue still applies to daily loans separately. */
+  const countsForSoon = (l: Loan) => !isDailyLoan(l.type) && l.type !== 'DAILY_INTEREST';
+
   const stats = useMemo(() => ({
     count: d.loans.length,
     outstanding: d.loans.reduce((s, l) => s + d.outstandingFor(l), 0),
     overdue: d.loans.filter((l) => { const dd = dueInDaysOf(l); return dd != null && dd < 0; }).length,
-    soon: d.loans.filter((l) => { const dd = dueInDaysOf(l); return dd != null && dd >= 0 && dd <= 3; }).length,
+    soon: d.loans.filter((l) => { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); return dd != null && dd >= 0 && dd <= 3; }).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [d.loans, d.collections]);
 
   /** Does a loan pass the toolbar state (urgency, query) plus a filter set? */
   const loanPasses = (l: Loan, f: LoanFilters): boolean => {
     if (urgency === 'overdue') { const dd = dueInDaysOf(l); if (dd == null || dd >= 0) return false; }
-    if (urgency === 'soon') { const dd = dueInDaysOf(l); if (dd == null || dd < 0 || dd > 3) return false; }
+    if (urgency === 'soon') { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); if (dd == null || dd < 0 || dd > 3) return false; }
     if (query.trim()) {
       const q = query.toLowerCase();
       if (!custName(l.customerId).toLowerCase().includes(q)
@@ -588,18 +594,21 @@ export default function Loans() {
                     {menuFor === l.id && (
                       <div className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900 lg:left-0 lg:right-auto">
                           <MenuItem icon={<FileText size={14} />} label="Statement" onClick={() => { setMenuFor(null); setLedger(l); }} />
-                          <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { setMenuFor(null); editLoan(l); }} />
-                          {l.status === 'ACTIVE' ? (
-                            <MenuItem icon={<CheckCircle2 size={14} />} label="Close loan" onClick={() => {
-                              setMenuFor(null);
-                              const outstanding = d.outstandingFor(l);
-                              if (outstanding > 0) { toast(`Cannot close — outstanding balance of ${inr(outstanding)} remains`, 'error'); return; }
-                              setCloseTarget(l);
-                            }} />
-                          ) : (
-                            <MenuItem icon={<RotateCcw size={14} />} label="Reopen loan" onClick={() => { setMenuFor(null); d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }} />
-                          )}
-                          <MenuItem danger icon={<Trash2 size={14} />} label="Delete" onClick={() => { setMenuFor(null); setConfirm(l); }} />
+                          {/* Mutations only for edit access — Statement stays for viewers. */}
+                          {canEdit('Loans') && <>
+                            <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { setMenuFor(null); editLoan(l); }} />
+                            {l.status === 'ACTIVE' ? (
+                              <MenuItem icon={<CheckCircle2 size={14} />} label="Close loan" onClick={() => {
+                                setMenuFor(null);
+                                const outstanding = d.outstandingFor(l);
+                                if (outstanding > 0) { toast(`Cannot close — outstanding balance of ${inr(outstanding)} remains`, 'error'); return; }
+                                setCloseTarget(l);
+                              }} />
+                            ) : (
+                              <MenuItem icon={<RotateCcw size={14} />} label="Reopen loan" onClick={() => { setMenuFor(null); d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }} />
+                            )}
+                            <MenuItem danger icon={<Trash2 size={14} />} label="Delete" onClick={() => { setMenuFor(null); setConfirm(l); }} />
+                          </>}
                         </div>
                     )}
                   </div>

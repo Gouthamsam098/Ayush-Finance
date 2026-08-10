@@ -19,7 +19,8 @@
       "Bash(curl -s --max-time 3 -o /dev/null http://localhost:5173)",
       "Bash(echo \"tsc-exit=$?\")",
       "Bash(curl -s --max-time 4 -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:5173)",
-      "Bash(curl -s --max-time 4 -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:4000/health)"
+      "Bash(curl -s --max-time 4 -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:4000/health)",
+      "PowerShell(docker info --format \"{{.ServerVersion}}\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\Goutham.P\\Downloads"

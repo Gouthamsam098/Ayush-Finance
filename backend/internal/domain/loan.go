@@ -277,13 +277,20 @@ func ElapsedDaysSinceLoan(loanDate, now time.Time) int {
 	return days
 }
 
-// MonthlyCyclesElapsed returns the number of completed interest cycles
-// (day 30 -> 1, day 59 -> 1, day 60 -> 2).
+// MonthlyCyclesElapsed returns the number of interest cycles FALLEN DUE. Cycle
+// k falls due at loanDate + k·cycleDays (day k·cycleDays + 1, Day 1 = loan
+// date), so it counts from its due day — never a day early: day 30 -> 0,
+// day 31 -> 1, day 60 -> 1, day 61 -> 2. Mirrors the frontend
+// monthlyCyclesElapsed exactly (accrual must match the ledger's cycle rows).
 func MonthlyCyclesElapsed(loanDate, now time.Time, cycleDays int) int {
 	if cycleDays <= 0 {
 		cycleDays = standardCycleDays
 	}
-	return ElapsedDaysSinceLoan(loanDate, now) / cycleDays
+	days := ElapsedDaysSinceLoan(loanDate, now) - 1
+	if days < 0 {
+		days = 0
+	}
+	return days / cycleDays
 }
 
 // TotalDueForDaily is the scheduled shortfall for a DAILY_COLLECTION loan.
