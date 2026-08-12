@@ -1,6 +1,6 @@
 import type { Loan } from '@/mock/DataContext';
 import { isDailyLoan, isInstalmentLoan, isEmiLoan } from '@/mock/DataContext';
-import { addDays, isoLocal } from '@/lib/format';
+import { addDays, addMonths, isoLocal } from '@/lib/format';
 
 /** One row of a Bajaj-style repayment schedule. */
 export interface ScheduleRow {
@@ -111,7 +111,7 @@ export function buildSchedule(loan: Loan, opts?: ScheduleOpts): ScheduleRow[] {
       const closing = Math.max(0, openPrincipal - prinPortion);
       rows.push({
         sn: i + 1,
-        dueDate: stepDate(loan.loanDate, i + 1, 30),
+        dueDate: addMonths(loan.loanDate, i + 1, 0),
         opening: openPrincipal,
         instalment: emi,
         principal: prinPortion,

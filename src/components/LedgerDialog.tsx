@@ -12,7 +12,7 @@ import { ApiError } from '@/lib/api';
 import { usePermissions } from '@/lib/permissions';
 import { buildLedgerReportPDF, shareOrDownloadPDF } from '@/lib/pdfReport';
 import { buildSchedule } from '@/lib/loanSchedule';
-import { inr, fmtDate, todayISO, initials, isoLocal, addDays, DAILY_TERM } from '@/lib/format';
+import { inr, fmtDate, todayISO, initials, isoLocal, addDays, addMonths, DAILY_TERM } from '@/lib/format';
 import { Plus, Pencil, Phone, FileDown, LayoutList, Table2, IndianRupee, Banknote, Smartphone, Landmark, ScrollText, Calendar, CheckCircle2, Wallet } from 'lucide-react';
 
 /** Icon per payment mode for the segmented picker. */
@@ -69,6 +69,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   // Tenure-mode one keeps the EMI schedule.
   const emiLoan = behavesEmi(loan);            // Vehicle / Property (Tenure) — monthly EMI
   const isMonthly = emiLoan;                    // 30-day cadence rows
+  const hasMonthlyCadence = isMonthly || loan.type === 'MONTHLY_INTEREST';
   const interestOnly = behavesInterestOnly(loan); // Daily/Monthly Interest, Flexible, monthly-mode Vehicle/Property
   const hasSchedule = isInstalmentLoan(loan.type) || emiLoan; // fixed instalment schedule
   // "Simple" = no fixed schedule: Flexible + interest-only → payment-history view.
@@ -106,6 +107,8 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     // receipt date. `date` stays as each view's primary date for sorting/stats.
     dueDate?: string; paidOn?: string;
   };
+
+  const todayStr = todayISO();
 
   const rows = useMemo<Row[]>(() => {
     if (slotDue <= 0) return [];
@@ -194,10 +197,25 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       // Slot k's due date: loanDate + k·step normally; Flexible shifts one cycle
       // earlier so cycle 1 lands on the loan date itself.
       const dueOffsetDays = flexSameDay ? (k - 1) * slotStep : k * slotStep;
-      const dueDate = isoLocal(new Date(ly, lm - 1, ld + dueOffsetDays));
+      const dueDate = hasMonthlyCadence
+        ? addMonths(loan.loanDate, k, 0)
+        : isoLocal(new Date(ly, lm - 1, ld + dueOffsetDays));
       const alloc = Math.max(0, Math.min(rowPool - (k - 1) * slotDue, slotDue));
       const payableBase = loan.principal;
       const remaining = interestOnly ? 0 : Math.max(0, payableBase - Math.min(rowPool, k * slotDue));
+      // A payment recorded on this exact date (or within the cycle window)
+      // keeps its edit/delete affordance + mode/receipt on this row.
+      const ws = hasMonthlyCadence
+        ? k === 1 ? addDays(loan.loanDate, 1) : addDays(addMonths(loan.loanDate, k - 1, 0), 1)
+        : isoLocal(new Date(ly, lm - 1, ld + dueOffsetDays - slotStep + 1));
+      const winColls = useStrictDateMatch
+        ? loanColls.filter((c) => c.date === dueDate)
+        : slotStep === 1
+          ? loanColls.filter((c) => c.date === dueDate)
+          : loanColls.filter((c) => c.date >= ws && c.date <= dueDate);
+      const slotPaid = winColls.reduce((s, c) => s + c.amount, 0);
+      const first = winColls[0];
+      const displayPaid = useStrictDateMatch ? slotPaid : alloc;
       // Status & amount use FIFO allocation from the pool, so a BULK / advance
       // payment automatically fills subsequent slots instead of leaving them
       // "Next due". The payment RECORD follows the same FIFO attribution: the
@@ -235,9 +253,9 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
         dueDate: settle.date, paidOn: settle.date,
       });
     }
-    // Exactly one actionable row: the first not fully funded (FIFO order).
     if (loan.status === 'ACTIVE') {
-      const nx = out.find((r) => r.status !== 'Paid');
+      const upcoming = out.find((r) => r.date > todayStr && r.status !== 'Paid');
+      const nx = upcoming ?? [...out].reverse().find((r) => r.status !== 'Paid');
       if (nx) nx.isNext = true;
     }
     return out;
@@ -259,7 +277,6 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   const displayRows = rows;
 
   const collected = d.collectedFor(loan.id);
-  const todayStr = todayISO();
   const pending = Math.max(0, loan.principal - collected);
   const deduction = loan.deduction ?? upfrontDeduction(loan.type, loan.interest);
   // Prefer the server-stored disbursed amount; fall back to the computation for mock loans.

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSelector } from 'react-redux';
-import { todayISO, isoLocal, addDays } from '@/lib/format';
+import { todayISO, isoLocal, addDays, addMonths } from '@/lib/format';
 import { config } from '@/lib/config';
 import { customerApi } from '@/services/customerApi';
 import { loanApi } from '@/services/loanApi';
@@ -373,14 +373,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // Flexible's first cycle is due on the loan date (day 0), so its steps
         // are one earlier than Daily/Monthly Interest (first due at +cadence).
         const step = loan.type === 'FLEXIBLE' ? paid : paid + 1;
-        return addDays(loan.loanDate, step * cadenceDaysForLoan(loan));
+        return loan.type === 'MONTHLY_INTEREST'
+          ? addMonths(loan.loanDate, step, 0)
+          : addDays(loan.loanDate, step * cadenceDaysForLoan(loan));
       }
       const inst = loan.dailyAmount ?? 0;
       if (inst <= 0) return loan.nextDueDate ?? null;
       const paid = Math.floor(collectedFor(loan.id) / inst);
       if (loan.numDays != null && paid >= loan.numDays) return null; // every instalment collected
       const step = isDailyLoan(loan.type) ? 1 : 30;
-      return addDays(loan.loanDate, (paid + 1) * step);
+      return step === 30
+        ? addMonths(loan.loanDate, paid + 1, 0)
+        : addDays(loan.loanDate, (paid + 1) * step);
     };
     // Superseded by the amount-based nextDueFor (the old version advanced on the
     // last payment's DATE, so a partial payment wrongly moved the due date).

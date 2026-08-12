@@ -15,6 +15,7 @@ import { validateCustomerForm, INDIAN_STATES, type FieldErrors } from '@/lib/cus
 import { customerApi } from '@/services/customerApi';
 import { documentApi, type DocumentType } from '@/services/documentApi';
 import { ApiError } from '@/lib/api';
+import { downloadCSV } from '@/lib/export';
 import type { LoanType } from '@/mock/DataContext';
 import { LOAN_LABELS as LOAN_TYPE_LABELS } from '@/mock/DataContext';
 import { PageHeader, HeaderGhostButton, HeaderPrimaryButton } from '@/components/layout/PageHeader';
@@ -329,6 +330,29 @@ export default function Customers() {
 
   const loansOf = (id: number) => d.loans.filter((l) => l.customerId === id);
   const today = new Date().toISOString().split('T')[0];
+
+  const handleExport = () => {
+    const headers = [
+      'Customer Code', 'Name', 'Mobile', 'Alt. Mobile', 'City', 'State',
+      'Occupation', 'Monthly Income', 'KYC', 'Active Loans', 'Outstanding', 'Status', 'Since',
+    ];
+    const rows = filtered.map((c) => {
+      const cLoans = loansOf(c.id);
+      const activeCount = cLoans.filter((l) => l.status === 'ACTIVE').length;
+      const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
+      const kyc = kycOf(c);
+      const hasOverdue = cLoans.some((l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE');
+      const status = hasOverdue ? 'Overdue' : activeCount > 0 ? 'Active' : 'Inactive';
+      return [
+        c.code, c.name, c.mobile, c.altMobile || '', c.city || '', c.state || '',
+        c.occupation || '', c.monthlyIncome ?? '',
+        kyc === 'VERIFIED' ? 'Verified' : 'Pending',
+        activeCount, outstanding, status, c.createdAt,
+      ];
+    });
+    const stamp = today;
+    downloadCSV(headers, rows, `Customers_Export_${stamp}.csv`);
+  };
   const totalCustomers = d.customers.length;
   const activeCustomers = d.customers.filter((c) => loansOf(c.id).some((l) => l.status === 'ACTIVE')).length;
   const totalOutstanding = d.loans.reduce((sum, l) => sum + d.outstandingFor(l), 0);
@@ -357,7 +381,7 @@ export default function Customers() {
         subtitle="Manage profiles, KYC and loan accounts"
         actions={
           <>
-            <HeaderGhostButton icon={<Download size={14} />}>Export</HeaderGhostButton>
+            <HeaderGhostButton icon={<Download size={14} />} onClick={handleExport}>Export</HeaderGhostButton>
             {canEdit('Customers') && <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openAdd}>Add customer</HeaderPrimaryButton>}
           </>
         }

@@ -20,6 +20,15 @@ export const addDays = (iso: string, n: number) => {
   const [y, m, d] = iso.split('-').map(Number);
   return isoLocal(new Date(y, m - 1, d + n));
 };
+/** Add n calendar months to a YYYY-MM-DD string, then add a day offset (0 = same day-of-month).
+ *  Clamps day when the target month has fewer days (e.g. Jan 31 + 1mo → Feb 28). */
+export const addMonths = (iso: string, months: number, dayOffset = 0) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  const target = new Date(y, m - 1 + months, d);
+  const expectedMonth = ((m - 1 + months) % 12 + 12) % 12;
+  if (target.getMonth() !== expectedMonth) target.setDate(0);
+  return dayOffset ? isoLocal(new Date(target.getFullYear(), target.getMonth(), target.getDate() + dayOffset)) : isoLocal(target);
+};
 export const fmtDate = (s: string) => {
   const [y, m, d] = s.split('-').map(Number);
   return new Date(y, (m || 1) - 1, d || 1).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
