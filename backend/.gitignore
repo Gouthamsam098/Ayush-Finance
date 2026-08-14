@@ -1,9 +1,15 @@
 # Environment & secrets — NEVER commit
 .env
 .env.*
+# …but the TEMPLATES must ship: DEPLOYMENT.md tells the operator to copy
+# .env.production.example on the droplet, so it has to exist after a clone.
+# They contain only placeholders and the openssl commands to generate real values.
 !.env.example
+!.env.production.example
 secrets/
 *.pem
+# The RS256 keypair is generated on first boot, never committed.
+*.key
 
 # Build artifacts
 /bin/

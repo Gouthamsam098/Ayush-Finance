@@ -46,6 +46,9 @@ export default function Collections() {
   const toast = useToast();
   const { canEdit } = usePermissions();
   const [form, setForm] = useState<CForm | null>(null);
+  // In-flight flag for the save round-trip: disables the button (and blocks a
+  // re-entrant call) so one click can never become two payments.
+  const [saving, setSaving] = useState(false);
   const [typeFilter, setTypeFilter] = useState<LoanType | 'ALL'>('ALL');
   const [ledger, setLedger] = useState<Loan | null>(null);
   const [lastMode, setLastMode] = useState<PayMode>('CASH'); // remembered across entries
@@ -113,6 +116,11 @@ export default function Collections() {
 
   const save = async () => {
     if (!form) return;
+    // DOUBLE-SUBMIT GUARD: recording a payment is a money write, and the dialog
+    // stays open for the whole round-trip. Without this, a second click on a
+    // slow connection posts a SECOND collection — two receipts for one payment,
+    // which inflates collected/profit and needs manual ledger surgery to undo.
+    if (saving) return;
     if (!form.loanId) { toast('Select a loan (shown by type)', 'error'); return; }
     if (!Number(form.amount)) { toast('Enter an amount', 'error'); return; }
     // Date discipline (mirrors the server + LedgerDialog rules):
@@ -134,12 +142,15 @@ export default function Collections() {
       // the receipt date and never drives slot allocation (see LedgerDialog).
     }
     const payload = { loanId: Number(form.loanId), date: form.date, amount: Number(form.amount), mode: form.mode, remarks: form.remarks || undefined };
+    setSaving(true);
     try {
       if (form.id) { await d.updateCollection(form.id, payload); toast('Collection updated'); }
       else { await d.addCollection(payload); toast('Collection recorded · receipt generated'); }
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Failed to record collection', 'error');
       return; // keep the form open so the user can fix the highlighted issue
+    } finally {
+      setSaving(false); // always released, so a failed save can be retried
     }
     setLastMode(form.mode); // remember for the next entry
     setForm(null);
@@ -321,7 +332,7 @@ export default function Collections() {
 
       {/* Add / Edit dialog */}
       <Dialog open={!!form} onClose={() => setForm(null)} title={form?.id ? 'Edit collection' : 'Add collection'}
-        footer={<><Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button><Button onClick={save}>{form?.id ? 'Save changes' : 'Save'}</Button></>}>
+        footer={<><Button variant="ghost" onClick={() => setForm(null)} disabled={saving}>Cancel</Button><Button onClick={save} loading={saving}>{form?.id ? 'Save changes' : 'Save'}</Button></>}>
         {form && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Select label="Customer" value={form.customerId} onChange={(e) => { set('customerId', e.target.value); set('loanId', ''); }}

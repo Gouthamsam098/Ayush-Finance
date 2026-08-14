@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { ProtectedRoute, AdminRoute } from '@/routes/ProtectedRoute';
@@ -7,15 +7,24 @@ import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
 import { authApi } from '@/services/authApi';
 import { setTokens, setUser } from '@/store/authSlice';
+
+// Login stays eager: it is the first paint of every session, so it must not
+// wait on a second network round-trip.
 import Login from '@/pages/Login';
-import Dashboard from '@/pages/Dashboard';
-import Customers from '@/pages/Customers';
-import Loans from '@/pages/Loans';
-import Collections from '@/pages/Collections';
-import Expenses from '@/pages/Expenses';
-import Documents from '@/pages/Documents';
-import Reports from '@/pages/Reports';
-import Settings from '@/pages/Settings';
+
+// Every authenticated page is code-split. Statically importing them pulled the
+// heavy, page-specific libraries into the initial bundle — recharts (Dashboard
+// only) and jsPDF (Ledger/Reports only) alone dominated it — so users paid for
+// them before the login form could even render. Now each page's chunk is
+// fetched on first navigation to it.
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const Customers = lazy(() => import('@/pages/Customers'));
+const Loans = lazy(() => import('@/pages/Loans'));
+const Collections = lazy(() => import('@/pages/Collections'));
+const Expenses = lazy(() => import('@/pages/Expenses'));
+const Documents = lazy(() => import('@/pages/Documents'));
+const Reports = lazy(() => import('@/pages/Reports'));
+const Settings = lazy(() => import('@/pages/Settings'));
 
 export default function App() {
   const dispatch = useDispatch();
@@ -38,23 +47,43 @@ export default function App() {
 
   if (restoring) return null;
 
+  // Each lazy page is wrapped individually rather than the whole <Routes>, so
+  // the AppShell (sidebar, header) stays on screen while a page chunk loads —
+  // only the content area shows the fallback.
+  const page = (el: React.ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>;
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppShell />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/loans" element={<Loans />} />
-          <Route path="/collections" element={<Collections />} />
-          <Route path="/expenses" element={<Expenses />} />
-          <Route path="/documents" element={<Documents />} />
-          <Route path="/reports" element={<Reports />} />
+          <Route path="/" element={page(<Dashboard />)} />
+          <Route path="/customers" element={page(<Customers />)} />
+          <Route path="/loans" element={page(<Loans />)} />
+          <Route path="/collections" element={page(<Collections />)} />
+          <Route path="/expenses" element={page(<Expenses />)} />
+          <Route path="/documents" element={page(<Documents />)} />
+          <Route path="/reports" element={page(<Reports />)} />
           <Route element={<AdminRoute />}>
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/settings" element={page(<Settings />)} />
           </Route>
         </Route>
       </Route>
     </Routes>
+  );
+}
+
+/** Neutral placeholder shown while a page's chunk downloads. Announced politely
+ *  so screen-reader users are told the page is loading rather than hearing
+ *  nothing during the fetch. */
+function PageFallback() {
+  return (
+    <div role="status" aria-live="polite" className="grid min-h-[60vh] place-items-center">
+      <span className="sr-only">Loading page…</span>
+      <span
+        aria-hidden="true"
+        className="h-7 w-7 animate-spin rounded-full border-2 border-primary/25 border-t-primary"
+      />
+    </div>
   );
 }

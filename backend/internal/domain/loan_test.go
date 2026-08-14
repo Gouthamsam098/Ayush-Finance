@@ -11,7 +11,7 @@ func day(y int, m time.Month, d int) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.Local)
 }
 
-func ptrInt(n int) *int { return &n }
+func ptrInt(n int) *int       { return &n }
 func strPtr(s string) *string { return &s }
 
 func ptrPaise(p Paise) *Paise { return &p }

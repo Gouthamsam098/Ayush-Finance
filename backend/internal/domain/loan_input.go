@@ -34,13 +34,13 @@ func (in *LoanInput) isMonthlyInterestEMI() bool {
 
 // ── Field limits (mirror the frontend's industrial-standard validation) ──
 const (
-	minPrincipalPaise = 10_000          // ₹100
-	maxPrincipalPaise = 10_000_000_000  // ₹10 crore
+	minPrincipalPaise = 10_000         // ₹100
+	maxPrincipalPaise = 10_000_000_000 // ₹10 crore
 	maxRatePercent    = 100.0
-	maxEmiMonths      = 360             // 30 years
-	maxFlexDays       = 3650            // ~10 years
+	maxEmiMonths      = 360  // 30 years
+	maxFlexDays       = 3650 // ~10 years
 	maxRemarksLen     = 300
-	dailyCollectTerm  = 100             // fixed Daily Collection term (days)
+	dailyCollectTerm  = 100 // fixed Daily Collection term (days)
 )
 
 var (

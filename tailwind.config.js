@@ -22,8 +22,11 @@ export default {
         glow: '0 0 0 4px rgba(79,70,229,.12)',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        display: ['"Space Grotesk"', 'Inter', 'sans-serif'],
+        // The self-hosted @fontsource-variable packages register the families as
+        // "… Variable" (see src/index.css). The bare names are kept as fallbacks
+        // so a locally-installed Inter/Space Grotesk still works.
+        sans: ['"Inter Variable"', 'Inter', 'system-ui', 'sans-serif'],
+        display: ['"Space Grotesk Variable"', '"Space Grotesk"', '"Inter Variable"', 'Inter', 'sans-serif'],
       },
       keyframes: {
         rise: { from: { opacity: '0', transform: 'translateY(16px)' }, to: { opacity: '1', transform: 'translateY(0)' } },

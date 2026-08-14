@@ -72,13 +72,18 @@ func (r *Repository) ListByCustomer(ctx context.Context, customerID int64) ([]*d
 }
 
 // Download loads a single document including its content bytes.
-func (r *Repository) Download(ctx context.Context, id int64) (*domain.Document, error) {
+// Download fetches one document's bytes, scoped to its owning customer. The
+// customerID filter is MANDATORY: the route is /customers/{customerId}/
+// documents/{docId}, so a document that belongs to another customer must be
+// invisible here (returned as NotFound, never 403 — a distinct status would
+// confirm the ID exists and let an attacker enumerate the document store).
+func (r *Repository) Download(ctx context.Context, id, customerID int64) (*domain.Document, error) {
 	const query = `
 		SELECT id, customer_id, type, file_name, mime_type, size_bytes, content, created_at
 		FROM documents
-		WHERE id = $1 AND deleted_at IS NULL`
+		WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL`
 	var d domain.Document
-	err := r.pool.QueryRow(ctx, query, id).Scan(
+	err := r.pool.QueryRow(ctx, query, id, customerID).Scan(
 		&d.ID, &d.CustomerID, &d.Type, &d.FileName, &d.MimeType,
 		&d.SizeBytes, &d.Content, &d.CreatedAt,
 	)
@@ -91,10 +96,13 @@ func (r *Repository) Download(ctx context.Context, id int64) (*domain.Document, 
 	return &d, nil
 }
 
-// SoftDelete marks a document deleted.
-func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
+// SoftDelete marks a document deleted, scoped to its owning customer. The
+// customerID filter is MANDATORY for the same reason as Download: without it
+// any caller could delete any customer's document by guessing its ID.
+func (r *Repository) SoftDelete(ctx context.Context, id, customerID int64) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE documents SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
+		`UPDATE documents SET deleted_at = now()
+		 WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL`, id, customerID)
 	if err != nil {
 		return err
 	}

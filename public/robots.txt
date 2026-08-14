@@ -1,0 +1,6 @@
+# Anush LMS is a private, authenticated loan-management application. There are
+# no public pages and nothing here should ever appear in a search engine.
+# Every route requires a login, but crawlers should not even try — and indexed
+# URLs would leak the app's structure.
+User-agent: *
+Disallow: /

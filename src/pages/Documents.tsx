@@ -206,20 +206,31 @@ export default function Documents() {
     }
   };
 
+  // A blob: URL pins the whole file in memory until it is revoked, and KYC
+  // scans are multi-MB. Revoking in an effect cleanup covers EVERY path the
+  // URL can go away — replaced by the next preview, viewer closed, or the
+  // component unmounted on a route change — instead of only the explicit
+  // close (which leaked one blob per preview when the user clicked straight
+  // from one document to the next).
+  useEffect(() => {
+    if (!viewerUrl?.startsWith('blob:')) return;
+    return () => URL.revokeObjectURL(viewerUrl);
+  }, [viewerUrl]);
+
   // ── viewer (fetch blob in API mode so the auth-protected file previews) ──
   const openViewer = async (doc: DocRow) => {
     setViewer(doc);
-    setViewerUrl(null);
+    setViewerUrl(null); // the effect above revokes the outgoing blob
     if (config.useApi) {
       try {
         const blob = await documentApi.fetchBlob(doc.customerId, doc.id);
         setViewerUrl(URL.createObjectURL(blob));
       } catch { /* viewer shows a fallback */ }
     } else if (doc.dataUrl) {
-      setViewerUrl(doc.dataUrl);
+      setViewerUrl(doc.dataUrl); // data: URL — nothing to revoke
     }
   };
-  const closeViewer = () => { if (viewerUrl?.startsWith('blob:')) URL.revokeObjectURL(viewerUrl); setViewer(null); setViewerUrl(null); };
+  const closeViewer = () => { setViewer(null); setViewerUrl(null); };
 
   return (
     <div className="flex min-h-full flex-col">

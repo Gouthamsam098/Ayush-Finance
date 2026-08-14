@@ -54,6 +54,8 @@ interface RequestOptions {
   body?: unknown;
   /** When false, do not attach the Authorization header (login). */
   auth?: boolean;
+  /** Extra request headers (e.g. Idempotency-Key on a money write). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -72,7 +74,7 @@ function forceReLogin(): void {
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<Envelope<T>> {
   const { method = 'GET', body, auth = true } = opts;
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...opts.headers };
   if (auth) {
     const token = tokenStore.get();
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -116,8 +118,8 @@ export const api = {
     return { data: env.data ?? [], meta: env.meta as PaginationMeta };
   },
 
-  async post<T>(path: string, body: unknown, opts?: { auth?: boolean }): Promise<T> {
-    return (await request<T>(path, { method: 'POST', body, auth: opts?.auth })).data as T;
+  async post<T>(path: string, body: unknown, opts?: { auth?: boolean; headers?: Record<string, string> }): Promise<T> {
+    return (await request<T>(path, { method: 'POST', body, auth: opts?.auth, headers: opts?.headers })).data as T;
   },
 
   async patch<T>(path: string, body: unknown): Promise<T> {

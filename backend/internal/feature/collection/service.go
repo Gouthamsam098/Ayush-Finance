@@ -2,10 +2,14 @@ package collection
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 	"github.com/anush-capitals/lms-backend/internal/feature/loan"
+	"github.com/anush-capitals/lms-backend/internal/logger"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -23,46 +27,114 @@ type Clock func() time.Time
 type LoanGateway interface {
 	FindByID(ctx context.Context, id int64) (*domain.Loan, error)
 	SetStatus(ctx context.Context, id int64, status domain.LoanStatus) (*domain.Loan, error)
+	// SetStatusTx is the transactional variant, used so a payment and the
+	// loan-status change it causes commit atomically.
+	SetStatusTx(ctx context.Context, tx pgx.Tx, id int64, status domain.LoanStatus) (*domain.Loan, error)
+}
+
+// Auditor records the money trail. Optional (nil-safe) so the service can be
+// constructed in tests without a database.
+type Auditor interface {
+	RecordTx(ctx context.Context, tx pgx.Tx, e audit.Entry) error
 }
 
 // Service holds collection business logic: validation against the parent loan,
 // status gating, and the (soft) overpayment signal.
 type Service struct {
-	repo  *Repository
-	loans LoanGateway
-	now   Clock
+	repo   *Repository
+	loans  LoanGateway
+	now    Clock
+	audits Auditor
 }
 
-func NewService(repo *Repository, loans *loan.Repository) *Service {
-	return &Service{repo: repo, loans: loans, now: time.Now}
+func NewService(repo *Repository, loans *loan.Repository, audits Auditor) *Service {
+	return &Service{repo: repo, loans: loans, now: time.Now, audits: audits}
+}
+
+// logger returns the request-scoped logger (carrying request_id) so a money
+// inconsistency can be traced back to the exact request that caused it. Falls
+// back to the default logger outside an HTTP request.
+func (s *Service) logger(ctx context.Context) *slog.Logger {
+	return logger.FromContext(ctx)
 }
 
 // syncLoanStatus auto-closes a loan whose balance has reached zero, or reopens a
 // CLOSED loan whose balance has re-appeared (e.g. a settlement payment was
 // edited down or deleted). Called after every collection mutation so the loan's
-// status always reflects its real outstanding. Failure here is non-fatal to the
-// collection write — the payment is already persisted — so errors are ignored.
+// status always reflects its real outstanding.
+//
+// Failure here is deliberately non-fatal to the collection write — the payment
+// is already persisted and must not be lost — but it is NOT silent: a failed
+// sync leaves the loan's status disagreeing with its real balance (e.g. a
+// settled loan still ACTIVE), which is a money-reporting inconsistency someone
+// has to notice. Every failure path is logged with the loan id.
+//
+// KNOWN LIMITATION (documented, not yet fixed): the read-then-write here is not
+// serialised against a concurrent payment on the same loan, because the feature
+// layer has no transaction plumbing. Two simultaneous settlements can both read
+// a pre-settlement balance and reach inconsistent conclusions. Fixing it
+// properly requires threading a pgx.Tx through the collection and loan
+// repositories and taking `SELECT ... FOR UPDATE` on the loans row — see
+// DEPLOYMENT.md's outstanding-risks table.
 func (s *Service) syncLoanStatus(ctx context.Context, loanID int64) {
 	l, err := s.loans.FindByID(ctx, loanID)
 	if err != nil {
+		s.logger(ctx).Warn("loan status sync skipped: loan lookup failed",
+			"loan_id", loanID, "error", err)
 		return
 	}
 	collected, err := s.repo.SumByLoan(ctx, loanID)
 	if err != nil {
+		s.logger(ctx).Warn("loan status sync skipped: collected sum failed",
+			"loan_id", loanID, "error", err)
 		return
 	}
 	fullyPaid := l.IsFullyPaid(collected, s.now())
-	if fullyPaid && l.Status == domain.StatusActive {
-		_, _ = s.loans.SetStatus(ctx, loanID, domain.StatusClosed)
-	} else if !fullyPaid && l.Status == domain.StatusClosed {
-		_, _ = s.loans.SetStatus(ctx, loanID, domain.StatusActive)
+	switch {
+	case fullyPaid && l.Status == domain.StatusActive:
+		if _, err := s.loans.SetStatus(ctx, loanID, domain.StatusClosed); err != nil {
+			s.logger(ctx).Error("loan is fully paid but auto-close FAILED — status now disagrees with balance",
+				"loan_id", loanID, "error", err)
+		}
+	case !fullyPaid && l.Status == domain.StatusClosed:
+		if _, err := s.loans.SetStatus(ctx, loanID, domain.StatusActive); err != nil {
+			s.logger(ctx).Error("loan has a balance again but auto-reopen FAILED — status now disagrees with balance",
+				"loan_id", loanID, "error", err)
+		}
 	}
 }
 
 // Record validates and persists a payment against a loan. The loan must exist
 // and be ACTIVE. Overpayment is allowed (early settlement / advance) — the UI
 // warns; the server does not block. postedBy is the authenticated operator.
-func (s *Service) Record(ctx context.Context, in domain.CollectionInput, postedBy *int64) (*domain.Collection, error) {
+//
+// The whole operation runs in ONE transaction that starts by taking a row lock
+// on the loan, which fixes two defects at once:
+//
+//   - Atomicity: the payment insert and the resulting auto-close/auto-reopen
+//     commit together. Previously the insert could succeed and the status update
+//     fail, leaving a settled loan marked ACTIVE with no error surfaced.
+//   - Serialisation: two concurrent payments on the same loan can no longer both
+//     read a pre-payment balance and reach inconsistent conclusions; the second
+//     waits for the first to commit and then sees its money.
+//
+// idempotencyKey (optional, from the Idempotency-Key header) makes a retry safe:
+// replaying the same key returns the payment that was already recorded instead
+// of creating a second one.
+func (s *Service) Record(ctx context.Context, in domain.CollectionInput, postedBy *int64, idempotencyKey string) (*domain.Collection, error) {
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Rollback is a no-op once the tx has been committed, so this is safe to
+	// defer unconditionally and guarantees no connection is leaked on any path.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock FIRST: everything read below must not change under us.
+	if err := LockLoanForUpdate(ctx, tx, in.LoanID); err != nil {
+		return nil, err
+	}
+
 	l, err := s.loans.FindByID(ctx, in.LoanID)
 	if err != nil {
 		return nil, err
@@ -73,18 +145,62 @@ func (s *Service) Record(ctx context.Context, in domain.CollectionInput, postedB
 	// The collected-so-far split feeds the date rule: a payment may be dated
 	// through the loan's NEXT scheduled due slot (daily → tomorrow, monthly →
 	// next cycle date), which is derived from what has already been paid.
-	collected, err := s.repo.SumByLoan(ctx, in.LoanID)
+	collected, err := s.repo.SumByLoanTx(ctx, tx, in.LoanID)
 	if err != nil {
 		return nil, err
 	}
 	if err := in.Validate(l, collected, s.now()); err != nil {
 		return nil, err
 	}
-	c, err := s.repo.Create(ctx, in, postedBy)
+	c, inserted, err := s.repo.CreateTx(ctx, tx, in, postedBy, idempotencyKey)
 	if err != nil {
 		return nil, err
 	}
-	s.syncLoanStatus(ctx, in.LoanID) // auto-close if this settles the loan
+	if !inserted {
+		// Replay of an already-recorded payment: nothing changed, so do NOT
+		// re-run the status sync or write another audit row (that would imply
+		// several payments where only one exists). Return the original as-is.
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+
+	// Recompute inside the same transaction so the status reflects this payment.
+	after, err := s.repo.SumByLoanTx(ctx, tx, in.LoanID)
+	if err != nil {
+		return nil, err
+	}
+	if l.IsFullyPaid(after, s.now()) && l.Status == domain.StatusActive {
+		if _, err := s.loans.SetStatusTx(ctx, tx, in.LoanID, domain.StatusClosed); err != nil {
+			return nil, err // roll back the payment too rather than desync
+		}
+	}
+
+	// Audit inside the transaction: a recorded payment and its trail entry commit
+	// together, so the ledger can never contain money with no record of who put
+	// it there. Only non-sensitive fields are stored.
+	if s.audits != nil {
+		if err := s.audits.RecordTx(ctx, tx, audit.Entry{
+			EntityType: audit.EntityCollection,
+			EntityID:   c.ID,
+			Action:     audit.ActionPost,
+			After: map[string]any{
+				"receipt_no": c.ReceiptNo,
+				"loan_id":    c.LoanID,
+				"amount":     c.Amount.Rupees(),
+				"date":       c.Date.Format("2006-01-02"),
+				"mode":       string(c.Mode),
+				"kind":       string(c.Kind),
+			},
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 

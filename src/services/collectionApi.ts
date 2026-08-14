@@ -15,6 +15,16 @@
 import { api, type ListResult } from '@/lib/api';
 import type { Collection, CollectionKind, PayMode } from '@/mock/DataContext';
 
+/** Unique key for one logical payment write, so a retry is de-duplicated
+ *  server-side. crypto.randomUUID is unavailable on older Safari and on
+ *  non-secure origins, so fall back to random+timestamp — uniqueness per
+ *  request is all that is required (the key is never a secret). */
+function newIdempotencyKey(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 interface CollectionWire {
   id: number;
   receipt_no: string;
@@ -92,8 +102,19 @@ export const collectionApi = {
     return (rows ?? []).map(toCollection);
   },
 
+  /** Record a payment.
+   *
+   *  Sends a fresh Idempotency-Key per call. If the response is lost to a
+   *  network timeout and the request is retried with the same key, the server
+   *  returns the payment it already recorded instead of creating a second one —
+   *  so a flaky connection can never double-charge a borrower. The UI's
+   *  in-flight button guard covers double-clicks; this covers the network. */
   async record(loanId: number, c: Partial<Collection>): Promise<Collection> {
-    return toCollection(await api.post<CollectionWire>(`/loans/${loanId}/collections`, toWire(c)));
+    return toCollection(await api.post<CollectionWire>(
+      `/loans/${loanId}/collections`,
+      toWire(c),
+      { headers: { 'Idempotency-Key': newIdempotencyKey() } },
+    ));
   },
 
   async update(id: number, c: Partial<Collection>): Promise<Collection> {

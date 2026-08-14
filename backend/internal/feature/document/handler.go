@@ -83,7 +83,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	doc, err := h.service.Upload(r.Context(), UploadInput{
 		CustomerID: customerID,
 		Type:       docType,
-		FileName:   header.Filename,
+		// Sanitised at the boundary so the stored value is already safe (strips
+		// path components, quotes and control characters from the client-supplied
+		// multipart filename). Download re-sanitises defensively.
+		FileName:   domain.SanitizeFileName(header.Filename),
 		MimeType:   header.Header.Get("Content-Type"),
 		Content:    content,
 		UploadedBy: uploadedBy,
@@ -119,15 +122,29 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, domain.NewNotFound("document"))
 		return
 	}
-	doc, err := h.service.Download(r.Context(), docID)
+	// The {customerId} path segment is part of the authorization decision, not
+	// decoration: the document must belong to it or this is a NotFound.
+	customerID, err := strconv.ParseInt(chi.URLParam(r, "customerId"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("customer"))
+		return
+	}
+	doc, err := h.service.Download(r.Context(), docID, customerID)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", doc.MimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(doc.SizeBytes, 10))
+	// The stored MIME type is what the browser is told, so forbid sniffing: a
+	// file uploaded with a spoofed content type must not be re-interpreted as
+	// HTML/script and executed in this origin.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// inline so the browser can preview images/PDFs; filename for downloads.
-	w.Header().Set("Content-Disposition", "inline; filename=\""+doc.FileName+"\"")
+	// The filename is quoted via a sanitiser — it originates from the client's
+	// multipart header, so a raw value containing a quote or CR/LF could break
+	// out of the quoted parameter and inject header content.
+	w.Header().Set("Content-Disposition", `inline; filename="`+domain.SanitizeFileName(doc.FileName)+`"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(doc.Content)
 }
@@ -138,7 +155,13 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, domain.NewNotFound("document"))
 		return
 	}
-	if err := h.service.Delete(r.Context(), docID); err != nil {
+	// Ownership is enforced by the {customerId} scope (see download).
+	customerID, err := strconv.ParseInt(chi.URLParam(r, "customerId"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("customer"))
+		return
+	}
+	if err := h.service.Delete(r.Context(), docID, customerID); err != nil {
 		httpx.Error(w, r, err)
 		return
 	}

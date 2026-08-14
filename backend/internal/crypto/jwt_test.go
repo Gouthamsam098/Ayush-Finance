@@ -26,7 +26,10 @@ func newTestManager(t *testing.T) *TokenManager {
 
 func TestTokenRoundTrip(t *testing.T) {
 	m := newTestManager(t)
-	now := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)
+	// Must be relative to the real clock: Verify() validates `exp` against
+	// time.Now(), so a hardcoded issue-date makes this test rot the moment the
+	// access TTL elapses (it previously failed for exactly that reason).
+	now := time.Now()
 
 	token, err := m.Generate("user-123", AccessToken, now)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/config"
 	"github.com/anush-capitals/lms-backend/internal/crypto"
 	"github.com/anush-capitals/lms-backend/internal/feature/auth"
@@ -56,7 +57,11 @@ func NewRouter(deps Dependencies) http.Handler {
 	loanService := loan.NewService(loanRepo, collectionRepo)
 	loanHandler := loan.NewHandler(loanService)
 
-	collectionService := collection.NewService(collectionRepo, loanRepo)
+	// Append-only trail for money movements (audit_log). Passed into the
+	// collection service so a payment and its audit row commit atomically.
+	auditor := audit.New(deps.Pool)
+
+	collectionService := collection.NewService(collectionRepo, loanRepo, auditor)
 	collectionHandler := collection.NewHandler(collectionService)
 
 	expenseRepo := expense.NewRepository(deps.Pool)
@@ -73,10 +78,14 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Use(httpx.RequestID(deps.Logger))
 	r.Use(httpx.AccessLog)
 	r.Use(httpx.Recover)
+	// Captures client IP + user agent for audit entries (no headers, no body).
+	r.Use(audit.Middleware)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   deps.Config.CORSAllowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-ID"},
+		AllowedOrigins: deps.Config.CORSAllowedOrigins,
+		AllowedMethods: []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		// Idempotency-Key must be allow-listed or the browser's preflight blocks
+		// the payment write that carries it.
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"},
 		ExposedHeaders:   []string{"X-Request-ID"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -88,7 +97,12 @@ func NewRouter(deps Dependencies) http.Handler {
 	})
 
 	r.Route("/api/v1", func(api chi.Router) {
-		api.Mount("/auth", authHandler.PublicRoutes())
+		// Auth routes are public and unauthenticated, so they are the one place
+		// an attacker can hammer freely — rate limit them per client IP using
+		// the already-configured AUTH_RATE_LIMIT_PER_MINUTE (which was loaded
+		// but never enforced, leaving login open to unlimited brute force).
+		api.With(httpx.RateLimit(deps.Config.AuthRateLimitPerMinute)).
+			Mount("/auth", authHandler.PublicRoutes())
 
 		// Everything below requires a valid access token.
 		api.Group(func(protected chi.Router) {

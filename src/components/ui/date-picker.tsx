@@ -162,6 +162,19 @@ export function DatePicker({ label, error, value, onChange, className, yearMin, 
             value={displayValue}
             placeholder="Select date…"
             onClick={toggle}
+            // The field is readOnly (the calendar is the only way to pick a
+            // date), so without these handlers a keyboard user could focus it
+            // but never open it — leaving Date of Birth and the collection
+            // receipt date impossible to enter without a mouse.
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                toggle();
+              }
+            }}
+            role="combobox"
+            aria-expanded={open}
+            aria-haspopup="dialog"
             className={cn(
               'w-full cursor-pointer rounded-xl border bg-white dark:bg-surface pl-3.5 pr-10 py-2.5 text-sm outline-none',
               'shadow-[inset_0_1px_2px_rgba(15,23,42,.03)] dark:shadow-none',
@@ -176,7 +189,9 @@ export function DatePicker({ label, error, value, onChange, className, yearMin, 
           <button
             type="button"
             onClick={toggle}
-            className="absolute right-2 top-1/2 -translate-y-1/2 grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.08]"
+            aria-label={open ? 'Close calendar' : 'Open calendar'}
+            title="Open calendar"
+            className="absolute right-2 top-1/2 -translate-y-1/2 grid h-11 w-11 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink sm:h-8 sm:w-8 dark:hover:bg-white/[.08]"
           >
             <Calendar size={15} />
           </button>

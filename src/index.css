@@ -1,3 +1,15 @@
+/* Self-hosted fonts (bundled, no third-party request).
+   Previously loaded from fonts.googleapis.com, which (a) put a render-blocking
+   request to a third party in the critical path — a hard external dependency
+   for first paint — and (b) sent every user's IP and User-Agent to Google on
+   every page load, an unreviewed data flow for an app handling Aadhaar/PAN.
+   Variable fonts cover the whole weight range the design uses in one file each,
+   and must be imported BEFORE @tailwind base so the @font-face rules land
+   ahead of the reset. Keeping these local also lets the CSP omit external
+   font hosts entirely (see nginx/nginx.conf). */
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/space-grotesk';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

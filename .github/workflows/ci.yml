@@ -1,0 +1,114 @@
+# ──────────────────────────────────────────────────────────────────────────
+# CI — the gate that must pass before anything merges.
+#
+# This is a finance application: the backend loan-math tests (loan_test.go) are
+# the guarantee that interest, EMI, outstanding balances and cycle accrual stay
+# correct. They must run on every push, not at a developer's discretion.
+#
+# Jobs:
+#   frontend  — tsc typecheck + vite build (the only frontend correctness gate)
+#   backend   — go vet + go build + go test ./...
+#   security  — dependency vulnerabilities (npm audit, govulncheck) + secret scan
+# ──────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [main, newui]
+  pull_request:
+    branches: [main, newui]
+
+# Cancel superseded runs on the same ref — no point building stale commits.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend — typecheck & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # `ci` (not `install`) installs exactly the committed lockfile.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+        # Lint findings should not block a hotfix; the build below is the gate.
+        continue-on-error: true
+
+      # Runs `tsc -b` then `vite build` — a type error fails the job.
+      - name: Typecheck & build
+        run: npm run build
+
+  backend:
+    name: Backend — vet, build & tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Verify module tidiness
+        run: go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # -race catches data races in the money paths (concurrent collections).
+      - name: Test (with race detector)
+        run: go test -race ./...
+
+  security:
+    name: Security — dependencies & secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the secret scanner can inspect every commit: a
+          # secret committed once is compromised even if later deleted.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: npm audit (high & critical)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Go vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          cd backend && govulncheck ./...
+        continue-on-error: true
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

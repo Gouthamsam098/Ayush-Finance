@@ -135,6 +135,19 @@ Note: several files in `.cursor/rules/` were copied from another project (an "or
 - **Schema alignment**: a Go struct field / DB write must correspond to a real column. Add the migration before the code that uses the column.
 - **Security**: secrets only via env (documented in `.env.example`, never committed); the backend is the auth authority; never log or expose passwords/tokens/PII; mask KYC; client validation never replaces server validation.
 
+## Production readiness — the audit skill (MANDATORY before deployment)
+
+This is a **finance application** heading for public internet exposure with real money, KYC documents, and personal data. Before any production deployment — or whenever the question is "is this safe / ready / secure enough?" — run the **`/production-audit`** skill (`.claude/skills/production-audit/SKILL.md`). It is the full hostile, production-grade review: 14 phases covering security (OWASP + API Top 10), authorization/IDOR, financial-integrity and money-math correctness, database and transaction atomicity, document/file security, API surface, frontend, performance, infrastructure/DigitalOcean, dependencies, testing gaps, and a threat model — ending in a severity-ranked report and a P0–P3 fix order.
+
+Its non-negotiable operating rules, which apply to any security/readiness work in this repo even outside the skill:
+
+- **Audit first, fix second.** Produce the findings report and get explicit approval before modifying code; then fix ONE severity group at a time, re-running `npm run build` and `go build ./... && go test ./...` plus the loan edge-case matrix after each group.
+- **Never trust AI-generated code** (most of this codebase is AI-written): assume missing validation, wrong authorization, race conditions, and bad edge cases until verified against the actual source.
+- **Never trust the client** for user/loan/document IDs, roles, or permissions; the frontend's `usePermissions` gating is cosmetic — `httpx.RequirePermission` is the authority, and every protected route must be proven to carry it.
+- **Evidence or silence**: cite `file:line`, never claim a test passed without running it, never claim a vulnerability without proof, and mark unverifiable items **NOT VERIFIED** or **REQUIRES EXTERNAL CONFIGURATION VERIFICATION**. Distinguish confirmed issue / potential issue / recommendation.
+- **Money and secrets are absolutes**: no float in balance math (backend `Paise` int64); a secret ever committed to git is compromised and must be rotated; documents must never be reachable by URL knowledge alone.
+- **Right-size the architecture**: ~10–15 concurrent users today — no Kubernetes, no microservices, no over-engineering; but never trade away security or financial correctness for simplicity.
+
 ## UI/UX design standards — MANDATORY
 
 **`DESIGN_RULES.md` (repo root) is binding for every user-facing change. Read it before building or editing any UI.** Act as a senior product architect + designer, not just an engineer: build **production-ready, premium** UI (Stripe / Linear / Mercury quality), never plain or template-looking. Think before coding (domain → users → hierarchy → journey → then code), and self-review against the Quality Gate (target ≥ 9.5/10 on visual design, UX, a11y, responsiveness, consistency) — iterate before returning code; never settle for the first pass.

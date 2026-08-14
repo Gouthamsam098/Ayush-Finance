@@ -1,0 +1,42 @@
+# Keep the build context small and never bake local state or secrets into the
+# image. Without this file the whole repo (node_modules, .git, .env.local, the
+# backend, agent logs, the vendored orbit project) is uploaded to the daemon.
+
+# Dependencies + build output are recreated inside the image
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.vite/
+
+# Secrets / local env — must never enter an image layer
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.pem
+*.key
+secrets/
+
+# VCS + tooling
+.git/
+.github/
+.gitignore
+.dockerignore
+.claude/
+.cursor/
+.sisyphus/
+
+# The backend has its own image and build context
+backend/
+
+# Unrelated vendored project
+orbit/
+
+# Local scratch and docs not needed to build the bundle
+*.log
+*.pdf
+Screenshot*.png
+Screenshot*.jpg
+*.md
+!README.md

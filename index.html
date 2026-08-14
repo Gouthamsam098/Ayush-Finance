@@ -3,9 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,450;14..32,500;14..32,600;14..32,700;14..32,800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+    <!-- Private, authenticated application: never index it, and don't leak
+         referrer data to third parties. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="description" content="Anush Capitals loan management system." />
+    <!-- Fonts are self-hosted and imported from src/index.css (no third-party
+         request in the critical path, and no IP/User-Agent leak to a CDN). -->
     <title>Anush Capitals — LMS</title>
   </head>
   <body>

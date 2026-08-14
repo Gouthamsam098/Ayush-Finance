@@ -10,7 +10,7 @@ import { CollectionProgress } from '@/components/CollectionProgress';
 import { StatementView } from '@/components/StatementView';
 import { ApiError } from '@/lib/api';
 import { usePermissions } from '@/lib/permissions';
-import { buildLedgerReportPDF, shareOrDownloadPDF } from '@/lib/pdfReport';
+// pdfReport (jsPDF) is imported dynamically inside generateReport — see there.
 import { buildSchedule } from '@/lib/loanSchedule';
 import { inr, fmtDate, todayISO, initials, isoLocal, addDays, DAILY_TERM } from '@/lib/format';
 import { Plus, Pencil, Phone, FileDown, LayoutList, Table2, IndianRupee, Banknote, Smartphone, Landmark, ScrollText, Calendar, CheckCircle2, Wallet } from 'lucide-react';
@@ -49,6 +49,8 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   // Clear-overdue mode: one bulk receipt prefilled with everything due till
   // today (FIFO spreads it across the overdue slots). Display-only flag.
   const [clearDues, setClearDues] = useState(false);
+  // In-flight flag for the payment round-trip (see addColl's double-submit guard).
+  const [saving, setSaving] = useState(false);
   // Settlement mode (foreclose / settle principal): a lump-sum payoff, not a
   // scheduled slot — exempt from the "next due slot" date discipline below.
   const [isSettlement, setIsSettlement] = useState(false);
@@ -366,6 +368,12 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     }
   };
   const addColl = async () => {
+    // DOUBLE-SUBMIT GUARD: every branch below writes money and the dialog stays
+    // open for the round-trip, so a second click would post a duplicate. Worst
+    // on the flexSettle branch, which issues TWO sequential writes — a
+    // double-click there produces four records and double-counts the
+    // interest/principal split that profit-by-month depends on.
+    if (saving) return;
     if (!canCollect) { toast('You have view-only access to Collections', 'error'); return; }
     if (!Number(amount)) { toast('Enter an amount', 'error'); return; }
     if (date < minPaymentDate) { toast(`Payment date cannot be before the loan date (${fmtDate(minPaymentDate)})`, 'error'); return; }
@@ -376,6 +384,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     // advance payers' receipts to be future-dated, corrupting profit-by-month.
     // kind only matters for interest-only loans; always send INTEREST otherwise.
     const k: CollectionKind = interestOnly ? kind : 'INTEREST';
+    setSaving(true);
     try {
       if (flexSettle && !editId) {
         // Flexible full settlement: split the entered amount into the accrued
@@ -404,6 +413,8 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       // Surface the real reason (e.g. date/amount validation) instead of a false success.
       toast(e instanceof ApiError ? e.message : 'Failed to save collection', 'error');
       return; // keep the form open so the user can correct it
+    } finally {
+      setSaving(false); // always released, so a failed save can be retried
     }
     setAddOpen(false); setEditId(null); setFlexSettle(false); setEditSlot(null); setClearDues(false); setAmount(defaultAmount()); setRemarks('');
   };
@@ -441,6 +452,10 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   ];
 
   const generateReport = async () => {
+    // jsPDF + jspdf-autotable are ~415 KB and are only needed when the user
+    // actually asks for a PDF, so they are fetched on demand instead of being
+    // bundled into the initial download.
+    const { buildLedgerReportPDF, shareOrDownloadPDF } = await import('@/lib/pdfReport');
     let tableTitle = '', tableHead: string[] = [], tableBody: (string | number)[][] = [];
     const unit = isMonthly ? 'Month' : 'Day';
     if (!isSimple) {
@@ -674,8 +689,8 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       )}
 
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={editId ? 'Edit collection' : isSettlement ? 'Settle & close' : clearDues ? 'Clear overdue' : 'Add collection'} subtitle={cust?.name ? `${cust.name} · ${loan.loanNumber}` : loan.loanNumber}
-        footer={<><Button variant="ghost" onClick={() => setAddOpen(false)}>Cancel</Button>
-          <Button variant={isSettlement ? 'success' : 'primary'} onClick={addColl}>
+        footer={<><Button variant="ghost" onClick={() => setAddOpen(false)} disabled={saving}>Cancel</Button>
+          <Button variant={isSettlement ? 'success' : 'primary'} onClick={addColl} loading={saving}>
             {editId ? 'Save changes' : isSettlement ? <><CheckCircle2 size={15} /> Settle &amp; close</> : <><Plus size={15} /> Record payment</>}
           </Button></>}>
         <div className="space-y-4">
