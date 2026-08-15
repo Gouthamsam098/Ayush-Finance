@@ -56,7 +56,18 @@ export const documentApi = {
     const blob = await this.fetchBlob(customerId, docId);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = fileName || `document-${docId}`; a.click();
-    URL.revokeObjectURL(url);
+    a.href = url;
+    a.download = fileName || `document-${docId}`;
+    // Firefox requires the anchor to be in the document for a programmatic
+    // click to start the download, and revoking the URL on the same tick can
+    // cancel a download that has only been queued (Chrome tolerates it,
+    // Firefox and some WebViews do not) — so defer the revoke by a macrotask.
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      a.remove();
+      URL.revokeObjectURL(url);
+    }, 0);
   },
 };

@@ -1,0 +1,62 @@
+# ──────────────────────────────────────────────────────────────────────────
+# Caddy — TLS terminator and single public entrypoint.
+#
+# Caddy obtains and renews a Let's Encrypt certificate automatically and
+# redirects HTTP→HTTPS by default, which closes the "no TLS in production"
+# blocker: JWTs, admin credentials and KYC documents never travel in cleartext.
+#
+# Routing:
+#   /api/*  → backend:4000   (Go API)
+#   /*      → web:8080       (nginx serving the built SPA)
+#
+# Requires DOMAIN and ACME_EMAIL in the environment (see docker-compose.prod.yml).
+# ──────────────────────────────────────────────────────────────────────────
+
+{
+	email {$ACME_EMAIL}
+	# Uncomment to test against Let's Encrypt staging and avoid rate limits
+	# while validating a new deployment:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# ── Security headers (TLS-terminator scope) ───────────────────────────
+	header {
+		# HSTS: only correct here, where we know the request arrived over TLS.
+		# 1 year + subdomains. Add `preload` only once you are certain every
+		# subdomain is HTTPS-only — it is very hard to undo.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Don't advertise the server software.
+		-Server
+	}
+
+	# ── API ───────────────────────────────────────────────────────────────
+	handle /api/* {
+		reverse_proxy backend:4000 {
+			# Preserve the client IP so the backend's rate limiter and access
+			# log attribute requests to the real caller, not the proxy.
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Backend liveness, deliberately NOT public: expose only if you need an
+	# external uptime monitor. Uncomment and restrict by source IP if so.
+	# handle /health {
+	#     reverse_proxy backend:4000
+	# }
+
+	# ── SPA ───────────────────────────────────────────────────────────────
+	handle {
+		reverse_proxy web:8080
+	}
+
+	# Access log to stdout (captured by Docker's json-file driver with rotation).
+	log {
+		output stdout
+		format json
+	}
+}

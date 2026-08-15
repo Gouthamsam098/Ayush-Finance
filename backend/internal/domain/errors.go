@@ -11,13 +11,14 @@ import (
 type ErrorCode string
 
 const (
-	CodeValidation    ErrorCode = "VALIDATION_ERROR"
-	CodeNotFound      ErrorCode = "NOT_FOUND"
-	CodeConflict      ErrorCode = "CONFLICT"
-	CodeUnauthorized  ErrorCode = "UNAUTHORIZED"
-	CodeForbidden     ErrorCode = "FORBIDDEN"
-	CodeBusinessRule  ErrorCode = "BUSINESS_RULE_VIOLATION"
-	CodeInternal      ErrorCode = "INTERNAL_ERROR"
+	CodeValidation      ErrorCode = "VALIDATION_ERROR"
+	CodeNotFound        ErrorCode = "NOT_FOUND"
+	CodeConflict        ErrorCode = "CONFLICT"
+	CodeUnauthorized    ErrorCode = "UNAUTHORIZED"
+	CodeForbidden       ErrorCode = "FORBIDDEN"
+	CodeBusinessRule    ErrorCode = "BUSINESS_RULE_VIOLATION"
+	CodeTooManyRequests ErrorCode = "TOO_MANY_REQUESTS"
+	CodeInternal        ErrorCode = "INTERNAL_ERROR"
 )
 
 // Error is a domain error carrying a stable code, a client-safe message, and
@@ -68,4 +69,11 @@ func NewForbidden(message string) *Error {
 
 func NewBusinessRule(message string) *Error {
 	return &Error{Code: CodeBusinessRule, Message: message, Status: http.StatusUnprocessableEntity}
+}
+
+// NewTooManyRequests builds a 429 for rate-limited endpoints. The message is
+// intentionally generic: it must not reveal whether the account exists or how
+// many attempts remain.
+func NewTooManyRequests(message string) *Error {
+	return &Error{Code: CodeTooManyRequests, Message: message, Status: http.StatusTooManyRequests}
 }

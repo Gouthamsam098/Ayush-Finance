@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
-import { inr, inrShort, fmtDate, initials } from '@/lib/format';
+import { inr, inrShort, fmtDate, initials, todayISO } from '@/lib/format';
 import { config } from '@/lib/config';
 import { validateCustomerForm, INDIAN_STATES, type FieldErrors } from '@/lib/customerValidation';
 import { customerApi } from '@/services/customerApi';
@@ -123,6 +123,8 @@ export default function Customers() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [form, setForm] = useState<FormState | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
+  // In-flight flag for the save round-trip (create also uploads documents).
+  const [saving, setSaving] = useState(false);
   const [view, setView] = useState<Customer | null>(null);
   const [confirm, setConfirm] = useState<Customer | null>(null);
   const [kycKind, setKycKind] = useState<KycKind>('AADHAAR');
@@ -152,7 +154,10 @@ export default function Customers() {
 
   const filtered = useMemo(() => {
     const t = q.toLowerCase().trim();
-    const today = new Date().toISOString().split('T')[0];
+    // todayISO(), never toISOString(): the latter converts to UTC, which in IST
+    // (UTC+5:30) returns YESTERDAY between 00:00 and 05:29 local — so an early
+    // morning overdue filter would silently omit accounts that fell due today.
+    const today = todayISO();
     return d.customers.filter((c) => {
       const matchesQuery = !t
         || c.name.toLowerCase().includes(t)
@@ -168,7 +173,7 @@ export default function Customers() {
 
   // Live count of how many customers the *draft* would match (drawer preview).
   const draftMatchCount = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayISO(); // local date — see `filtered` above
     return d.customers.filter((c) => passesFilters(c, factsFor(c, d.loans, d.outstandingFor, kycOf(c), today), draft)).length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.customers, d.loans, draft]);
@@ -234,7 +239,16 @@ export default function Customers() {
     }
   };
 
+  // DOUBLE-SUBMIT GUARD: `saveInner` has many early-return paths, so the
+  // in-flight flag is released in a single finally around the whole body rather
+  // than at each exit. Without it, a second click during the create round-trip
+  // (which also uploads KYC documents) can create a duplicate customer.
   const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try { await saveInner(); } finally { setSaving(false); }
+  };
+  const saveInner = async () => {
     if (!form) return;
     // Only send the KYC field the user is currently entering; clear the other
     // so a stale value from a toggle switch isn't submitted.
@@ -329,7 +343,8 @@ export default function Customers() {
   };
 
   const loansOf = (id: number) => d.loans.filter((l) => l.customerId === id);
-  const today = new Date().toISOString().split('T')[0];
+<<<<<<< HEAD
+   const today = todayISO(); // local date — never toISOString() (UTC shifts the day)
 
   const handleExport = () => {
     const headers = [
@@ -341,8 +356,11 @@ export default function Customers() {
       const activeCount = cLoans.filter((l) => l.status === 'ACTIVE').length;
       const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
       const kyc = kycOf(c);
-      const hasOverdue = cLoans.some((l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE');
+      const hasOverdue = cLoans.some(
+        (l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE'
+      );
       const status = hasOverdue ? 'Overdue' : activeCount > 0 ? 'Active' : 'Inactive';
+
       return [
         c.code, c.name, c.mobile, c.altMobile || '', c.city || '', c.state || '',
         c.occupation || '', c.monthlyIncome ?? '',
@@ -350,9 +368,11 @@ export default function Customers() {
         activeCount, outstanding, status, c.createdAt,
       ];
     });
+
     const stamp = today;
     downloadCSV(headers, rows, `Customers_Export_${stamp}.csv`);
   };
+>>>>>>> origin/newui
   const totalCustomers = d.customers.length;
   const activeCustomers = d.customers.filter((c) => loansOf(c.id).some((l) => l.status === 'ACTIVE')).length;
   const totalOutstanding = d.loans.reduce((sum, l) => sum + d.outstandingFor(l), 0);
@@ -492,8 +512,96 @@ export default function Customers() {
           </div>
         </div>
 
-        {/* Table card — flexes to fill remaining height; only its body scrolls. */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-[0.5px] border-slate-200/70 bg-white dark:border-white/[.06] dark:bg-surface">
+        {/* ── Mobile / tablet: card list ────────────────────────────────────
+            The desktop table is 9 columns at min-w-[800px], so below lg the two
+            columns that actually drive a decision — Outstanding and Status —
+            sat off-screen behind a horizontal drag (and the drag-release fired
+            the row's onClick, opening the wrong customer). Cards lead with
+            those instead. Same data, same row-tap target; mirrors the
+            CollectionCard pattern already used on the Collections page. */}
+        <div className="flex flex-col gap-3 lg:hidden">
+          {/* Empty state — the desktop copy lives inside the table card, which
+              is hidden below lg, so mobile needs its own. */}
+          {rows.length === 0 && (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200/90 bg-white px-6 py-16 text-center shadow-card dark:border-white/[.07] dark:bg-surface">
+              <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-blue-50 text-blue-500 dark:bg-blue-500/15">
+                <Users size={26} />
+              </div>
+              <h3 className="text-base font-semibold text-ink">
+                {filtersActive ? 'No matching customers' : 'No customers yet'}
+              </h3>
+              <p className="mt-1 max-w-xs text-sm text-muted">
+                {filtersActive ? 'Try adjusting your search or filters.' : 'Add your first customer to get started.'}
+              </p>
+              {!filtersActive && canEdit('Customers') && (
+                <Button onClick={openAdd} className="mt-5 !min-h-[44px]"><Plus size={16} /> Add first customer</Button>
+              )}
+            </div>
+          )}
+          {rows.map((c) => {
+            const cLoans = loansOf(c.id);
+            const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
+            const hasOverdue = cLoans.some((l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE');
+            const activeLoan = cLoans.some((l) => l.status === 'ACTIVE');
+            return (
+              <div
+                key={c.id}
+                onClick={() => setView(c)}
+                className={`anim-pop rounded-2xl border bg-white p-4 shadow-card transition-colors dark:bg-surface ${
+                  hasOverdue ? 'border-red-200 dark:border-red-500/25' : 'border-slate-200/90 dark:border-white/[.07]'
+                }`}
+              >
+                {/* Identity */}
+                <div className="flex items-start gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-primary-400 to-primary text-[13px] font-bold text-white">
+                    {initials(c.name)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-semibold text-ink">{c.name}</div>
+                    <div className="truncate text-[12.5px] text-muted">{c.code} · {c.mobile}</div>
+                  </div>
+                  <StatusBadge overdue={hasOverdue} active={activeLoan} />
+                </div>
+                {/* The decision-driving figures, always visible */}
+                <div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3 dark:border-white/[.06]">
+                  <div>
+                    <div className="text-[11px] text-muted">Outstanding</div>
+                    <div className={`font-display text-[15px] font-bold tabular-nums ${outstanding > 0 && hasOverdue ? 'text-red-600 dark:text-red-400' : 'text-ink'}`}>
+                      {inr(outstanding)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-muted">Loans</div>
+                    <div className="font-display text-[15px] font-bold tabular-nums text-ink">{cLoans.length}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-muted">KYC</div>
+                    <div className="mt-0.5"><KycBadge status={kycOf(c)} /></div>
+                  </div>
+                </div>
+                {/* Actions: 44px targets for touch. Edit/Delete respect RBAC,
+                    exactly as the desktop row does. */}
+                <div className="mt-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <Button variant="ghost" onClick={() => setView(c)} className="!min-h-[44px] flex-1 !text-[13px]">
+                    <Eye size={15} /> View
+                  </Button>
+                  {canEdit('Customers') && <>
+                    <Button variant="ghost" onClick={() => openEdit(c)} aria-label={`Edit ${c.name}`} title="Edit" className="!min-h-[44px] !min-w-[44px] !px-3">
+                      <Pencil size={15} />
+                    </Button>
+                    <Button variant="ghost" onClick={() => setConfirm(c)} aria-label={`Delete ${c.name}`} title="Delete" className="!min-h-[44px] !min-w-[44px] !px-3 !text-danger">
+                      <Trash2 size={15} />
+                    </Button>
+                  </>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Table card — desktop only (lg+); flexes to fill remaining height,
+            only its body scrolls. Markup below is unchanged. */}
+        <div className="hidden min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-[0.5px] border-slate-200/70 bg-white lg:flex dark:border-white/[.06] dark:bg-surface">
           <div className="min-h-0 flex-1 overflow-auto">
             <table className="w-full min-w-[800px] text-[15px]">
               <thead className="sticky top-0 z-10">
@@ -604,9 +712,14 @@ export default function Customers() {
             )}
           </div>
 
-          {/* Pagination footer */}
-          {filtered.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t-[0.5px] border-slate-200/70 bg-slate-50 px-5 py-3.5 dark:border-white/[.06] dark:bg-white/[.02]">
+        </div>
+
+        {/* Pagination footer — OUTSIDE the desktop-only table card so the card
+            list below lg gets the same controls (it previously lived inside the
+            table and would have disappeared on mobile). Rounded on its own at
+            small widths; visually joined to the table card at lg. */}
+        {filtered.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-[0.5px] border-slate-200/70 bg-slate-50 px-5 py-3.5 lg:-mt-px lg:rounded-t-none dark:border-white/[.06] dark:bg-white/[.02]">
               <p className="text-[14px] text-muted">
                 Showing <span className="font-semibold text-ink">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)}</span> of{' '}
                 <span className="font-semibold text-ink">{filtered.length}</span> customers
@@ -658,7 +771,6 @@ export default function Customers() {
               </div>
             </div>
           )}
-        </div>
       </div>
 
       {/* Add / Edit — right-side slide-over */}
@@ -672,8 +784,8 @@ export default function Customers() {
         closeOnScrimClick={false}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button>
-            <Button onClick={save}>{editId ? 'Save Changes' : 'Save Customer'}</Button>
+            <Button variant="ghost" onClick={() => setForm(null)} disabled={saving}>Cancel</Button>
+            <Button onClick={save} loading={saving}>{editId ? 'Save Changes' : 'Save Customer'}</Button>
           </>
         }
       >

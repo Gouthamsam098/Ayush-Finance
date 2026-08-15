@@ -12,6 +12,7 @@ import (
 
 	"github.com/anush-capitals/lms-backend/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +23,20 @@ type Repository struct {
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+
+// querier is the subset of pgx used by the read/write helpers below. Both
+// *pgxpool.Pool and pgx.Tx satisfy it, so the same query code can run either
+// standalone or inside a transaction without duplicating SQL.
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// Pool exposes the connection pool so the service can open a transaction that
+// spans this repository and the loan repository (recording a payment and
+// syncing the loan's status must be one atomic unit).
+func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 const collectionColumns = `
 	id, receipt_no, loan_id, date, amount, mode, kind, remarks, posted_by, created_at, updated_at`
@@ -41,6 +56,84 @@ func (r *Repository) Create(ctx context.Context, in domain.CollectionInput, post
 		return nil, translateWriteError(err)
 	}
 	return c, nil
+}
+
+// LockLoanForUpdate takes a row lock on the loan inside tx. Everything that
+// reads the collected total and then decides something from it (record a
+// payment, then set the loan's status) must call this FIRST, so two concurrent
+// payments on the same loan serialise instead of both acting on a stale sum.
+// Returns NotFound if the loan does not exist or is soft-deleted.
+func LockLoanForUpdate(ctx context.Context, tx pgx.Tx, loanID int64) error {
+	var id int64
+	err := tx.QueryRow(ctx,
+		`SELECT id FROM loans WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, loanID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.NewNotFound("loan")
+	}
+	return err
+}
+
+// CreateTx inserts a payment inside tx, recording the client's idempotency key
+// when one was supplied.
+//
+// Idempotency: if a row already exists for (loan_id, idempotency_key) the insert
+// is a no-op and the EXISTING row is returned — so a client retry after a
+// network timeout can never create a second payment. Without a key the insert
+// always proceeds (legacy/unkeyed callers behave exactly as before).
+// The second return value reports whether a row was actually INSERTED: false
+// means this was a replay and the existing payment is being returned. Callers
+// must use it to avoid side effects on a replay — auditing a replay would imply
+// several payments where only one exists.
+func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, in domain.CollectionInput, postedBy *int64, idempotencyKey string) (*domain.Collection, bool, error) {
+	if idempotencyKey != "" {
+		// A retry of a request that already succeeded: return the original row
+		// rather than inserting again.
+		if existing, err := r.findByIdempotencyKey(ctx, tx, in.LoanID, idempotencyKey); err != nil {
+			return nil, false, err
+		} else if existing != nil {
+			return existing, false, nil
+		}
+	}
+	const query = `
+		INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, posted_by, posted_at, idempotency_key)
+		VALUES ('RCPT-' || nextval('receipt_no_seq'), $1, $2, $3, $4, $5, $6, $7, now(), $8)
+		RETURNING ` + collectionColumns
+	// An empty key must be stored as NULL, not "": the partial unique index
+	// ignores NULLs, so unkeyed payments never collide with each other.
+	var keyArg *string
+	if idempotencyKey != "" {
+		keyArg = &idempotencyKey
+	}
+	row := tx.QueryRow(ctx, query,
+		in.LoanID, in.Date, in.Amount.DBRupees(), string(in.Mode), string(in.Kind),
+		nilIfEmpty(in.Remarks), postedBy, keyArg)
+	c, err := scanCollection(row)
+	if err != nil {
+		return nil, false, translateWriteError(err)
+	}
+	return c, true, nil
+}
+
+// findByIdempotencyKey looks for a prior payment recorded under the same key.
+// Returns (nil, nil) when there is none.
+func (r *Repository) findByIdempotencyKey(ctx context.Context, q querier, loanID int64, key string) (*domain.Collection, error) {
+	const query = `
+		SELECT ` + collectionColumns + `
+		FROM collections
+		WHERE loan_id = $1 AND idempotency_key = $2 AND deleted_at IS NULL`
+	c, err := scanCollection(q.QueryRow(ctx, query, loanID, key))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// SumByLoanTx is SumByLoan inside a transaction (see SumByLoan for the split).
+func (r *Repository) SumByLoanTx(ctx context.Context, tx pgx.Tx, loanID int64) (domain.Collected, error) {
+	return r.sumByLoan(ctx, tx, loanID)
 }
 
 // FindByID returns a non-deleted collection or a NotFound error.
@@ -122,8 +215,14 @@ func (r *Repository) ListRange(ctx context.Context, p RangeParams) ([]*domain.Co
 // SumByLoan returns the collected total for a single loan, split into interest
 // and principal buckets (so interest-only loans can settle principal separately).
 func (r *Repository) SumByLoan(ctx context.Context, loanID int64) (domain.Collected, error) {
+	return r.sumByLoan(ctx, r.pool, loanID)
+}
+
+// sumByLoan holds the query so it can run on the pool or inside a transaction
+// (see SumByLoanTx) without the SQL being written twice.
+func (r *Repository) sumByLoan(ctx context.Context, q querier, loanID int64) (domain.Collected, error) {
 	var interest, principal int64
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT
 			COALESCE(SUM(amount) FILTER (WHERE kind = 'INTEREST'), 0),
 			COALESCE(SUM(amount) FILTER (WHERE kind = 'PRINCIPAL'), 0)

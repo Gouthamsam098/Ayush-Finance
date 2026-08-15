@@ -9,7 +9,9 @@ import { Drawer } from '@/components/ui/drawer';
 import { FilterCard, SegGroup, Seg, MatchPreview } from '@/components/ui/filter-kit';
 import { useToast } from '@/components/ui/toast';
 import { PageHeader, HeaderGhostButton } from '@/components/layout/PageHeader';
-import { buildDatasetReportPDF, shareOrDownloadPDF, type ReportSummaryItem } from '@/lib/pdfReport';
+// Only the TYPE is imported statically (types are erased at build time, so this
+// pulls in no code). The jsPDF implementation is loaded on demand in runExport.
+import { type ReportSummaryItem } from '@/lib/pdfReport';
 import { inr, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { config } from '@/lib/config';
@@ -248,6 +250,8 @@ export default function Reports() {
         downloadCsv(`anush-${tab}-${stamp}.csv`, toCsv([rep.head, ...rep.body]));
         toast(`${meta.label} CSV exported (${rep.body.length} rows)`);
       } else {
+        // ~415 KB of jsPDF, fetched only when a PDF is actually requested.
+        const { buildDatasetReportPDF, shareOrDownloadPDF } = await import('@/lib/pdfReport');
         const doc = buildDatasetReportPDF({
           title: `${meta.label} Report`,
           subtitle: `${periodLabel} · ${rep.body.length} ${rep.body.length === 1 ? 'record' : 'records'}`,

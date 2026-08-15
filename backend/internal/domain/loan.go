@@ -8,12 +8,12 @@ import "time"
 type LoanType string
 
 const (
-	LoanDailyCollection   LoanType = "DAILY_COLLECTION"
-	LoanVehicle           LoanType = "VEHICLE"
-	LoanProperty          LoanType = "PROPERTY"
-	LoanDailyInterest     LoanType = "DAILY_INTEREST"
-	LoanMonthlyInterest   LoanType = "MONTHLY_INTEREST"
-	LoanFlexible          LoanType = "FLEXIBLE"
+	LoanDailyCollection LoanType = "DAILY_COLLECTION"
+	LoanVehicle         LoanType = "VEHICLE"
+	LoanProperty        LoanType = "PROPERTY"
+	LoanDailyInterest   LoanType = "DAILY_INTEREST"
+	LoanMonthlyInterest LoanType = "MONTHLY_INTEREST"
+	LoanFlexible        LoanType = "FLEXIBLE"
 )
 
 // LoanStatus is the loan lifecycle state.
@@ -135,9 +135,9 @@ func (l *Loan) interestCadenceDays() int {
 // DailyAmount, Deduction and the vehicle/optional fields are pointers because
 // they are meaningful only for some types and map to nullable columns.
 type Loan struct {
-	ID          int64
-	LoanNumber  string
-	CustomerID  int64
+	ID            int64
+	LoanNumber    string
+	CustomerID    int64
 	Type          LoanType
 	RepaymentMode RepaymentMode // EMI (default) | MONTHLY_INTEREST — only meaningful for Vehicle/Property
 	Principal     Paise
@@ -147,17 +147,17 @@ type Loan struct {
 	Disbursed     Paise // net cash given to the borrower = principal − deduction
 	DailyAmount   *Paise
 	NumDays       *int
-	LoanDate    time.Time
-	NextDueDate *time.Time
-	Status      LoanStatus
-	Contact     *string
-	Remarks     *string
+	LoanDate      time.Time
+	NextDueDate   *time.Time
+	Status        LoanStatus
+	Contact       *string
+	Remarks       *string
 	VehicleNumber *string
 	VehicleBrand  *string
 	VehicleName   *string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	ClosedAt    *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	ClosedAt      *time.Time
 }
 
 // behavesInterestOnly reports whether THIS loan should use the interest-only

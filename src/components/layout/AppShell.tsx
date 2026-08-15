@@ -2,6 +2,7 @@ import { createContext, useContext, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '@/store/authSlice';
+import { authApi } from '@/services/authApi';
 import type { RootState } from '@/store';
 import { useData } from '@/mock/DataContext';
 import { todayISO } from '@/lib/format';
@@ -222,7 +223,11 @@ export function AppShell() {
             {!collapsed && <span className="text-[13px]">{dark ? 'Light mode' : 'Dark mode'}</span>}
           </button>
           <button
-            onClick={() => { dispatch(logout()); navigate('/login'); }}
+            // Clearing Redux alone is NOT a logout: App.tsx restores the session
+            // on boot from tokenStore, so the stored JWT would sign the next
+            // person back in on a refresh (a real risk on a shared terminal).
+            // authApi.logout() discards the persisted token as well.
+            onClick={() => { authApi.logout(); dispatch(logout()); navigate('/login'); }}
             title={collapsed ? 'Logout' : undefined}
             className={cn(
               'group mt-px flex w-full items-center gap-2.5 rounded-lg px-[7px] py-2 text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-slate-400 dark:hover:bg-red-500/10 dark:hover:text-red-400',

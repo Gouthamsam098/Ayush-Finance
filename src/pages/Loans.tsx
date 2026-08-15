@@ -581,18 +581,34 @@ export default function Loans() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[15px] font-semibold text-ink">{custName(l.customerId)}</div>
                   </div>
-                  <div className="relative shrink-0">
+                  {/* Keyboard: Escape closes the menu and returns focus to the
+                      trigger. This menu is the ONLY route to Statement / Edit /
+                      Close / Delete, and dismissal previously relied on a mouse
+                      overlay — so a keyboard user could open it and get stuck
+                      behind that overlay with no way out. */}
+                  <div
+                    className="relative shrink-0"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape' && menuFor === l.id) {
+                        e.stopPropagation();
+                        setMenuFor(null);
+                        (e.currentTarget.querySelector('button') as HTMLElement | null)?.focus();
+                      }
+                    }}
+                  >
                     <button
                       onClick={() => setMenuFor(menuFor === l.id ? null : l.id)}
                       title="Actions" aria-label="Loan actions"
-                      className={`grid h-8 w-8 place-items-center rounded-lg text-muted transition-all hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.08] ${
+                      aria-haspopup="menu"
+                      aria-expanded={menuFor === l.id}
+                      className={`grid h-11 w-11 place-items-center rounded-lg text-muted transition-all hover:bg-slate-100 hover:text-ink sm:h-8 sm:w-8 dark:hover:bg-white/[.08] ${
                         menuFor === l.id ? 'bg-slate-100 opacity-100 dark:bg-white/[.08]' : 'opacity-100'
                       }`}
                     >
                       <MoreVertical size={16} />
                     </button>
                     {menuFor === l.id && (
-                      <div className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900 lg:left-0 lg:right-auto">
+                      <div role="menu" aria-label="Loan actions" className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900 lg:left-0 lg:right-auto">
                           <MenuItem icon={<FileText size={14} />} label="Statement" onClick={() => { setMenuFor(null); setLedger(l); }} />
                           {/* Mutations only for edit access — Statement stays for viewers. */}
                           {canEdit('Loans') && <>
@@ -1019,7 +1035,8 @@ function MenuItem({ icon, label, onClick, danger }: { icon: React.ReactNode; lab
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] font-semibold transition-colors ${
+      role="menuitem"
+      className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-[13px] font-semibold transition-colors ${
         danger
           ? 'text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10'
           : 'text-ink/80 hover:bg-slate-50 hover:text-blue-600 dark:hover:bg-white/[.05] dark:hover:text-blue-400'

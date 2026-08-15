@@ -110,13 +110,26 @@ func (h *Handler) record(w http.ResponseWriter, r *http.Request) {
 		postedBy = &uid
 	}
 
-	c, err := h.service.Record(r.Context(), in, postedBy)
+	// Optional Idempotency-Key: a client that retries a timed-out payment sends
+	// the same key, and the server returns the original payment instead of
+	// recording a duplicate. Trimmed and length-capped so a hostile value cannot
+	// bloat the row.
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(idempotencyKey) > maxIdempotencyKeyLen {
+		httpx.Error(w, r, domain.NewValidation("Idempotency-Key is too long", nil))
+		return
+	}
+
+	c, err := h.service.Record(r.Context(), in, postedBy, idempotencyKey)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
 	httpx.Created(w, toResponse(c))
 }
+
+// maxIdempotencyKeyLen bounds the client-supplied key (a UUID is 36 chars).
+const maxIdempotencyKeyLen = 128
 
 func (h *Handler) listByLoan(w http.ResponseWriter, r *http.Request) {
 	loanID, ok := pathID(w, r, "loanId", "loan")

@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Engineering reference for the Anush LMS loan-management system: stack, layer contract, loan domain maths, security model, and known limitations.">
+<!-- Internal engineering document — never index it. -->
+<meta name="robots" content="noindex, nofollow">
+<title>Anush LMS Architecture</title>
+<style>
+  /* Minimal reset — a standalone file gets no host stylesheet. */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; }
+  img, svg { max-width: 100%; }
+  /* ─────────────────────────────────────────────────────────────
+     Palette drawn from the subject: a paper ledger.
+     Ground = aged paper, ink = warm sepia-black, structure = ledger
+     brown, accent = the green of a credit entry, alert = ruled red.
+     Neutrals are biased warm toward the brown — never pure grey.
+     ───────────────────────────────────────────────────────────── */
+  :root {
+    --paper:      #F7F5F1;
+    --paper-2:    #EFEBE4;
+    --paper-3:    #E4DED4;
+    --ink:        #1A1714;
+    --ink-2:      #4A423A;
+    --ink-3:      #766B5F;
+    --rule:       #D6CEC1;
+    --rule-soft:  #E6E0D6;
+    --brown:      #8C6239;
+    --credit:     #0E5C4A;
+    --credit-bg:  #E3EDE9;
+    --debit:      #8B2F2F;
+    --debit-bg:   #F3E4E2;
+    --shadow:     rgba(26, 23, 20, .07);
+
+    --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --body:    "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+    --mono:    ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+
+    --measure: 68ch;
+    --rail: 3.25rem;
+  }
+
+  /* System-default (un-stamped) dark: tokens only, guarded so an explicit
+     light choice still wins over a dark OS. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #14120F;
+      --paper-2:    #1C1915;
+      --paper-3:    #24201B;
+      --ink:        #EFE9DF;
+      --ink-2:      #C0B6A8;
+      --ink-3:      #8E8578;
+      --rule:       #332D26;
+      --rule-soft:  #262119;
+      --brown:      #C99A66;
+      --credit:     #6FC0A6;
+      --credit-bg:  #17251F;
+      --debit:      #E08C82;
+      --debit-bg:   #2A1B19;
+      --shadow:     rgba(0, 0, 0, .5);
+    }
+  }
+  /* Explicit dark choice wins in the other direction. */
+  :root[data-theme="dark"] {
+    --paper:      #14120F;
+    --paper-2:    #1C1915;
+    --paper-3:    #24201B;
+    --ink:        #EFE9DF;
+    --ink-2:      #C0B6A8;
+    --ink-3:      #8E8578;
+    --rule:       #332D26;
+    --rule-soft:  #262119;
+    --brown:      #C99A66;
+    --credit:     #6FC0A6;
+    --credit-bg:  #17251F;
+    --debit:      #E08C82;
+    --debit-bg:   #2A1B19;
+    --shadow:     rgba(0, 0, 0, .5);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: calc(var(--measure) + var(--rail) + 4rem);
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  /* ── Masthead ─────────────────────────────────────────────── */
+  header.mast {
+    padding: 4.5rem 0 2rem;
+    margin-bottom: 3rem;
+    border-bottom: 2px solid var(--ink);
+    position: relative;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--brown);
+    margin: 0 0 1.25rem;
+  }
+  h1 {
+    font-family: var(--display);
+    font-size: clamp(2.6rem, 7vw, 4.25rem);
+    line-height: 1.02;
+    font-weight: 600;
+    letter-spacing: -.02em;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.2rem;
+    color: var(--ink-2);
+    max-width: 54ch;
+    margin: 0;
+  }
+  .mast-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-top: 2rem;
+    font-family: var(--mono);
+    font-size: .74rem;
+    color: var(--ink-3);
+    letter-spacing: .04em;
+  }
+  .mast-meta b { color: var(--ink-2); font-weight: 500; }
+
+  /* ── Sections: the left rail carries the real § number that the
+        document cross-references, so the numbering is information. ── */
+  section {
+    display: grid;
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    gap: 0 1.25rem;
+    padding-top: 3.25rem;
+  }
+  section > .num {
+    font-family: var(--mono);
+    font-size: .8rem;
+    color: var(--brown);
+    padding-top: .55rem;
+    letter-spacing: .02em;
+    font-variant-numeric: tabular-nums;
+  }
+  section > .col { min-width: 0; }
+
+  h2 {
+    font-family: var(--display);
+    font-size: clamp(1.5rem, 3.4vw, 2rem);
+    line-height: 1.15;
+    font-weight: 600;
+    letter-spacing: -.012em;
+    margin: 0 0 1.1rem;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: var(--display);
+    font-size: 1.16rem;
+    font-weight: 600;
+    margin: 2.25rem 0 .6rem;
+    color: var(--ink);
+  }
+  p { margin: 0 0 1.1rem; }
+  .lede { font-size: 1.06rem; color: var(--ink-2); }
+  a { color: var(--credit); text-underline-offset: 3px; }
+  strong { font-weight: 600; }
+  code {
+    font-family: var(--mono);
+    font-size: .855em;
+    background: var(--paper-2);
+    border: 1px solid var(--rule-soft);
+    border-radius: 3px;
+    padding: .08em .34em;
+  }
+
+  /* ── Wide content: its own scroll container, never the body ── */
+  .scroll {
+    overflow-x: auto;
+    margin: 1.5rem 0 1.75rem;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: var(--paper-2);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: .875rem;
+    font-family: var(--mono);
+  }
+  caption {
+    caption-side: top;
+    text-align: left;
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--brown);
+    padding: .8rem 1rem .55rem;
+    background: var(--paper-2);
+  }
+  th, td {
+    text-align: left;
+    padding: .6rem 1rem;
+    border-top: 1px solid var(--rule-soft);
+    vertical-align: top;
+    white-space: nowrap;
+  }
+  th {
+    font-weight: 600;
+    color: var(--ink-2);
+    font-size: .72rem;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    background: var(--paper-3);
+    border-top: 1px solid var(--rule);
+  }
+  td.wrap-cell { white-space: normal; min-width: 22ch; font-family: var(--body); font-size: .97rem; }
+  tbody tr:nth-child(even) { background: color-mix(in srgb, var(--paper-3) 45%, transparent); }
+  .num-cell { font-variant-numeric: tabular-nums; text-align: right; }
+
+  pre {
+    font-family: var(--mono);
+    font-size: .78rem;
+    line-height: 1.6;
+    margin: 0;
+    padding: 1.25rem 1.35rem;
+    color: var(--ink-2);
+  }
+  .scroll.diagram { background: var(--paper-2); }
+
+  /* ── Ledger-rule list: the double rule of a bound ledger ── */
+  ul.ruled { list-style: none; padding: 0; margin: 1.25rem 0 1.5rem; }
+  ul.ruled li {
+    padding: .7rem 0 .7rem 1.4rem;
+    border-top: 1px solid var(--rule-soft);
+    position: relative;
+  }
+  ul.ruled li:last-child { border-bottom: 1px solid var(--rule-soft); }
+  ul.ruled li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 1.35rem;
+    width: .45rem; height: 1px;
+    background: var(--brown);
+  }
+
+  /* ── Callouts ── */
+  .note {
+    border-left: 3px solid var(--credit);
+    background: var(--credit-bg);
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0;
+    font-size: .97rem;
+  }
+  .note.warn { border-left-color: var(--debit); background: var(--debit-bg); }
+  .note p:last-child { margin-bottom: 0; }
+  .note .tag {
+    display: block;
+    font-family: var(--mono);
+    font-size: .67rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--credit);
+    margin-bottom: .4rem;
+  }
+  .note.warn .tag { color: var(--debit); }
+
+  /* ── Behaviour cards: three economic behaviours, side by side ── */
+  .behaviours {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    margin: 1.5rem 0 1.75rem;
+  }
+  .beh {
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--brown);
+    padding: 1.1rem 1.15rem;
+    background: var(--paper-2);
+  }
+  .beh h4 {
+    font-family: var(--display);
+    font-size: 1.02rem;
+    margin: 0 0 .5rem;
+    font-weight: 600;
+  }
+  .beh .types {
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--ink-3);
+    line-height: 1.5;
+    margin: 0 0 .7rem;
+  }
+  .beh .formula {
+    font-family: var(--mono);
+    font-size: .76rem;
+    color: var(--credit);
+    background: var(--paper);
+    border: 1px solid var(--rule-soft);
+    padding: .45rem .6rem;
+    margin: 0;
+    overflow-x: auto;
+  }
+
+  /* ── Layer contract ── */
+  .layers { margin: 1.4rem 0 1.5rem; }
+  .layer {
+    display: grid;
+    grid-template-columns: 8.5rem minmax(0, 1fr);
+    gap: 1rem;
+    padding: .8rem 0;
+    border-top: 1px solid var(--rule-soft);
+    align-items: baseline;
+  }
+  .layer:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .layer dt { font-family: var(--mono); font-size: .8rem; color: var(--brown); }
+  .layer dd { margin: 0; font-size: .98rem; color: var(--ink-2); }
+
+  footer {
+    margin-top: 4.5rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid var(--ink);
+    font-family: var(--mono);
+    font-size: .72rem;
+    color: var(--ink-3);
+    letter-spacing: .04em;
+  }
+
+  /* Theme toggle — a standalone file has no host UI, so the reader needs one.
+     Follows the OS by default; the button stamps data-theme to override. */
+  .theme-toggle {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .45rem .7rem;
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .theme-toggle:hover { color: var(--ink); border-color: var(--brown); }
+  @media print { .theme-toggle { display: none; } }
+
+  :focus-visible { outline: 2px solid var(--credit); outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  @media (max-width: 640px) {
+    :root { --rail: 2.25rem; }
+    body { font-size: 16px; }
+    section { grid-template-columns: 1fr; gap: 0; }
+    section > .num { padding-top: 0; margin-bottom: .4rem; }
+    .layer { grid-template-columns: 1fr; gap: .2rem; }
+  }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch colour theme">
+  <span id="themeLabel">Dark</span>
+</button>
+
+<div class="wrap">
+
+  <header class="mast">
+    <p class="eyebrow">Anush Capitals · Engineering reference</p>
+    <h1>Anush LMS Architecture</h1>
+    <p class="standfirst">How the loan-management system is built: six loan products, three economic behaviours, and the machinery that keeps the money correct.</p>
+    <div class="mast-meta">
+      <span><b>React 18</b> + TypeScript</span>
+      <span><b>Go 1.26</b> + PostgreSQL 16</span>
+      <span><b>4 containers</b>, one droplet</span>
+      <span>~10–15 concurrent operators</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="num">§1</div>
+    <div class="col">
+      <h2>At a glance</h2>
+      <p class="lede">Every choice below is in the code today. Where the implementation has a known gap, §10 says so plainly.</p>
+
+      <div class="scroll">
+        <table>
+          <caption>Stack</caption>
+          <thead>
+            <tr><th>Layer</th><th>Technology</th><th class="num-cell">Version</th><th>Why</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>UI</td><td>React + TypeScript</td><td class="num-cell">18.2 / 5.4</td><td class="wrap-cell">Compile-time safety on money-handling code</td></tr>
+            <tr><td>Build</td><td>Vite</td><td class="num-cell">5.2</td><td class="wrap-cell"><code>tsc -b</code> runs first, so a type error fails the build</td></tr>
+            <tr><td>Styling</td><td>Tailwind CSS</td><td class="num-cell">3.4</td><td class="wrap-cell">Theme tokens drive light and dark</td></tr>
+            <tr><td>Routing</td><td>React Router</td><td class="num-cell">6.22</td><td class="wrap-cell">Nested routes; every page lazy-loaded</td></tr>
+            <tr><td>State — auth</td><td>Redux Toolkit</td><td class="num-cell">2.2</td><td class="wrap-cell">Single source for the session</td></tr>
+            <tr><td>State — domain</td><td>React Context</td><td class="num-cell">—</td><td class="wrap-cell"><code>DataContext</code> holds all business entities</td></tr>
+            <tr><td>Charts</td><td>Recharts</td><td class="num-cell">3.10</td><td class="wrap-cell">Dashboard KPIs and trends</td></tr>
+            <tr><td>PDF</td><td>jsPDF + autotable</td><td class="num-cell">4.2 / 5.0</td><td class="wrap-cell">Client-side ledgers and reports</td></tr>
+            <tr><td>API</td><td>Go</td><td class="num-cell">1.26</td><td class="wrap-cell">One static binary, ~8 MB resident, no runtime to tune</td></tr>
+            <tr><td>HTTP router</td><td>chi</td><td class="num-cell">5.3</td><td class="wrap-cell"><code>net/http</code>-compatible middleware</td></tr>
+            <tr><td>DB driver</td><td>pgx</td><td class="num-cell">5.10</td><td class="wrap-cell">Native protocol, real transactions, pooling</td></tr>
+            <tr><td>Database</td><td>PostgreSQL</td><td class="num-cell">16</td><td class="wrap-cell">Integer money, JSONB permissions, partial indexes</td></tr>
+            <tr><td>Auth</td><td>RS256 JWT + bcrypt</td><td class="num-cell">cost 12</td><td class="wrap-cell">Asymmetric tokens; deliberately slow hashing</td></tr>
+            <tr><td>Reverse proxy</td><td>Caddy</td><td class="num-cell">2</td><td class="wrap-cell">Automatic TLS, HTTP→HTTPS, HSTS</td></tr>
+            <tr><td>Static serving</td><td>nginx</td><td class="num-cell">1.27</td><td class="wrap-cell">Serves the SPA with CSP and cache policy</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="tag">Deliberately absent</span>
+        <p>No Kubernetes, microservices, message queue, Redis, or ORM. At this user count they add operating cost and buy nothing. The architecture avoids only those decisions that would make later scaling <em>harder</em> — see §10.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§2</div>
+    <div class="col">
+      <h2>Runtime topology</h2>
+      <p>Only Caddy is reachable from outside. The API, static server, and database share a private Docker network — and the database publishes no host port at all, so it cannot be reached from the internet even with valid credentials.</p>
+
+      <div class="scroll diagram">
+<pre>                      Internet
+                         │  :80 / :443 only
+                         ▼
+                ┌──────────────────┐
+                │      Caddy       │  TLS, HTTP→HTTPS, HSTS
+                └────────┬─────────┘  the ONLY published ports
+               /api/*    │    /*        ← image: caddy:2-alpine
+          ┌──────────────┴───────────────┐    config: backend/Caddyfile
+          ▼                              ▼
+┌────────────────────┐        ┌────────────────────────┐
+│  backend (Go API)  │        │  web (nginx + SPA)     │
+│  :4000  internal   │        │  :8080  internal       │
+└─────────┬──────────┘        └────────────────────────┘
+          │                     built by: Dockerfile (root)
+          │ pgx pool            config:   nginx/nginx.conf
+          ▼   built by: backend/Dockerfile
+┌────────────────────┐
+│  postgres 16       │  internal only — NO host port
+│  volume: pgdata    │  image: postgres:16-alpine
+└────────────────────┘
+
+  all four wired by: backend/docker-compose.prod.yml</pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§3</div>
+    <div class="col">
+      <h2>Request lifecycle</h2>
+      <p>A payment being recorded, end to end. Every write follows this shape, and the transaction boundary always lives in the <strong>service</strong> — never in a handler or a repository.</p>
+
+      <div class="scroll diagram">
+<pre>Browser
+  └─ Collections.tsx      button disabled while in flight (no double-submit)
+       └─ DataContext.addCollection()        branches on config.useApi
+            └─ collectionApi.record()        attaches a fresh Idempotency-Key
+                 └─ lib/api.ts               Bearer token, unwraps envelope
+                      │  POST /api/v1/loans/{id}/collections
+                      ▼
+Caddy ─→ backend
+  ├─ RequestID            request_id + a scoped logger
+  ├─ AccessLog            one structured line per request (never bodies)
+  ├─ Recover              panic → 500, detail logged not leaked
+  ├─ audit.Middleware     captures client IP + user agent
+  ├─ CORS                 explicit origin allowlist (no wildcard in prod)
+  ├─ Authenticate         verifies the RS256 JWT
+  ├─ RequirePermission    module RBAC: view to read, edit to write
+  └─ collection.Handler   parse + shape only
+       └─ collection.Service ── ONE transaction:
+            ├─ SELECT … FOR UPDATE on the loan   serialises concurrent payments
+            ├─ replay check on the idempotency key
+            ├─ domain validation (dates, amount, loan state)
+            ├─ INSERT the payment
+            ├─ recompute collected → auto-close if settled
+            ├─ INSERT the audit row
+            └─ COMMIT       all of it, or none of it</pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§4</div>
+    <div class="col">
+      <h2>Backend structure</h2>
+      <p>Layered, with every dependency injected from one composition root (<code>internal/server/router.go</code>). Nothing reaches for globals.</p>
+
+      <div class="scroll diagram">
+<pre>cmd/
+  server/      API entry point
+  genkeys/     generates the RS256 keypair
+  seedadmin/   env-driven bootstrap admin
+
+internal/
+  domain/      entities, money, loan maths, validation, errors   ← no I/O
+  feature/<x>/ handler.go → service.go → repository.go
+               auth · customer · loan · collection · expense · document · user
+  httpx/       response envelope, middleware, RBAC, rate limiting
+  crypto/      bcrypt hashing, RS256 JWT
+  database/    pgx pool + embedded migration runner
+  audit/       append-only trail writer
+  logger/      slog JSON logger with redaction
+  config/      env loading, fail-fast validation</pre>
+      </div>
+
+      <h3>The layer contract</h3>
+      <dl class="layers">
+        <div class="layer"><dt>handler</dt><dd>Parse the request, shape the response. No business rules.</dd></div>
+        <div class="layer"><dt>service</dt><dd>Business rules, validation, transaction boundaries.</dd></div>
+        <div class="layer"><dt>repository</dt><dd>Parameterised SQL only. No decisions.</dd></div>
+        <div class="layer"><dt>domain</dt><dd>Pure logic — no database, no HTTP. This is what the tests cover.</dd></div>
+      </dl>
+
+      <p><code>domain</code> importing a feature package, or a handler containing money maths, is an architecture violation.</p>
+
+      <h3>Response envelope</h3>
+      <div class="scroll diagram">
+<pre>{ "success": true,  "data": { … }, "meta": { … } }
+
+{ "success": false, "error": { "code": "VALIDATION_ERROR",
+                              "message": "…",
+                              "fields": { "pan_number": "…" } } }</pre>
+      </div>
+      <p>Domain errors carry a stable code, a client-safe message, and an HTTP status. Anything unrecognised becomes a generic 500 — detail is logged, never returned. Handlers project to DTOs that omit <code>password_hash</code> and return Aadhaar and PAN <strong>masked</strong>.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§5</div>
+    <div class="col">
+      <h2>The loan domain</h2>
+      <p class="lede">This is the heart of the system. Six loan types collapse into three economic behaviours — get this wrong and the money is wrong.</p>
+
+      <div class="behaviours">
+        <div class="beh">
+          <h4>Instalment</h4>
+          <p class="types">DAILY_COLLECTION</p>
+          <p>Interest deducted upfront as <code>deduction</code>; daily payments repay principal.</p>
+          <p class="formula">principal − collected</p>
+        </div>
+        <div class="beh">
+          <h4>EMI</h4>
+          <p class="types">VEHICLE · PROPERTY<br>(EMI mode)</p>
+          <p>Interest added to principal, repaid across equal monthly instalments.</p>
+          <p class="formula">principal + interest − collected</p>
+        </div>
+        <div class="beh">
+          <h4>Interest-only</h4>
+          <p class="types">DAILY_INTEREST · MONTHLY_INTEREST · FLEXIBLE · Vehicle/Property in monthly-interest mode</p>
+          <p>Interest recurs per cycle on the original principal; principal stays until settled.</p>
+          <p class="formula">remaining principal + accrued unpaid interest</p>
+        </div>
+      </div>
+
+      <p><code>Loan.Outstanding()</code> is the single dispatch point. The derived helpers that matter:</p>
+      <ul class="ruled">
+        <li><code>ElapsedDaysSinceLoan</code> — calendar days, Day 1 = the loan date.</li>
+        <li><code>MonthlyCyclesElapsed</code> — cycles <strong>fallen due</strong>. Cycle <em>k</em> is due on day <em>k·cadence + 1</em>, so it never counts a day early. Accrual must always agree with the ledger rows the operator sees.</li>
+        <li><code>CalcInterest(principal, rate)</code> = <code>round(principal × rate ÷ 100)</code>.</li>
+      </ul>
+
+      <div class="note">
+        <span class="tag">Lock-step rule</span>
+        <p>The Go and TypeScript implementations must change together. A test asserts they agree across 24,000 principal/rate combinations — truncation once broke this on a quarter of all values.</p>
+      </div>
+
+      <h3>Collections, ledger, and profit</h3>
+      <p>Three rules that exist because breaking any one silently corrupts reporting:</p>
+      <ul class="ruled">
+        <li><strong>Receipt-date rule.</strong> A payment's date is when the money <em>arrived</em> — it defaults to today, never a schedule slot's due date. Allocation to slots is FIFO from the pool; the date never drives it.</li>
+        <li><strong>Profit recognition, profit-last.</strong> Interest-only: every non-<code>PRINCIPAL</code> payment is profit. Upfront and EMI: profit is the slice of <em>cumulative</em> collections landing in <code>(disbursed, disbursed + margin]</code>. Early payments recover the cash first; the tail is profit. Foreclosure needs no special case.</li>
+        <li><strong>One slot ledger for every type.</strong> Each row is a due, with separate <em>Due Date</em> and <em>Collection Date</em> columns — so a bulk payment shows as Paid on every due it cleared while still revealing the single day the cash arrived.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§6</div>
+    <div class="col">
+      <h2>Money representation</h2>
+      <p>Money is <strong>never</strong> a float.</p>
+
+      <div class="scroll">
+        <table>
+          <caption>Representation by layer</caption>
+          <thead><tr><th>Layer</th><th>Representation</th></tr></thead>
+          <tbody>
+            <tr><td>Database</td><td class="wrap-cell"><code>BIGINT</code>, whole rupees</td></tr>
+            <tr><td>Go internals</td><td class="wrap-cell"><code>domain.Paise</code> — <code>int64</code> paise</td></tr>
+            <tr><td>JSON boundary</td><td class="wrap-cell">Rupees (parsed in, <code>.Rupees()</code> out)</td></tr>
+            <tr><td>Frontend</td><td class="wrap-cell">Plain numbers, formatted by <code>inr()</code> / <code>inrShort()</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><code>Paise.DBRupees()</code> <strong>rounds</strong> to the nearest rupee — it must not truncate. Derived values such as interest and EMI legitimately carry paise, and truncating both lost money and disagreed with the frontend, which computes the same figure in rupee space with <code>Math.round</code>.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§7</div>
+    <div class="col">
+      <h2>Frontend structure</h2>
+
+      <div class="scroll diagram">
+<pre>src/
+  pages/        9 route-level screens (all lazy-loaded)
+  components/
+    ui/         12 hand-rolled primitives (Dialog, Drawer, Input, DatePicker…)
+    dashboard/  KPI cards, charts, gauges
+    layout/     AppShell (sidebar, theme), PageHeader
+  services/     7 typed API clients, one per backend feature
+  lib/          api client, format, validation, pdfReport, permissions
+  store/        Redux — auth only
+  mock/         DataContext — every business entity + derived maths
+  routes/       ProtectedRoute, AdminRoute</pre>
+      </div>
+
+      <h3>Two deliberately separate state systems</h3>
+      <ul class="ruled">
+        <li><strong>Redux</strong> holds <em>only</em> auth. <code>ProtectedRoute</code> gates every route on it. In API mode the stored value is a sentinel; the real JWT lives in <code>tokenStore</code>.</li>
+        <li><strong>DataContext</strong> holds everything else, and is API-aware behind a flag: its mutators call the relevant service when <code>config.useApi</code> is set, otherwise they mutate in-memory seed data. Pages call <code>useData()</code> and never know which.</li>
+      </ul>
+
+      <h3>The VITE_USE_API flag</h3>
+      <p>The SPA runs against either the in-memory mock or the real backend. This is why the whole UI can be developed and demoed with no database — and why wiring a new feature means adding a service and branching one <code>DataContext</code> method rather than rewriting pages.</p>
+
+      <h3>Bundle strategy</h3>
+      <p>Every authenticated page is <code>React.lazy</code>, and jsPDF is imported dynamically inside the export handler. The login path is <strong>~145 KB gzip</strong> instead of the ~435 KB it was when everything shipped in one chunk. React and Redux sit in their own vendor chunks so they survive deploys in the browser cache.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§8</div>
+    <div class="col">
+      <h2>Security model</h2>
+      <p>Layered, with the <strong>server as the sole authority</strong>. The UI's permission gating is cosmetic; the middleware is what enforces.</p>
+
+      <div class="scroll">
+        <table>
+          <caption>Controls</caption>
+          <thead><tr><th>Concern</th><th>Implementation</th></tr></thead>
+          <tbody>
+            <tr><td>Passwords</td><td class="wrap-cell">bcrypt cost 12 — ~500 ms per verify. The login latency <em>is</em> the defence.</td></tr>
+            <tr><td>Sessions</td><td class="wrap-cell">RS256 JWT, hard 1-hour TTL, no refresh. Expiry → 401 → re-login.</td></tr>
+            <tr><td>Logout</td><td class="wrap-cell">Clears Redux <em>and</em> the persisted token — a stale token would otherwise restore the session on refresh.</td></tr>
+            <tr><td>RBAC</td><td class="wrap-cell">Per module: <code>view</code> to read, <code>edit</code> to write; admins bypass.</td></tr>
+            <tr><td>Admin routes</td><td class="wrap-cell"><code>/users</code> also requires <code>IsActive</code> — a deactivated admin loses access immediately, not at token expiry.</td></tr>
+            <tr><td>Object-level auth</td><td class="wrap-cell">Documents scoped by <code>customer_id</code> in the SQL. A mismatch is <strong>404</strong>, never 403, so IDs cannot be probed.</td></tr>
+            <tr><td>Brute force</td><td class="wrap-cell">Per-IP window limiter on <code>/auth/*</code>, reading the real client IP from <code>X-Forwarded-For</code>.</td></tr>
+            <tr><td>Uploads</td><td class="wrap-cell">Extension + declared MIME + <strong>magic-byte sniffing</strong>; 5 MiB cap; filenames stripped of paths, quotes, control characters.</td></tr>
+            <tr><td>Downloads</td><td class="wrap-cell"><code>nosniff</code>, so a spoofed file cannot execute in-origin.</td></tr>
+            <tr><td>SQL injection</td><td class="wrap-cell">Parameterised pgx queries throughout; no string-built SQL.</td></tr>
+            <tr><td>Secrets</td><td class="wrap-cell">Env only, fail-fast at boot. <code>${VAR:?}</code> in prod compose aborts a deploy on a missing value.</td></tr>
+            <tr><td>Logging</td><td class="wrap-cell">slog JSON, redacting credentials <em>and</em> PII/KYC keys — Aadhaar, PAN, mobile, email, DOB, address.</td></tr>
+            <tr><td>Transport</td><td class="wrap-cell">Caddy: automatic TLS, HTTP→HTTPS, HSTS.</td></tr>
+            <tr><td>Browser</td><td class="wrap-cell">CSP, nosniff, frame-deny, referrer policy from nginx; <code>noindex</code> + <code>robots.txt</code>.</td></tr>
+            <tr><td>Audit</td><td class="wrap-cell">Append-only <code>audit_log</code> with actor, IP, user agent — written <em>inside</em> the payment transaction.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§9</div>
+    <div class="col">
+      <h2>Data model</h2>
+      <p>Seven tables. Soft deletes throughout; human-readable codes (<code>CUST-####</code>, <code>LN-####</code>, <code>RCPT-######</code>) minted from Postgres sequences.</p>
+
+      <div class="scroll diagram">
+<pre>users ──posted_by──┐
+                   ▼
+customers ──1:N──> loans ──1:N──> collections
+    │                                   │
+    └──1:N──> documents            audit_log (actor, IP, before/after)
+
+expenses (standalone)</pre>
+      </div>
+
+      <ul class="ruled">
+        <li><strong>users</strong> — bcrypt hash, <code>role</code>, and <code>permissions</code> as JSONB, e.g. <code>{"Loans":"edit"}</code>.</li>
+        <li><strong>loans</strong> — stores both the inputs (principal, rate) and the derived values (interest, deduction, disbursed, instalment), so history stays reproducible even if a formula later changes.</li>
+        <li><strong>collections</strong> — <code>kind</code> splits <code>INTEREST</code> (income) from <code>PRINCIPAL</code> (settlement); <code>idempotency_key</code> is unique per loan via a <em>partial</em> index, so unkeyed rows are unaffected.</li>
+        <li><strong>documents</strong> — file bytes as <code>bytea</code>. See §10.</li>
+      </ul>
+
+      <p>Migrations are <strong>embedded in the binary</strong> and applied idempotently on boot, each in its own transaction, tracked in <code>schema_migrations</code>. To change the schema, add a numbered migration — never edit one already applied.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§10</div>
+    <div class="col">
+      <h2>Known limitations</h2>
+      <p class="lede">Each of these is a deliberate trade-off or scheduled work — not an oversight.</p>
+
+      <div class="scroll">
+        <table>
+          <caption>Open items</caption>
+          <thead><tr><th>Item</th><th>Impact</th><th>Direction</th></tr></thead>
+          <tbody>
+            <tr><td>Documents in Postgres</td><td class="wrap-cell">Every backup carries every file; a download buffers up to 5 MB in the API</td><td class="wrap-cell">Move to private object storage with pre-signed URLs; keep the authorization gate in the API</td></tr>
+            <tr><td>In-process rate limiter</td><td class="wrap-cell">Counters reset on restart; per-replica</td><td class="wrap-cell">Fine for one container; needs a shared store to scale out</td></tr>
+            <tr><td>No handler/service tests</td><td class="wrap-cell">Coverage is domain + middleware + contracts</td><td class="wrap-cell">Integration tests against a throwaway Postgres</td></tr>
+            <tr><td>Frontend loads all rows</td><td class="wrap-cell"><code>DataContext</code> fetches full tables</td><td class="wrap-cell">Paginate server-side before a few thousand collections</td></tr>
+            <tr><td>Keyboard access gaps</td><td class="wrap-cell">Loans ⋮ menu and DatePicker are mouse-only</td><td class="wrap-cell">Roving focus + Enter/Space handlers</td></tr>
+            <tr><td>Single droplet</td><td class="wrap-cell">No redundancy; a host failure is downtime</td><td class="wrap-cell">Acceptable at this scale with tested backups</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§11</div>
+    <div class="col">
+      <h2>Containerisation and deployment files</h2>
+      <p class="lede">Fifteen files define how this application is built, shipped, and operated. They split into two build contexts — the repo root builds the frontend image; <code>backend/</code> builds the API image and owns the compose files.</p>
+
+      <h3>Build definitions</h3>
+      <div class="scroll">
+        <table>
+          <caption>Images and entrypoint</caption>
+          <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>Dockerfile</td><td class="wrap-cell"><strong>Frontend production image.</strong> Two stages: <code>node:20-alpine</code> runs <code>npm ci</code> + <code>npm run build</code>, then <code>nginx:1.27-alpine</code> serves only the built <code>dist/</code>. Runs as the unprivileged <code>nginx</code> user on port <strong>8080</strong> — an unprivileged port is required for non-root — with a <code>HEALTHCHECK</code>. No source, no <code>node_modules</code>, no source maps reach the final image.</td></tr>
+            <tr><td>.dockerignore</td><td class="wrap-cell">Keeps <code>node_modules</code>, <code>.git</code>, <code>dist/</code>, <code>backend/</code>, and <strong><code>.env*</code></strong> out of the build context. Without it the whole repo — including local secrets — is uploaded to the daemon and can be baked into a layer.</td></tr>
+            <tr><td>backend/Dockerfile</td><td class="wrap-cell"><strong>API image.</strong> <code>golang:1.26-alpine</code> compiles three static binaries (<code>server</code>, <code>genkeys</code>, <code>seedadmin</code>) with <code>CGO_ENABLED=0</code>, then copies them into bare <code>alpine:3.20</code> with only <code>ca-certificates</code>, <code>wget</code>, and <code>tzdata</code>. A few MB, and no toolchain.</td></tr>
+            <tr><td>backend/.dockerignore</td><td class="wrap-cell">Same idea for the API build context.</td></tr>
+            <tr><td>backend/docker-entrypoint.sh</td><td class="wrap-cell">First-boot provisioning: generates the RS256 keypair if absent, seeds the admin from <code>ADMIN_*</code>, then starts the server. This is why <code>docker compose up</code> on a clean machine yields a working, loggable-in system with no manual steps.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Orchestration</h3>
+      <div class="scroll">
+        <table>
+          <caption>Compose, TLS, and static serving</caption>
+          <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>docker-compose.yml</td><td class="wrap-cell"><strong>Development.</strong> Postgres + backend only. Publishes Postgres on host <strong>5433</strong> (avoiding a clash with a local 5432) and the API on <strong>4000</strong>. Carries dev credentials in plain text — they are public in this repo and must never be used in production.</td></tr>
+            <tr><td>docker-compose.prod.yml</td><td class="wrap-cell"><strong>Production.</strong> Four services: <code>postgres</code>, <code>backend</code>, <code>web</code>, <code>caddy</code>. Differs from dev deliberately: <code>APP_ENV=production</code>; every secret arrives via <code>${VAR:?}</code> so a missing value <strong>aborts the deploy</strong> rather than falling back to a dev default; Postgres publishes <strong>no host port at all</strong>; only Caddy exposes 80/443; <code>restart: unless-stopped</code> throughout; and log rotation caps so container logs cannot fill the droplet's disk.</td></tr>
+            <tr><td>Caddyfile</td><td class="wrap-cell">TLS terminator and single public entrypoint. Automatic Let's Encrypt, HTTP→HTTPS, HSTS, and routing: <code>/api/*</code> → backend, everything else → the SPA. Forwards the real client IP as <code>X-Real-IP</code> so the rate limiter and access log attribute requests to the caller, not the proxy.</td></tr>
+            <tr><td>nginx/nginx.conf</td><td class="wrap-cell">Serves the SPA: history fallback, gzip, hard caching on content-hashed assets but <strong><code>no-store</code> on <code>index.html</code></strong> — a cached index pins users to deleted asset hashes after a deploy — plus CSP, <code>nosniff</code>, frame-deny, referrer and permissions policy. HSTS is deliberately <em>not</em> set here; it belongs on Caddy, which knows the request actually arrived over TLS.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Configuration and operations</h3>
+      <div class="scroll">
+        <table>
+          <caption>Templates, tooling, CI</caption>
+          <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>.env.example</td><td class="wrap-cell">Frontend template. Documents that every <code>VITE_*</code> value is <strong>inlined into the public bundle</strong> and is therefore not a secret.</td></tr>
+            <tr><td>backend/.env.example</td><td class="wrap-cell">Backend development template.</td></tr>
+            <tr><td>.env.production.example</td><td class="wrap-cell">Production template with <code>openssl rand</code> commands for generating real secrets, and a warning not to copy anything from the dev compose file.</td></tr>
+            <tr><td>backend/Makefile</td><td class="wrap-cell">Local workflow: <code>keys</code>, <code>db-up</code>, <code>seed-admin</code>, <code>run</code>, <code>test</code>, <code>vet</code>, <code>build</code>.</td></tr>
+            <tr><td>scripts/backup-db.sh</td><td class="wrap-cell">Nightly <code>pg_dump</code> (custom format), a <strong><code>pg_restore --list</code> integrity check</strong> — a dump that cannot be read is not a backup — and retention pruning. Includes the reminder that a backup on the same droplet is not a backup.</td></tr>
+            <tr><td>.github/workflows/ci.yml</td><td class="wrap-cell">Three jobs: frontend (<code>tsc</code> + <code>vite build</code>), backend (<code>go vet</code>, <code>go build</code>, <code>go test -race</code>), and security (<code>npm audit</code>, <code>govulncheck</code>, gitleaks over full history).</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="tag">Why multi-stage</span>
+        <p>Both images are multi-stage on purpose. The build stage carries a Node or Go toolchain worth hundreds of megabytes; the runtime stage carries only the artefact. That keeps deploys quick on a modest droplet and — more importantly — removes compilers and package managers from the running container, so an attacker who gains code execution finds no tooling waiting.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="num">§12</div>
+    <div class="col">
+      <h2>Development and deployment</h2>
+
+      <div class="scroll diagram">
+<pre># Frontend (repo root)
+npm run dev        # Vite on :5173, /api proxied to :4000
+npm run build      # tsc -b && vite build  ← the correctness gate
+
+# Backend (backend/)
+make keys && make db-up && make seed-admin && make run
+make test          # go test ./...
+docker compose up --build          # full local stack</pre>
+      </div>
+
+      <p><strong>Production:</strong> <code>docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build</code>. See <code>DEPLOYMENT.md</code> for droplet hardening, firewall, DNS, backups, and the restore drill.</p>
+
+      <p><strong>CI</strong> gates every push on <code>tsc</code> + <code>vite build</code>, <code>go vet</code>, <code>go build</code>, and <code>go test -race</code>, plus <code>npm audit</code>, <code>govulncheck</code>, and a gitleaks secret scan over full history.</p>
+
+      <h3>Verification gates before any change ships</h3>
+      <ul class="ruled">
+        <li><code>npm run build</code> — typecheck and bundle.</li>
+        <li><code>go build ./... &amp;&amp; go vet ./... &amp;&amp; go test -race ./...</code></li>
+        <li>The <strong>loan edge-case matrix</strong>: three behaviours × {normal, partial, bulk, post-bulk, overdue, foreclosure}, plus profit month-bucketing and same-day ordering.</li>
+      </ul>
+
+      <div class="note warn">
+        <span class="tag">The historical failure mode</span>
+        <p>Fixing one cell of that matrix while breaking another is the documented way this codebase has gone wrong before. Run the whole matrix, not the cell you touched.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Anush LMS · engineering reference · derived from the codebase, not from intent
+  </footer>
+
+</div>
+
+<script>
+  // Theme override. With no stamp the page follows the OS (prefers-color-scheme);
+  // clicking stamps data-theme on <html>, which the CSS gives higher precedence.
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById('themeToggle');
+    var label = document.getElementById('themeLabel');
+    var KEY = 'anush-arch-theme';
+
+    function systemPrefersDark() {
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    function currentIsDark() {
+      var stamped = root.getAttribute('data-theme');
+      return stamped ? stamped === 'dark' : systemPrefersDark();
+    }
+    function render() {
+      // The button offers the theme you'd switch TO.
+      label.textContent = currentIsDark() ? 'Light' : 'Dark';
+    }
+
+    try {
+      var saved = localStorage.getItem(KEY);
+      if (saved === 'dark' || saved === 'light') root.setAttribute('data-theme', saved);
+    } catch (e) { /* file:// with storage blocked — fall back to the OS theme */ }
+
+    btn.addEventListener('click', function () {
+      var next = currentIsDark() ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem(KEY, next); } catch (e) {}
+      render();
+    });
+
+    render();
+  })();
+</script>
+
+</body>
+</html>

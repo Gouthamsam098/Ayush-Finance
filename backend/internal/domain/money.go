@@ -22,11 +22,21 @@ func RupeesToPaise(rupees float64) Paise {
 // feed this back into calculations.
 func (p Paise) Rupees() float64 { return float64(p) / 100 }
 
-// DBRupees returns the amount as a whole-rupee integer for storage. Money in
-// this system is always whole rupees (validated at input), so this division is
-// exact — no paise are ever lost. The database therefore stores the human
-// rupee amount (₹1,00,000 → 100000), not paise. Internal math still uses Paise.
-func (p Paise) DBRupees() int64 { return int64(p) / 100 }
+// DBRupees returns the amount as a whole-rupee integer for storage. The
+// database stores the human rupee amount (₹1,00,000 → 100000), not paise;
+// internal math still uses Paise.
+//
+// Rounds to the NEAREST rupee — it must not truncate. User-entered money is
+// validated to whole rupees, but DERIVED money is not: CalcInterest and EMI
+// round to the nearest paise, so with a 2-decimal rate they routinely produce
+// a .5 remainder (interest 25% of the time, EMI ~83%). Truncating those
+// discarded up to 99 paise per row AND — the real defect — disagreed with the
+// frontend, which computes the same figures in rupee space with Math.round:
+// truncation diverged on 25% of interest values, rounding on none. The
+// front/back lock-step required by CLAUDE.md only holds with rounding.
+func (p Paise) DBRupees() int64 {
+	return int64(math.Round(float64(p) / 100))
+}
 
 // PaiseFromDBRupees converts a whole-rupee value read from the database back
 // into internal Paise. The inverse of DBRupees.

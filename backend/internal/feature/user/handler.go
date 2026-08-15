@@ -96,6 +96,17 @@ func (h *Handler) requireAdmin(w http.ResponseWriter, r *http.Request) (int64, b
 		httpx.Error(w, r, domain.NewUnauthorized("invalid or expired token"))
 		return 0, false
 	}
+	// A DEACTIVATED admin must lose access immediately, not when their token
+	// expires. Every other module is protected by RequirePermission, which loads
+	// the caller through auth.FindByID (that query filters `is_active = TRUE`).
+	// These /users routes are guarded here instead, and user.FindByID filters
+	// only `deleted_at` — so without this check a just-disabled admin kept full
+	// user-management (create/delete users, change roles) for the remaining life
+	// of their 1-hour token, on the single most privileged surface in the app.
+	if !caller.IsActive {
+		httpx.Error(w, r, domain.NewUnauthorized("your account is no longer active"))
+		return 0, false
+	}
 	if !caller.IsAdmin() {
 		httpx.Error(w, r, domain.NewForbidden("admin access required"))
 		return 0, false

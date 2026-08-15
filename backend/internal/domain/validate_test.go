@@ -11,7 +11,7 @@ var testNow = time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
 // validAadhaar has a correct Verhoeff check digit; validAadhaar2 differs only
 // in the check digit and must fail.
 const (
-	validAadhaar   = "234567890124"
+	validAadhaar    = "234567890124"
 	badCheckAadhaar = "234567890123"
 )
 
@@ -67,8 +67,8 @@ func fieldError(t *testing.T, in CustomerInput, field string) string {
 
 func TestRequiredFields(t *testing.T) {
 	tests := []struct {
-		name  string
-		field string
+		name   string
+		field  string
 		mutate func(*CustomerInput)
 	}{
 		{"missing name", "name", func(in *CustomerInput) { in.Name = "" }},
@@ -119,10 +119,10 @@ func TestPincodeEdgeCases(t *testing.T) {
 		valid bool
 	}{
 		{"411001", true},
-		{"011001", false}, // starts 0
-		{"41100", false},  // 5 digits
-		{"4110011", false},// 7 digits
-		{"41a001", false}, // letter
+		{"011001", false},  // starts 0
+		{"41100", false},   // 5 digits
+		{"4110011", false}, // 7 digits
+		{"41a001", false},  // letter
 	} {
 		in := baseValidInput()
 		in.Pincode = ptrStr(tt.pin)
@@ -162,11 +162,11 @@ func TestAadhaarEdgeCases(t *testing.T) {
 		valid   bool
 	}{
 		{validAadhaar, true},
-		{badCheckAadhaar, false},  // bad checksum
-		{"123456789012", false},   // starts with 1
-		{"034567890124", false},   // starts with 0
-		{"23456789012", false},    // 11 digits
-		{"222222222222", false},   // all-same
+		{badCheckAadhaar, false}, // bad checksum
+		{"123456789012", false},  // starts with 1
+		{"034567890124", false},  // starts with 0
+		{"23456789012", false},   // 11 digits
+		{"222222222222", false},  // all-same
 	} {
 		in := baseValidInput()
 		in.AadhaarNumber = ptrStr(tt.aadhaar)
@@ -185,9 +185,9 @@ func TestEmailEdgeCases(t *testing.T) {
 		{"a@b.com", true},
 		{"user.name+tag@sub.domain.co", true},
 		{"no-at-sign", false},
-		{"a@b", false},        // no TLD
-		{"a@@b.com", false},   // double @
-		{"a b@c.com", false},  // space
+		{"a@b", false},       // no TLD
+		{"a@@b.com", false},  // double @
+		{"a b@c.com", false}, // space
 	} {
 		in := baseValidInput()
 		in.Email = ptrStr(tt.email)
@@ -252,11 +252,11 @@ func TestOccupationEdgeCases(t *testing.T) {
 		{"Govt. Officer", true},
 		{"Farmer/Trader", true},
 		{"Manager (Ops)", true},
-		{"$$$", false},        // symbols only
-		{"123", false},        // digits only
-		{"X", false},          // too short
-		{"1Engineer", false},  // starts with digit
-		{"Dev@Home", false},   // invalid symbol
+		{"$$$", false},       // symbols only
+		{"123", false},       // digits only
+		{"X", false},         // too short
+		{"1Engineer", false}, // starts with digit
+		{"Dev@Home", false},  // invalid symbol
 	} {
 		in := baseValidInput()
 		in.Occupation = ptrStr(tt.occ)
@@ -273,14 +273,14 @@ func TestStateEdgeCases(t *testing.T) {
 		valid bool
 	}{
 		{"Maharashtra", true},
-		{"maharashtra", true},       // case-insensitive
+		{"maharashtra", true}, // case-insensitive
 		{"Tamil Nadu", true},
-		{"Delhi", true},             // UT
-		{"  Kerala  ", true},        // trimmed
-		{"bgvfdfdsa", false},        // junk
-		{"California", false},       // not Indian
-		{"MH", false},               // abbreviation not accepted
-		{"", false},                 // required
+		{"Delhi", true},       // UT
+		{"  Kerala  ", true},  // trimmed
+		{"bgvfdfdsa", false},  // junk
+		{"California", false}, // not Indian
+		{"MH", false},         // abbreviation not accepted
+		{"", false},           // required
 	} {
 		in := baseValidInput()
 		in.State = ptrStr(tt.state)
@@ -299,11 +299,11 @@ func TestCityEdgeCases(t *testing.T) {
 		{"Pune", true},
 		{"New Delhi", true},
 		{"Thoothukudi", true},
-		{"D", false},          // too short
-		{"bgvfdfdsa", false},  // no vowel -> gibberish
-		{"xxxx", false},       // repeated-run mash
-		{"Pune123", false},    // digits
-		{"", false},           // required
+		{"D", false},         // too short
+		{"bgvfdfdsa", false}, // no vowel -> gibberish
+		{"xxxx", false},      // repeated-run mash
+		{"Pune123", false},   // digits
+		{"", false},          // required
 	} {
 		in := baseValidInput()
 		in.City = ptrStr(tt.city)

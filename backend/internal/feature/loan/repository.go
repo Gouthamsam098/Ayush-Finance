@@ -178,6 +178,23 @@ func (r *Repository) Update(ctx context.Context, id int64, in domain.LoanInput, 
 
 // SetStatus transitions a loan between ACTIVE and CLOSED, stamping closed_at.
 func (r *Repository) SetStatus(ctx context.Context, id int64, status domain.LoanStatus) (*domain.Loan, error) {
+	return r.setStatus(ctx, r.pool, id, status)
+}
+
+// SetStatusTx is SetStatus inside a transaction, so a payment insert and the
+// resulting auto-close/auto-reopen commit as one unit — the loan's status can
+// never disagree with the payments that justify it.
+func (r *Repository) SetStatusTx(ctx context.Context, tx pgx.Tx, id int64, status domain.LoanStatus) (*domain.Loan, error) {
+	return r.setStatus(ctx, tx, id, status)
+}
+
+// statusQuerier is the pgx subset setStatus needs; satisfied by the pool and by
+// pgx.Tx.
+type statusQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (r *Repository) setStatus(ctx context.Context, q statusQuerier, id int64, status domain.LoanStatus) (*domain.Loan, error) {
 	const query = `
 		UPDATE loans SET
 			status = $2::text,
@@ -185,7 +202,7 @@ func (r *Repository) SetStatus(ctx context.Context, id int64, status domain.Loan
 			updated_at = now()
 		WHERE id=$1 AND deleted_at IS NULL
 		RETURNING ` + loanColumns
-	l, err := scanLoan(r.pool.QueryRow(ctx, query, id, string(status)))
+	l, err := scanLoan(q.QueryRow(ctx, query, id, string(status)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("loan")
 	}

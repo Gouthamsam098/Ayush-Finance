@@ -43,6 +43,23 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*domain.Document,
 			"file": "allowed types: JPEG, PNG, WebP, PDF",
 		})
 	}
+	// The declared Content-Type came from the client's multipart header and is
+	// therefore untrusted. Sniff the real bytes and require agreement, so a
+	// script/HTML payload cannot be stored as an image and served back with an
+	// image type (content confusion / stored XSS on preview).
+	detected, ok := domain.DocumentContentMatchesDeclared(in.Content, in.MimeType)
+	if !ok {
+		if detected == "" {
+			return nil, domain.NewValidation("unrecognised file content", map[string]string{
+				"file": "the file is not a valid JPEG, PNG, WebP or PDF",
+			})
+		}
+		return nil, domain.NewValidation("file content does not match its type", map[string]string{
+			"file": "the file's actual format (" + detected + ") differs from the type sent",
+		})
+	}
+	// Store the SNIFFED type — never the client's claim.
+	in.MimeType = detected
 
 	exists, err := s.repo.customerExists(ctx, in.CustomerID)
 	if err != nil {
@@ -66,10 +83,14 @@ func (s *Service) List(ctx context.Context, customerID int64) ([]*domain.Documen
 	return s.repo.ListByCustomer(ctx, customerID)
 }
 
-func (s *Service) Download(ctx context.Context, id int64) (*domain.Document, error) {
-	return s.repo.Download(ctx, id)
+// Download returns a document's bytes only if it belongs to customerID. Both
+// IDs come from the request path; the ownership check lives in the query so a
+// mismatch is indistinguishable from "does not exist" (NotFound).
+func (s *Service) Download(ctx context.Context, id, customerID int64) (*domain.Document, error) {
+	return s.repo.Download(ctx, id, customerID)
 }
 
-func (s *Service) Delete(ctx context.Context, id int64) error {
-	return s.repo.SoftDelete(ctx, id)
+// Delete soft-deletes a document only if it belongs to customerID.
+func (s *Service) Delete(ctx context.Context, id, customerID int64) error {
+	return s.repo.SoftDelete(ctx, id, customerID)
 }
