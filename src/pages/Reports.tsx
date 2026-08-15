@@ -329,7 +329,7 @@ export default function Reports() {
             )}
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex w-full items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] focus-within:border-blue-400 sm:w-52 dark:border-white/[.08] dark:bg-surface">
+            <div className="flex w-full items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] transition-shadow focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/10 sm:w-52 dark:border-white/[.08] dark:bg-surface">
               <Search size={16} className="shrink-0 text-slate-400" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search ${meta.label.toLowerCase()}…`} className="w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-muted" />
             </div>

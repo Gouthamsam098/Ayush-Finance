@@ -461,19 +461,45 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     // bundled into the initial download.
     const { buildLedgerReportPDF, shareOrDownloadPDF } = await import('@/lib/pdfReport');
     let tableTitle = '', tableHead: string[] = [], tableBody: (string | number)[][] = [];
-    const unit = isMonthly ? 'Month' : 'Day';
-    if (!isSimple) {
-      tableTitle = `${unit}-by-${unit} Ledger`;
+    const unit = loan.type === 'FLEXIBLE' ? 'Cycle' : (isMonthly || loan.type === 'MONTHLY_INTEREST') ? 'Month' : 'Day';
+    // Mirror the on-screen ledger exactly — including the upcoming "Next due"
+    // row (previously filtered out with date <= today, so e.g. September was
+    // missing from the PDF while visible in the dialog).
+    tableTitle = `${unit}-by-${unit} Ledger`;
+    if (interestOnly) {
+      tableHead = [unit, 'Due Date', 'Collection Date', 'Interest Due', 'Amount', 'Payment Mode', 'Status', 'Remarks'];
+      tableBody = displayRows.map((r) => [
+        r.sn,
+        fmtDate(r.dueDate ?? r.date),
+        r.paidOn ? fmtDate(r.paidOn) : '—',
+        inr(r.due),
+        r.collected ? inr(r.collected) : '—',
+        r.mode ?? '—',
+        r.status,
+        r.remarks ?? '—',
+      ]);
+    } else if (!isSimple) {
       tableHead = [unit, 'Due Date', 'Collection Date', `${isMonthly ? 'Monthly' : 'Daily'} Due`, 'Amount', 'Principal Remaining', 'Payment Mode', 'Status', 'Remarks'];
-      // Elapsed slots + anything already funded (a bulk can pay slots whose due
-      // dates are still in the future — those Paid rows belong in the report).
-      tableBody = displayRows.filter((r) => r.date <= todayISO() || r.collected > 0).map((r) => [r.sn, fmtDate(r.dueDate ?? r.date), r.paidOn ? fmtDate(r.paidOn) : '—', inr(r.due), r.collected ? inr(r.collected) : '—', inr(r.remaining), r.mode ?? '—', r.status, r.remarks ?? '—']);
+      tableBody = displayRows.map((r) => [
+        r.sn,
+        fmtDate(r.dueDate ?? r.date),
+        r.paidOn ? fmtDate(r.paidOn) : '—',
+        inr(r.due),
+        r.collected ? inr(r.collected) : '—',
+        inr(r.remaining),
+        r.mode ?? '—',
+        r.status,
+        r.remarks ?? '—',
+      ]);
     } else {
       tableTitle = 'Payment History';
-      tableHead = ['Date', 'Amount', 'Mode'];
-      tableBody = rows
-        .filter((r) => r.date <= todayISO())
-        .map((r) => [fmtDate(r.date), r.collected ? inr(r.collected) : r.due ? inr(r.due) : '—', r.mode ?? '—']);
+      tableHead = ['Date', 'Amount', 'Mode', 'Status'];
+      tableBody = displayRows.map((r) => [
+        fmtDate(r.dueDate ?? r.date),
+        r.collected ? inr(r.collected) : r.due ? inr(r.due) : '—',
+        r.mode ?? '—',
+        r.status,
+      ]);
     }
     // Statement tab → bank-style Payment Schedule PDF over the flat model.
     // A foreclosed loan collapses to its settlement row (Bajaj-style).
@@ -748,15 +774,21 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
             </div>
           )}
 
-          {/* Hero amount */}
+          {/* Amount — same height/alignment as Date & Remarks (not a tall hero box) */}
           <div>
             <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Amount</span>
-            <div className={`flex items-center gap-2 rounded-xl border bg-white px-3.5 dark:bg-surface ${
-              amountError ? 'border-danger' : 'border-slate-200 focus-within:border-blue-400 dark:border-slate-700 dark:focus-within:border-blue-500'
+            <div className={`flex h-[42px] items-center gap-2 rounded-xl border bg-white px-3.5 shadow-[inset_0_1px_2px_rgba(15,23,42,.03)] dark:bg-surface dark:shadow-none ${
+              amountError ? 'border-danger focus-within:border-danger focus-within:ring-4 focus-within:ring-danger/10' : 'border-slate-200 focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/10 dark:border-white/[.08]'
             }`}>
-              <IndianRupee size={18} className="shrink-0 text-muted" />
-              <input type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0"
-                className="w-full bg-transparent py-3 font-display text-2xl font-bold tabular-nums text-ink outline-none placeholder:text-slate-300 dark:placeholder:text-slate-600" />
+              <IndianRupee size={15} className="shrink-0 text-muted" aria-hidden />
+              <input
+                type="text"
+                inputMode="numeric"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                placeholder="0"
+                className="min-w-0 flex-1 bg-transparent text-sm font-semibold leading-none tabular-nums text-ink outline-none focus:shadow-none focus-visible:shadow-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
+              />
             </div>
             {amountError && <span className="mt-1 block text-[12px] font-medium text-danger">{amountError}</span>}
           </div>

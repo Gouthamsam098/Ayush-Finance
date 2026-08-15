@@ -39,10 +39,10 @@ export default function Login() {
   };
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden" style={{ background: '#022999' }}>
+    <div className="relative flex h-screen w-screen overflow-hidden" style={{ background: '#2e0196' }}>
       <div
         className="absolute inset-0"
-        style={{ background: 'radial-gradient(ellipse at center, #0538cc 0%, #022999 60%, #011d6e 100%)' }}
+        style={{ background: 'radial-gradient(ellipse at center, #3a14a8 0%, #2e0196 60%, #220078 100%)' }}
       />
       <div className="relative z-10 flex h-full w-full flex-col overflow-y-auto md:flex-row md:overflow-hidden">
         <div className="relative hidden h-[42vh] w-full md:block md:h-full md:w-[58%]">

@@ -74,11 +74,21 @@ button, a, input, select, textarea {
 }
 button:active { transform: translateY(0.5px); }
 
-/* Premium focus ring, keyboard-accessible */
+/* Premium focus ring, keyboard-accessible — for buttons/links/nav, not form
+   fields (those use their own focus:ring / focus-within chrome). */
 :focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px rgb(var(--bg)), 0 0 0 5px rgba(37,99,235,.45);
   border-radius: 6px;
+}
+
+/* Form fields: suppress the global ring. It stacked on top of Tailwind
+   focus:ring and looked like a sharp purple rectangle inside rounded inputs
+   (Reports search, Collection Ledger amount, Date, Remarks, etc.). */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  box-shadow: none;
 }
 
 /* Glassmorphism utility for topbar / dialogs / overlays */

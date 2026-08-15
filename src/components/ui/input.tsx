@@ -19,7 +19,7 @@ export const Input = forwardRef<HTMLInputElement, Props>(({ className, label, er
         'shadow-[inset_0_1px_2px_rgba(15,23,42,.03)] dark:shadow-none',
         'border-slate-200 dark:border-white/[.08] placeholder:text-slate-400 dark:placeholder:text-slate-500',
         'transition-shadow duration-150',
-        'focus:border-primary focus:ring-4 focus:ring-primary/10',
+        'outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 focus-visible:shadow-none',
         error && 'border-danger focus:border-danger focus:ring-danger/10',
         className
       )}

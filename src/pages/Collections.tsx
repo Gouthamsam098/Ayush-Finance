@@ -291,9 +291,9 @@ export default function Collections() {
               progress bar only makes sense for fixed-term loans (Daily
               Collection); interest-only loans are OPEN-ENDED — "1/30 days" is
               meaningless there. The universal, always-truthful column for a
-              collections worklist is NEXT DUE: when the next payment is
-              expected, red when it's already late. Amount-based via
-              d.nextDueFor, so it always matches the Ledger. ── */
+              collections worklist is NEXT DUE: oldest unpaid slot via
+              d.nextDueFor (matches Ledger). When that date is past we label
+              it "Due since" so it isn't read as an upcoming due. ── */
         <TableCard note="Amount Paid is the total collected so far for each loan. Open View Report to add, edit, or delete individual payments.">
           <thead><HeaderRow cols={['Customer', 'Next Due', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
           <tbody>
@@ -301,14 +301,19 @@ export default function Collections() {
               const cust = d.customers.find((c) => c.id === l.customerId);
               const nd = d.nextDueFor(l);
               const today = todayISO();
+              const overdue = !!nd && nd < today;
+              const dueToday = !!nd && nd === today;
               return (
                 <Row key={l.id}>
                   <Td className="font-medium">{cust?.name ?? '—'}</Td>
                   <Td>
                     {nd ? (
                       <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                        <span className={nd < today ? 'font-semibold text-danger' : nd === today ? 'font-semibold text-warning-600 dark:text-warning' : ''}>{fmtDate(nd)}</span>
-                        {nd < today ? <Badge tone="err">Overdue</Badge> : nd === today ? <Badge tone="warn">Today</Badge> : null}
+                        <span className={overdue ? 'font-semibold text-danger' : dueToday ? 'font-semibold text-warning-600 dark:text-warning' : ''}>
+                          {overdue && <span className="mr-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-danger/80">Due since</span>}
+                          {fmtDate(nd)}
+                        </span>
+                        {overdue ? <Badge tone="err">Overdue</Badge> : dueToday ? <Badge tone="warn">Today</Badge> : null}
                       </span>
                     ) : (
                       <span className="text-muted">Fully collected</span>

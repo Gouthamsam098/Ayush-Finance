@@ -2,7 +2,6 @@ import { useState, type ReactNode } from 'react';
 import {
   Lock, Eye, EyeOff, ArrowRight, User, Loader2, Mail, UserPlus, ArrowLeft,
 } from 'lucide-react';
-import { config } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
 
@@ -263,10 +262,6 @@ export default function LoginForm({ onSubmit, loading = false, mode, onModeChang
           ? <Loader2 size={18} className="relative z-10 animate-spin" />
           : <ArrowRight size={18} className="relative z-10 transition-transform duration-300 group-hover:translate-x-1" />}
       </button>
-
-      {!config.useApi && (
-        <p className="text-center text-[12px] text-slate-500">Enter any username and password to continue</p>
-      )}
     </form>
   );
 }
