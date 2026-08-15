@@ -203,19 +203,6 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       const alloc = Math.max(0, Math.min(rowPool - (k - 1) * slotDue, slotDue));
       const payableBase = loan.principal;
       const remaining = interestOnly ? 0 : Math.max(0, payableBase - Math.min(rowPool, k * slotDue));
-      // A payment recorded on this exact date (or within the cycle window)
-      // keeps its edit/delete affordance + mode/receipt on this row.
-      const ws = hasMonthlyCadence
-        ? k === 1 ? addDays(loan.loanDate, 1) : addDays(addMonths(loan.loanDate, k - 1, 0), 1)
-        : isoLocal(new Date(ly, lm - 1, ld + dueOffsetDays - slotStep + 1));
-      const winColls = useStrictDateMatch
-        ? loanColls.filter((c) => c.date === dueDate)
-        : slotStep === 1
-          ? loanColls.filter((c) => c.date === dueDate)
-          : loanColls.filter((c) => c.date >= ws && c.date <= dueDate);
-      const slotPaid = winColls.reduce((s, c) => s + c.amount, 0);
-      const first = winColls[0];
-      const displayPaid = useStrictDateMatch ? slotPaid : alloc;
       // Status & amount use FIFO allocation from the pool, so a BULK / advance
       // payment automatically fills subsequent slots instead of leaving them
       // "Next due". The payment RECORD follows the same FIFO attribution: the

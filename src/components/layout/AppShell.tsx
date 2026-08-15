@@ -116,9 +116,12 @@ export function AppShell() {
           {!collapsed && (
             <div className="min-w-0 flex-1 overflow-hidden">
               <div className="leading-none">
-                <span className="block text-[15px] font-extrabold uppercase tracking-tight text-blue-700 dark:text-slate-50">
-                  Anush <span className="text-blue-500 dark:text-blue-400">Finserv</span>
-                </span>
+                <img
+                  src="/anush-text.svg"
+                  alt="Anush Finserv"
+                  className="brightness-[0.2] dark:brightness-100"
+                  style={{ height: '28px', width: 'auto', objectFit: 'contain' }}
+                />
               </div>
             </div>
           )}
