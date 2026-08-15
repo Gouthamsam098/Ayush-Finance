@@ -343,36 +343,50 @@ export default function Customers() {
   };
 
   const loansOf = (id: number) => d.loans.filter((l) => l.customerId === id);
-<<<<<<< HEAD
-   const today = todayISO(); // local date — never toISOString() (UTC shifts the day)
+     const today = todayISO(); // local date — never toISOString() (UTC shifts the day)
 
   const handleExport = () => {
     const headers = [
       'Customer Code', 'Name', 'Mobile', 'Alt. Mobile', 'City', 'State',
       'Occupation', 'Monthly Income', 'KYC', 'Active Loans', 'Outstanding', 'Status', 'Since',
     ];
+
     const rows = filtered.map((c) => {
       const cLoans = loansOf(c.id);
       const activeCount = cLoans.filter((l) => l.status === 'ACTIVE').length;
       const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
       const kyc = kycOf(c);
+
       const hasOverdue = cLoans.some(
         (l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE'
       );
-      const status = hasOverdue ? 'Overdue' : activeCount > 0 ? 'Active' : 'Inactive';
+
+      const status = hasOverdue
+        ? 'Overdue'
+        : activeCount > 0
+          ? 'Active'
+          : 'Inactive';
 
       return [
-        c.code, c.name, c.mobile, c.altMobile || '', c.city || '', c.state || '',
-        c.occupation || '', c.monthlyIncome ?? '',
+        c.code,
+        c.name,
+        c.mobile,
+        c.altMobile || '',
+        c.city || '',
+        c.state || '',
+        c.occupation || '',
+        c.monthlyIncome ?? '',
         kyc === 'VERIFIED' ? 'Verified' : 'Pending',
-        activeCount, outstanding, status, c.createdAt,
+        activeCount,
+        outstanding,
+        status,
+        c.createdAt,
       ];
     });
 
     const stamp = today;
     downloadCSV(headers, rows, `Customers_Export_${stamp}.csv`);
   };
->>>>>>> origin/newui
   const totalCustomers = d.customers.length;
   const activeCustomers = d.customers.filter((c) => loansOf(c.id).some((l) => l.status === 'ACTIVE')).length;
   const totalOutstanding = d.loans.reduce((sum, l) => sum + d.outstandingFor(l), 0);
