@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '@/store/authSlice';
@@ -6,6 +6,7 @@ import { authApi } from '@/services/authApi';
 import type { RootState } from '@/store';
 import { useData } from '@/mock/DataContext';
 import { todayISO } from '@/lib/format';
+import { withUiModuleAccess } from '@/lib/uiModuleAccess';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Users, FileText, Receipt, Wallet, BarChart3,
@@ -30,7 +31,7 @@ const NAV: NavSection[] = [
     heading: 'Finance',
     items: [
       { to: '/expenses', label: 'Expenses', icon: Wallet, module: 'Expenses' },
-      { to: '/reports', label: 'Reports', icon: BarChart3, module: 'Dashboard' },
+      { to: '/reports', label: 'Reports', icon: BarChart3, module: 'Reports' },
     ],
   },
   {
@@ -54,16 +55,29 @@ export function AppShell() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const d = useData();
-  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'ADMIN');
-  const perms = useSelector((s: RootState) => s.auth.user?.permissions);
+  const user = useSelector((s: RootState) => s.auth.user);
+  const isAdmin = user?.role === 'ADMIN';
+  // Merge UI-only Reports access (backend Modules omit Reports).
+  const perms = useMemo(
+    () => (user ? withUiModuleAccess(user.id, user.role, user.permissions ?? {}) : {}),
+    [user],
+  );
   // A nav item is visible when: admin (sees all), or the module isn't restricted,
   // or the viewer has view/edit (not 'none') on that module.
   const canSee = (it: NavItem) => {
     if (isAdmin) return true;
     if (it.adminOnly) return false;
     if (!it.module) return true;
-    return (perms?.[it.module] ?? 'none') !== 'none';
+    return (perms[it.module] ?? 'none') !== 'none';
   };
+  const displayName = user?.fullName?.trim() || user?.username || 'User';
+  const roleLabel = user?.role === 'ADMIN' ? 'Admin' : 'Viewer';
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('') || 'U';
 
   const toggleTheme = () => {
     setDark((prev) => {
@@ -198,16 +212,16 @@ export function AppShell() {
           );})}
         </nav>
 
-        {/* Footer — user + logout */}
+        {/* Footer — logged-in user + logout */}
         <div className="border-t border-slate-200 px-[7px] py-2 dark:border-white/[.07]">
           <div className="flex items-center gap-2 rounded-lg px-[3px] py-[5px]">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[10px] font-semibold text-white">
-              AD
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[10px] font-semibold text-white" title={displayName}>
+              {initials}
             </div>
             {!collapsed && (
               <div className="min-w-0 flex-1 overflow-hidden">
-                <div className="truncate text-[13px] font-semibold text-slate-900 dark:text-slate-100">Admin</div>
-                <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">Super Admin</div>
+                <div className="truncate text-[13px] font-semibold text-ink">{displayName}</div>
+                <div className="truncate text-[11px] text-muted">{roleLabel}</div>
               </div>
             )}
           </div>

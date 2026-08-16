@@ -4,6 +4,7 @@ import { useDispatch } from 'react-redux';
 import { setTokens, setUser } from '@/store/authSlice';
 import { config } from '@/lib/config';
 import { authApi } from '@/services/authApi';
+import { authenticateMock } from '@/lib/mockUsers';
 import { ApiError } from '@/lib/api';
 import LoginCard from '@/components/LoginCard';
 import PremiumLogoAnimation from '@/components/PremiumLogoAnimation';
@@ -19,9 +20,22 @@ export default function Login() {
     setError(null);
     if (!config.useApi) {
       setTimeout(() => {
+        const match = authenticateMock(username, password);
+        if (!match) {
+          setError('No account found for that email. Sign in as admin and create the user in Settings first.');
+          setLoading(false);
+          return;
+        }
         dispatch(setTokens({ accessToken: 'demo-token' }));
-        dispatch(setUser({ id: 0, username, fullName: 'Administrator', role: 'ADMIN', permissions: {} }));
+        dispatch(setUser({
+          id: match.id,
+          username: match.email,
+          fullName: match.fullName,
+          role: match.role,
+          permissions: match.permissions ?? {},
+        }));
         navigate('/');
+        setLoading(false);
       }, 450);
       return;
     }

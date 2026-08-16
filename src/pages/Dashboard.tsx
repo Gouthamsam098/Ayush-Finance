@@ -4,6 +4,7 @@ import {
   useData, LOAN_LABELS, isDailyLoan, cadenceDaysForLoan, behavesInterestOnly, type Loan,
 } from '@/mock/DataContext';
 import { inr, inrShort, todayISO, isoLocal } from '@/lib/format';
+import { usePermissions } from '@/lib/permissions';
 import { useOpenSidebar } from '@/components/layout/AppShell';
 import {
   ChartCard, KpiCard, LoanPerformanceChart, CashFlowChart, EfficiencyGauge, RangeToggle, C,
@@ -53,6 +54,7 @@ export default function Dashboard() {
   const d = useData();
   const navigate = useNavigate();
   const openSidebar = useOpenSidebar();
+  const { canView } = usePermissions();
   const [overdueQuery, setOverdueQuery] = useState('');
   const [cashRange, setCashRange] = useState<Range>('month');
   const [perfRange, setPerfRange] = useState<Range>('6m');
@@ -363,7 +365,9 @@ export default function Dashboard() {
               <GaugeStat label="Expenses" value={inrShort(monthExp)} color="text-red-500 dark:text-red-400" />
               <GaugeStat label="Profit" value={inrShort(monthInterest)} color="text-indigo-600 dark:text-indigo-400" />
             </div>
-            <button onClick={() => navigate('/reports')} className="mt-4 inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold" style={{ color: C.primary }}>View Collection Reports <ArrowRight size={14} /></button>
+            {canView('Reports') && (
+              <button onClick={() => navigate('/reports')} className="mt-4 inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold" style={{ color: C.primary }}>View Collection Reports <ArrowRight size={14} /></button>
+            )}
           </div>
         </div>
 

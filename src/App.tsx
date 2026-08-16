@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
-import { ProtectedRoute, AdminRoute } from '@/routes/ProtectedRoute';
+import { ProtectedRoute, AdminRoute, ModuleRoute } from '@/routes/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
 import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
@@ -63,7 +63,9 @@ export default function App() {
           <Route path="/collections" element={page(<Collections />)} />
           <Route path="/expenses" element={page(<Expenses />)} />
           <Route path="/documents" element={page(<Documents />)} />
-          <Route path="/reports" element={page(<Reports />)} />
+          <Route element={<ModuleRoute module="Reports" />}>
+            <Route path="/reports" element={page(<Reports />)} />
+          </Route>
           <Route element={<AdminRoute />}>
             <Route path="/settings" element={page(<Settings />)} />
           </Route>

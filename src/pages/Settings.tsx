@@ -10,12 +10,17 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { cn } from '@/lib/utils';
+import { config } from '@/lib/config';
 import { fmtDate } from '@/lib/format';
 import { ApiError } from '@/lib/api';
 import { userApi, MODULES, type ManagedUser, type UserRole, type Access, type Permissions } from '@/services/userApi';
 import {
+  listMockUsers, saveMockUser, setMockUserActive, removeMockUser, type MockUser,
+} from '@/lib/mockUsers';
+import { clearUiReportsAccess, setUiReportsAccess, withUiModuleAccess } from '@/lib/uiModuleAccess';
+import {
   UserPlus, Trash2, Settings as SettingsIcon, Pencil, Plus, Users as UsersIcon, Loader2, ShieldCheck,
-  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen,
+  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3,
 } from 'lucide-react';
 
 const MODULE_ICON: Record<string, React.ReactNode> = {
@@ -25,6 +30,7 @@ const MODULE_ICON: Record<string, React.ReactNode> = {
   Collections: <Receipt size={15} />,
   Expenses: <Wallet size={15} />,
   Documents: <FolderOpen size={15} />,
+  Reports: <BarChart3 size={15} />,
   Settings: <SettingsIcon size={15} />,
 };
 const ACCESS_OPTS: Access[] = ['none', 'view', 'edit'];
@@ -56,6 +62,18 @@ interface FormState { id?: number; email: string; fullName: string; password: st
 const emptyPerms = (): Permissions => Object.fromEntries(MODULES.map((m) => [m, 'none' as Access]));
 const blankForm = (): FormState => ({ email: '', fullName: '', password: '', confirm: '', role: 'VIEWER', permissions: emptyPerms() });
 
+function fromMock(u: MockUser): ManagedUser {
+  return {
+    id: u.id,
+    email: u.email,
+    fullName: u.fullName,
+    role: u.role,
+    permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
+    isActive: u.isActive,
+    createdAt: u.createdAt,
+  };
+}
+
 export default function Settings() {
   const toast = useToast();
   const me = useSelector((s: RootState) => s.auth.user);
@@ -69,18 +87,38 @@ export default function Settings() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setUsers(await userApi.list()); }
-    catch (e) { toast(e instanceof ApiError ? e.message : 'Failed to load users', 'error'); }
-    finally { setLoading(false); }
+    try {
+      if (!config.useApi) {
+        setUsers(listMockUsers().map(fromMock));
+        return;
+      }
+      const rows = await userApi.list();
+      setUsers(rows.map((u) => ({
+        ...u,
+        permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
+      })));
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Failed to load users', 'error');
+    } finally {
+      setLoading(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [me?.id, me?.username, me?.fullName]);
   useEffect(() => { load(); }, [load]);
 
   const adminCount = useMemo(() => users.filter((u) => u.role === 'ADMIN' && u.isActive).length, [users]);
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
   const openCreate = () => setForm(blankForm());
-  const openEdit = (u: ManagedUser) => setForm({ id: u.id, email: u.email, fullName: u.fullName, password: '', confirm: '', role: u.role, permissions: { ...emptyPerms(), ...u.permissions } });
+  const openEdit = (u: ManagedUser) => setForm({
+    id: u.id,
+    email: u.email,
+    fullName: u.fullName,
+    password: '',
+    confirm: '',
+    role: u.role,
+    permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
+  });
   const setPerm = (module: string, access: Access) => setForm((f) => (f ? { ...f, permissions: { ...f.permissions, [module]: access } } : f));
 
   const save = async () => {
@@ -93,12 +131,31 @@ export default function Settings() {
     }
     setSaving(true);
     try {
+      const reportsAccess = (form.permissions.Reports ?? 'none') as Access;
+      if (!config.useApi) {
+        const saved = saveMockUser({
+          id: form.id,
+          email: form.email.trim(),
+          fullName: form.fullName.trim(),
+          role: form.role,
+          permissions: form.permissions,
+          password: form.password || undefined,
+          isActive: creating ? true : users.find((u) => u.id === form.id)?.isActive,
+        });
+        setUiReportsAccess(saved.id, reportsAccess);
+        toast(creating ? 'User created' : 'User updated');
+        setForm(null);
+        await load();
+        return;
+      }
       if (creating) {
-        await userApi.create({ email: form.email.trim(), fullName: form.fullName.trim(), password: form.password, role: form.role, permissions: form.permissions });
+        const created = await userApi.create({ email: form.email.trim(), fullName: form.fullName.trim(), password: form.password, role: form.role, permissions: form.permissions });
+        setUiReportsAccess(created.id, reportsAccess);
         toast('User created');
       } else {
         const existing = users.find((u) => u.id === form.id)!;
         await userApi.update(form.id!, { email: form.email.trim(), fullName: form.fullName.trim(), role: form.role, permissions: form.permissions, isActive: existing.isActive, password: form.password || undefined });
+        setUiReportsAccess(form.id!, reportsAccess);
         toast('User updated');
       }
       setForm(null);
@@ -112,16 +169,44 @@ export default function Settings() {
 
   const toggleActive = async (u: ManagedUser) => {
     setBusyId(u.id);
-    try { await userApi.setActive(u.id, u, !u.isActive); toast(`${u.fullName} ${u.isActive ? 'disabled' : 'enabled'}`, 'info'); await load(); }
-    catch (e) { toast(e instanceof ApiError ? e.message : 'Failed to update', 'error'); }
-    finally { setBusyId(null); }
+    try {
+      if (!config.useApi) {
+        setMockUserActive(u.id, !u.isActive);
+        toast(`${u.fullName} ${u.isActive ? 'disabled' : 'enabled'}`, 'info');
+        await load();
+        return;
+      }
+      await userApi.setActive(u.id, u, !u.isActive);
+      toast(`${u.fullName} ${u.isActive ? 'disabled' : 'enabled'}`, 'info');
+      await load();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Failed to update', 'error');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const doDelete = async (u: ManagedUser) => {
     setBusyId(u.id);
-    try { await userApi.remove(u.id); toast('User removed', 'info'); setConfirmDel(null); await load(); }
-    catch (e) { toast(e instanceof ApiError ? e.message : 'Failed to remove', 'error'); }
-    finally { setBusyId(null); }
+    try {
+      if (!config.useApi) {
+        removeMockUser(u.id);
+        clearUiReportsAccess(u.id);
+        toast('User removed', 'info');
+        setConfirmDel(null);
+        await load();
+        return;
+      }
+      await userApi.remove(u.id);
+      clearUiReportsAccess(u.id);
+      toast('User removed', 'info');
+      setConfirmDel(null);
+      await load();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Failed to remove', 'error');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   // Settings is ADMIN-only. The backend guards /users regardless; this stops a

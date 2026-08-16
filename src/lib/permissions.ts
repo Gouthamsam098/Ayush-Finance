@@ -1,5 +1,6 @@
 import { useSelector } from 'react-redux';
 import type { RootState } from '@/store';
+import { withUiModuleAccess } from '@/lib/uiModuleAccess';
 
 export type Access = 'none' | 'view' | 'edit';
 
@@ -14,7 +15,7 @@ export type Access = 'none' | 'view' | 'edit';
 export function usePermissions() {
   const user = useSelector((s: RootState) => s.auth.user);
   const isAdmin = user?.role === 'ADMIN';
-  const perms = user?.permissions ?? {};
+  const perms = withUiModuleAccess(user?.id ?? 0, user?.role, user?.permissions ?? {});
 
   const access = (module: string): Access => (isAdmin ? 'edit' : (perms[module] as Access) ?? 'none');
   const canView = (module: string) => isAdmin || access(module) === 'view' || access(module) === 'edit';

@@ -10,8 +10,9 @@ export type UserRole = 'ADMIN' | 'VIEWER';
 export type Access = 'none' | 'view' | 'edit';
 export type Permissions = Record<string, Access>;
 
-/** App modules a Viewer's access can be scoped to (mirrors backend domain.Modules). */
-export const MODULES = ['Dashboard', 'Customers', 'Loans', 'Collections', 'Expenses', 'Documents', 'Settings'] as const;
+/** App modules a Viewer's access can be scoped to.
+ *  Includes UI-only `Reports` (not in backend Modules — see `uiModuleAccess.ts`). */
+export const MODULES = ['Dashboard', 'Customers', 'Loans', 'Collections', 'Expenses', 'Documents', 'Reports', 'Settings'] as const;
 
 export interface ManagedUser {
   id: number;
