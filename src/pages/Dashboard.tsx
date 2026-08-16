@@ -6,13 +6,14 @@ import {
 import { inr, inrShort, todayISO, isoLocal } from '@/lib/format';
 import { usePermissions } from '@/lib/permissions';
 import { useOpenSidebar } from '@/components/layout/AppShell';
+import { LiveClock } from '@/components/LiveClock';
 import {
   ChartCard, KpiCard, LoanPerformanceChart, CashFlowChart, EfficiencyGauge, RangeToggle, C,
   type LoanPerfPoint, type CashFlowPoint, type KpiTrend, type Range,
 } from '@/components/dashboard/Charts';
 import {
   Wallet, CalendarClock, IndianRupee, Gauge, TrendingUp, Plus, Menu,
-  Phone, Eye, HandCoins, ArrowRight, Calendar, Search, Receipt,
+  Phone, Eye, HandCoins, ArrowRight, Search, Receipt,
 } from 'lucide-react';
 
 /** Whole calendar days between two YYYY-MM-DD dates (a − b). */
@@ -229,7 +230,6 @@ export default function Dashboard() {
     [active, d, today]);
 
   const greeting = (() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })();
-  const dateChip = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
   // Live data only — every figure derives from the real portfolio.
   const loanPerfView = loanPerf;
@@ -257,7 +257,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2.5">
-            <span className="inline-flex items-center gap-2 rounded-xl border-[0.5px] border-slate-200/80 bg-white px-3.5 py-2 text-[13px] font-semibold text-ink/70 dark:border-white/[.08] dark:bg-surface"><Calendar size={15} className="text-muted" /> {dateChip}</span>
+            <LiveClock />
             <button onClick={() => navigate('/collections')} className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13.5px] font-semibold text-white shadow-sm transition-all hover:-translate-y-px hover:shadow-md" style={{ background: C.primary }}><Plus size={16} /> Record Collection</button>
           </div>
         </div>

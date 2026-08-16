@@ -294,8 +294,8 @@ export default function Reports() {
 
       {/* One unified panel: tabs → toolbar → chart → table */}
       <div className="overflow-hidden rounded-[18px] border-[0.5px] border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(30,39,64,.04)] dark:border-white/[.08] dark:bg-surface">
-        {/* report tabs */}
-        <div className="flex flex-wrap gap-2 border-b border-slate-100 px-6 pb-4 pt-5 dark:border-white/[.06]">
+        {/* report tabs — 2×2 grid on mobile so labels of different lengths stay aligned */}
+        <div className="grid grid-cols-2 gap-2 border-b border-slate-100 px-6 pb-4 pt-5 dark:border-white/[.06] sm:flex sm:flex-wrap">
           {REPORTS.map((r) => {
             const Icon = r.icon;
             const active = tab === r.key;
@@ -304,7 +304,7 @@ export default function Reports() {
                 key={r.key}
                 onClick={() => { setTab(r.key); setQuery(''); }}
                 className={cn(
-                  'inline-flex items-center gap-2 rounded-xl border-[0.5px] px-4 py-2 text-[13.5px] font-semibold transition-all',
+                  'inline-flex w-full items-center justify-center gap-2 rounded-xl border-[0.5px] px-4 py-2 text-[13.5px] font-semibold transition-all sm:w-auto sm:justify-start',
                   active ? 'text-white shadow-sm' : 'border-slate-200/80 bg-white text-ink/75 hover:bg-slate-50 dark:border-white/[.08] dark:bg-surface dark:hover:bg-white/[.03]',
                 )}
                 style={active ? { background: `linear-gradient(135deg, ${r.accent}, ${r.accent}cc)`, borderColor: r.accent } : undefined}

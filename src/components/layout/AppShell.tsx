@@ -121,11 +121,11 @@ export function AppShell() {
           'flex min-h-[58px] items-center gap-2.5 border-b border-slate-200 px-2.5 py-3 dark:border-white/[.07]',
           collapsed && 'justify-center gap-1 px-1.5',
         )}>
-          <div className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-[9px] bg-gradient-to-br from-[#022999] via-[#0538cc] to-[#0AA8F8] shadow-sm shadow-[#022999]/30 ring-1 ring-white/15">
+          <div className="h-8 w-8 shrink-0 overflow-hidden rounded-[9px] shadow-sm shadow-[#2e0196]/25 ring-1 ring-black/5 dark:ring-white/15">
             <img
-              src="/logo-clean.svg"
+              src="/logo-mark.png"
               alt="Anush Finserv"
-              style={{ width: '72%', height: '72%', objectFit: 'contain' }}
+              className="h-full w-full object-cover"
             />
           </div>
           {!collapsed && (
