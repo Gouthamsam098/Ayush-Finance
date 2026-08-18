@@ -212,9 +212,22 @@ func (r *Repository) setStatus(ctx context.Context, q statusQuerier, id int64, s
 	return l, nil
 }
 
-// SoftDelete marks a loan deleted; NotFound if missing or already deleted.
+// SoftDelete marks a loan deleted and soft-deletes its payment records in the
+// same transaction so Collections/Reports never keep orphan rows. NotFound if
+// the loan is missing or already deleted.
 func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
-	tag, err := r.pool.Exec(ctx,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE collections SET deleted_at = now(), updated_at = now()
+		 WHERE loan_id = $1 AND deleted_at IS NULL`, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
 		`UPDATE loans SET deleted_at = now(), updated_at = now()
 		 WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
@@ -223,7 +236,7 @@ func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
 	if tag.RowsAffected() == 0 {
 		return domain.NewNotFound("loan")
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // ── scanning + helpers ──

@@ -142,7 +142,7 @@ func (s *Service) Reopen(ctx context.Context, id int64) (*domain.Loan, error) {
 	return s.repo.SetStatus(ctx, id, domain.StatusActive)
 }
 
-// Delete soft-deletes a loan.
+// Delete soft-deletes a loan and its payment (collection) records.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.repo.SoftDelete(ctx, id)
 }

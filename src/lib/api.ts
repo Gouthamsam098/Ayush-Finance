@@ -63,8 +63,12 @@ interface RequestOptions {
  * expired or the token is invalid). Clears the stale token and sends the user
  * to the login screen. A full-page redirect keeps this module free of a
  * dependency on the router/store.
+ *
+ * In mock mode there is no JWT — a stray 401 from the proxy must NOT wipe the
+ * demo session (Settings used to do exactly that by calling /users on open).
  */
 function forceReLogin(): void {
+  if (!config.useApi) return;
   tokenStore.clear();
   if (window.location.pathname !== '/login') {
     window.location.assign('/login');

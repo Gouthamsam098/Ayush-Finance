@@ -128,19 +128,26 @@ export function passesFilters(c: Customer, facts: CustomerFacts, f: CustomerFilt
   return true;
 }
 
-/** Convenience: build the facts object for a customer from loan helpers. */
+/** Convenience: build the facts object for a customer from loan helpers.
+ *  Overdue uses the live next-due (amount-based), same as Collections/Dashboard —
+ *  never the stored loan.nextDueDate which goes stale after payments. */
 export function factsFor(
   c: Customer,
   loans: Loan[],
   outstandingFor: (l: Loan) => number,
   kyc: 'VERIFIED' | 'PENDING',
   today: string,
+  nextDueFor: (l: Loan) => string | null,
 ): CustomerFacts {
   const mine = loans.filter((l) => l.customerId === c.id);
   return {
     kyc,
     active: mine.some((l) => l.status === 'ACTIVE'),
-    overdue: mine.some((l) => l.status === 'ACTIVE' && l.nextDueDate && l.nextDueDate < today && outstandingFor(l) > 0),
+    overdue: mine.some((l) => {
+      if (l.status !== 'ACTIVE' || outstandingFor(l) <= 0) return false;
+      const nd = nextDueFor(l);
+      return !!nd && nd < today;
+    }),
     loanCount: mine.length,
     outstanding: mine.reduce((s, l) => s + outstandingFor(l), 0),
     loanTypes: new Set(mine.map((l) => l.type)),

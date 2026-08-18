@@ -325,6 +325,10 @@ button, a, input, select, textarea {
   0%   { transform: translateX(-120%) skewX(-18deg); }
   60%,100% { transform: translateX(220%) skewX(-18deg); }
 }
+@keyframes signin-sheen {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
 @keyframes pop-in {
   0%   { opacity: 0; transform: perspective(900px) translateY(28px) rotateX(12deg) scale(.94); }
   100% { opacity: 1; transform: perspective(900px) translateY(0) rotateX(0) scale(1); }

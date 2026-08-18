@@ -165,7 +165,7 @@ export default function Customers() {
         || c.code.toLowerCase().includes(t)
         || (c.email?.toLowerCase().includes(t) ?? false);
       if (!matchesQuery) return false;
-      const facts = factsFor(c, d.loans, d.outstandingFor, kycOf(c), today);
+      const facts = factsFor(c, d.loans, d.outstandingFor, kycOf(c), today, d.nextDueFor);
       return passesFilters(c, facts, filters);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,7 +174,7 @@ export default function Customers() {
   // Live count of how many customers the *draft* would match (drawer preview).
   const draftMatchCount = useMemo(() => {
     const today = todayISO(); // local date — see `filtered` above
-    return d.customers.filter((c) => passesFilters(c, factsFor(c, d.loans, d.outstandingFor, kycOf(c), today), draft)).length;
+    return d.customers.filter((c) => passesFilters(c, factsFor(c, d.loans, d.outstandingFor, kycOf(c), today, d.nextDueFor), draft)).length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.customers, d.loans, draft]);
 
@@ -343,7 +343,15 @@ export default function Customers() {
   };
 
   const loansOf = (id: number) => d.loans.filter((l) => l.customerId === id);
-     const today = todayISO(); // local date — never toISOString() (UTC shifts the day)
+  const today = todayISO(); // local date — never toISOString() (UTC shifts the day)
+  // Live overdue — same rule as Collections/Dashboard (amount-based next due),
+  // not the stored loan.nextDueDate which stays frozen after payments.
+  const loanIsOverdue = (l: (typeof d.loans)[number]) => {
+    if (l.status !== 'ACTIVE' || d.outstandingFor(l) <= 0) return false;
+    const nd = d.nextDueFor(l);
+    return !!nd && nd < today;
+  };
+  const customerIsOverdue = (cLoans: typeof d.loans) => cLoans.some(loanIsOverdue);
 
   const handleExport = () => {
     const headers = [
@@ -357,9 +365,7 @@ export default function Customers() {
       const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
       const kyc = kycOf(c);
 
-      const hasOverdue = cLoans.some(
-        (l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE'
-      );
+      const hasOverdue = customerIsOverdue(cLoans);
 
       const status = hasOverdue
         ? 'Overdue'
@@ -392,13 +398,11 @@ export default function Customers() {
   const totalOutstanding = d.loans.reduce((sum, l) => sum + d.outstandingFor(l), 0);
 
   // Customers with at least one overdue active loan — drives the red alert bar + chip.
-  const overdueCustomers = d.customers.filter((c) =>
-    loansOf(c.id).some((l) => l.status === 'ACTIVE' && l.nextDueDate && l.nextDueDate < today && d.outstandingFor(l) > 0),
-  );
+  const overdueCustomers = d.customers.filter((c) => customerIsOverdue(loansOf(c.id)));
   const overdueLead = overdueCustomers[0];
   const overdueLeadLoan = overdueLead
     ? loansOf(overdueLead.id)
-        .filter((l) => l.status === 'ACTIVE' && l.nextDueDate && l.nextDueDate < today)
+        .filter(loanIsOverdue)
         .sort((a, b) => d.outstandingFor(b) - d.outstandingFor(a))[0]
     : undefined;
 
@@ -435,7 +439,7 @@ export default function Customers() {
             {overdueLeadLoan && (
               <span className="ml-1.5 font-normal text-red-600/80 dark:text-red-400/80">
                 · {overdueLead.name} · {inr(d.outstandingFor(overdueLeadLoan))} outstanding
-                {overdueLeadLoan.nextDueDate ? ` · due ${fmtDate(overdueLeadLoan.nextDueDate)}` : ''}
+                {(() => { const nd = d.nextDueFor(overdueLeadLoan); return nd ? ` · due ${fmtDate(nd)}` : ''; })()}
               </span>
             )}
           </span>
@@ -555,7 +559,7 @@ export default function Customers() {
           {rows.map((c) => {
             const cLoans = loansOf(c.id);
             const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
-            const hasOverdue = cLoans.some((l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE');
+            const hasOverdue = customerIsOverdue(cLoans);
             const activeLoan = cLoans.some((l) => l.status === 'ACTIVE');
             return (
               <div
@@ -636,7 +640,7 @@ export default function Customers() {
                   const cLoans = loansOf(c.id);
                   const activeLoans = cLoans.filter((l) => l.status === 'ACTIVE');
                   const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
-                  const hasOverdue = cLoans.some((l) => l.nextDueDate && l.nextDueDate < today && l.status === 'ACTIVE');
+                  const hasOverdue = customerIsOverdue(cLoans);
                   const kyc = kycOf(c);
                   const activeLoan = cLoans.some((l) => l.status === 'ACTIVE');
                   return (
@@ -1126,6 +1130,7 @@ export default function Customers() {
               <p>This permanently removes <span className="font-semibold text-slate-900">{confirm.name}</span> and <span className="font-semibold text-red-600">all their linked records</span> from every screen (Loans, Collections, Documents, Reports).</p>
               <p>Will also delete: <span className="font-semibold">{parts.join(', ')}</span>.</p>
               <p className="text-xs text-slate-500">Payment records include the full history for both active and closed loans.</p>
+              <p className="text-xs text-slate-500">Business expenses are not linked to customers — clear them separately on the Expenses page if needed.</p>
               <p>This cannot be undone.</p>
             </div>
           );

@@ -175,10 +175,35 @@ func (r *Repository) Update(ctx context.Context, id int64, in domain.CustomerInp
 	return c, nil
 }
 
-// SoftDelete marks a customer deleted. It returns NotFound if the customer
-// does not exist or was already deleted.
+// SoftDelete marks a customer deleted and soft-deletes their linked loans,
+// collections, and documents in the same transaction. Expenses are independent
+// (not customer-scoped) and are left untouched. Returns NotFound if the
+// customer does not exist or was already deleted.
 func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
-	tag, err := r.pool.Exec(ctx,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+
+	// Payments first (FK to loans), then loans, then documents, then customer.
+	if _, err := tx.Exec(ctx,
+		`UPDATE collections SET deleted_at = now(), updated_at = now()
+		 WHERE deleted_at IS NULL
+		   AND loan_id IN (SELECT id FROM loans WHERE customer_id = $1)`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE loans SET deleted_at = now(), updated_at = now()
+		 WHERE customer_id = $1 AND deleted_at IS NULL`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE documents SET deleted_at = now()
+		 WHERE customer_id = $1 AND deleted_at IS NULL`, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx,
 		`UPDATE customers SET deleted_at = now(), updated_at = now()
 		 WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
@@ -187,7 +212,7 @@ func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
 	if tag.RowsAffected() == 0 {
 		return domain.NewNotFound("customer")
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // rowScanner abstracts pgx.Row and pgx.Rows for a shared scan helper.

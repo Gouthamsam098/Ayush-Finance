@@ -78,7 +78,12 @@ export default function LoginCard({ onSubmit, loading = false, error = null }: L
             </motion.div>
           )}
 
-          <LoginForm onSubmit={onSubmit} loading={loading} mode={mode} onModeChange={setMode} />
+          <motion.div
+            animate={loading ? { scale: 0.992, filter: 'brightness(0.96)' } : { scale: 1, filter: 'brightness(1)' }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <LoginForm onSubmit={onSubmit} loading={loading} mode={mode} onModeChange={setMode} />
+          </motion.div>
         </div>
       </motion.div>
     </motion.div>

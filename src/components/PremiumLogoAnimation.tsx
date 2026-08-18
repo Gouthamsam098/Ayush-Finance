@@ -250,12 +250,17 @@ export default function PremiumLogoAnimation() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 3.8, duration: 0.6, ease: 'easeOut' }}
-            className="font-normal uppercase tracking-[0.25em] text-center"
-            style={{ color: '#cdd5e0', fontSize: 'clamp(0.4rem, 0.55vw, 0.55rem)', marginTop: '12px' }}
+            className="text-center font-semibold uppercase tracking-[0.28em]"
+            style={{
+              color: '#f4f8ff',
+              fontSize: 'clamp(0.55rem, 0.85vw, 0.72rem)',
+              marginTop: '14px',
+              textShadow: '0 0 18px rgba(24,139,252,.45), 0 1px 0 rgba(255,255,255,.2)',
+            }}
           >
-            <span className="inline-block h-px w-4 align-middle mr-2" style={{ background: '#cdd5e055' }} />
+            <span className="mr-2.5 inline-block h-px w-5 align-middle" style={{ background: 'linear-gradient(to right, transparent, rgba(255,255,255,.75))' }} />
             {TAGLINE}
-            <span className="inline-block h-px w-4 align-middle ml-2" style={{ background: '#cdd5e055' }} />
+            <span className="ml-2.5 inline-block h-px w-5 align-middle" style={{ background: 'linear-gradient(to left, transparent, rgba(255,255,255,.75))' }} />
           </motion.div>
         </motion.div>
       </motion.div>

@@ -99,7 +99,8 @@ func (s *Service) Update(ctx context.Context, id int64, in domain.CustomerInput)
 
 func nonEmptyStr(s *string) bool { return s != nil && *s != "" }
 
-// Delete soft-deletes a customer.
+// Delete soft-deletes a customer and cascaded loans, collections, and documents.
+// Expenses are not customer-scoped and are not deleted.
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.repo.SoftDelete(ctx, id)
 }

@@ -164,8 +164,7 @@ const seedCollections: Collection[] = [
   { id: uid(), receiptNo: R(), loanId: 1, date: daysAgo(4), amount: 750, mode: 'UPI' },
   { id: uid(), receiptNo: R(), loanId: 1, date: daysAgo(2), amount: 300, mode: 'CASH' }, // partial
   { id: uid(), receiptNo: R(), loanId: 1, date: todayISO(), amount: 750, mode: 'UPI' },
-  // Other loans — one payment each, keeps the dataset light
-  { id: uid(), receiptNo: R(), loanId: 2, date: daysAgo(20), amount: 24000, mode: 'BANK' },
+  // Other loans — one payment each, keeps the dataset light (loan ids must exist in seedLoans)
   { id: uid(), receiptNo: R(), loanId: 3, date: daysAgo(30), amount: 10200, mode: 'UPI' },
   { id: uid(), receiptNo: R(), loanId: 5, date: daysAgo(10), amount: 54000, mode: 'BANK' },
   { id: uid(), receiptNo: R(), loanId: 4, date: todayISO(), amount: 4500, mode: 'UPI' },
@@ -246,10 +245,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!config.useApi || !accessToken) return;
     customerApi.list().then(setCustomers).catch(() => { /* surfaced per-action */ });
-    loanApi.list().then(setLoans).catch(() => { /* surfaced per-action */ });
-    collectionApi.list().then(setCollections).catch(() => { /* surfaced per-action */ });
     expenseApi.list().then(setExpenses).catch(() => { /* surfaced per-action */ });
+    // Loans + collections together so we never keep payments for loans that
+    // are gone (orphan collections were showing up as "Collected" on Reports).
+    Promise.all([loanApi.list(), collectionApi.list()])
+      .then(([loanRows, collRows]) => {
+        const ids = new Set(loanRows.map((l) => l.id));
+        setLoans(loanRows);
+        setCollections(collRows.filter((c) => ids.has(c.loanId)));
+      })
+      .catch(() => { /* surfaced per-action */ });
   }, [accessToken]);
+
+  // Drop payments whose loan no longer exists (customer/loan delete, or seed
+  // orphans). Keeps Collections / Reports / Dashboard in sync with Loans.
+  useEffect(() => {
+    const ids = new Set(loans.map((l) => l.id));
+    setCollections((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.filter((c) => ids.has(c.loanId));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [loans]);
 
   /** Per-loan payment totals, built in ONE pass over `collections`.
    *
@@ -442,16 +459,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setCustomers((s) => s.map((c) => (c.id === id ? { ...c, ...patch } : c)));
       },
       deleteCustomer: (id) => {
-        if (config.useApi) {
-          // Backend cascades loans/collections/documents; mirror locally.
-          customerApi.remove(id).then(() => setCustomers((s) => s.filter((c) => c.id !== id)));
-          return;
-        }
+        // Capture loan ids before the async remove so collections can be
+        // purged from local state even if the loans array changes meanwhile.
         const loanIds = new Set(loans.filter((l) => l.customerId === id).map((l) => l.id));
-        setCustomers((s) => s.filter((c) => c.id !== id));
-        setLoans((s) => s.filter((l) => l.customerId !== id));
-        setCollections((s) => s.filter((c) => !loanIds.has(c.loanId)));
-        setDocuments((s) => s.filter((doc) => doc.customerId !== id));
+        const purgeLocal = () => {
+          setCustomers((s) => s.filter((c) => c.id !== id));
+          setLoans((s) => s.filter((l) => l.customerId !== id));
+          setCollections((s) => s.filter((c) => !loanIds.has(c.loanId)));
+          setDocuments((s) => s.filter((doc) => doc.customerId !== id));
+        };
+        if (config.useApi) {
+          // Backend soft-deletes the customer and cascaded loans/collections/
+          // documents; mirror the same purge in React state so Reports/Loans/
+          // Collections clear immediately (expenses are independent and stay).
+          return customerApi.remove(id).then(purgeLocal);
+        }
+        purgeLocal();
       },
       addLoan: (l) => {
         if (config.useApi) {
@@ -495,12 +518,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }));
       },
       deleteLoan: (id) => {
+        const purgeLocal = () => {
+          setLoans((s) => s.filter((l) => l.id !== id));
+          setCollections((s) => s.filter((c) => c.loanId !== id));
+        };
         if (config.useApi) {
-          loanApi.remove(id).then(() => setLoans((s) => s.filter((l) => l.id !== id)));
-          return;
+          // Backend soft-deletes the loan and its payments; mirror locally so
+          // Collections/Reports don't keep orphan rows until a hard refresh.
+          return loanApi.remove(id).then(purgeLocal);
         }
-        setLoans((s) => s.filter((l) => l.id !== id));
-        setCollections((s) => s.filter((c) => c.loanId !== id));
+        purgeLocal();
       },
       // Collection mutations return a promise in API mode so callers can await
       // and surface failures (no false success). The loan list is refreshed

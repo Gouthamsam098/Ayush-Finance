@@ -13,6 +13,7 @@ import { CountUp } from '@/components/motion';
 import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { Plus, Pencil, Trash2, Wallet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { cn } from '@/lib/utils';
 
 const MODES: PayMode[] = ['CASH', 'UPI', 'BANK', 'CHEQUE'];
 const monthKey = (offset: number) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - offset); return isoLocal(d).slice(0, 7); };
@@ -32,7 +33,9 @@ export default function Expenses() {
   const [form, setForm] = useState<EForm | null>(null);
   const [confirm, setConfirm] = useState<Expense | null>(null);
   const months = [monthKey(0), monthKey(1), monthKey(2)];
-  const [filter, setFilter] = useState<'THIS_MONTH' | 'LAST_6M' | 'LAST_1Y' | 'ALL'>('THIS_MONTH');
+  // Default ALL so older-month rows aren't hidden while month cards still show them
+  // (that mismatch looked like "deleted" data still lingering).
+  const [filter, setFilter] = useState<'THIS_MONTH' | 'LAST_6M' | 'LAST_1Y' | 'ALL' | string>('ALL');
 
   const totalFor = (key: string) => d.expenses.filter((e) => e.date.slice(0, 7) === key).reduce((s, e) => s + e.amount, 0);
 
@@ -40,7 +43,9 @@ export default function Expenses() {
     if (filter === 'ALL') return d.expenses;
     if (filter === 'THIS_MONTH') return d.expenses.filter((e) => e.date.slice(0, 7) === months[0]);
     if (filter === 'LAST_6M') { const since = monthsAgoISO(6); return d.expenses.filter((e) => e.date >= since); }
-    const since = yearsAgoISO(1); return d.expenses.filter((e) => e.date >= since);
+    if (filter === 'LAST_1Y') { const since = yearsAgoISO(1); return d.expenses.filter((e) => e.date >= since); }
+    // YYYY-MM from a month card click
+    return d.expenses.filter((e) => e.date.slice(0, 7) === filter);
   }, [d.expenses, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k: keyof EForm, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
@@ -70,27 +75,37 @@ export default function Expenses() {
       <PageHeader
         icon={<Wallet size={20} />}
         title="Expenses"
-        subtitle={`${rows.length} entries`}
+        subtitle={filter === 'ALL' ? `${d.expenses.length} entries` : `${rows.length} shown · ${d.expenses.length} total`}
         actions={editable ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setForm(blank())}>Add Expense</HeaderPrimaryButton> : undefined}
       />
       <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
-      {/* current + previous 2 months */}
+      {/* current + previous 2 months — click a card to list that month's rows */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {months.map((m, i) => (
-          <Card key={m} tilt className="anim-pop p-5" style={{ animationDelay: `${i * 70}ms` }}>
-            <div className="text-[13px] text-muted">{monthLabel(m)}{i === 0 && ' · current'}</div>
-            <div className="mt-1 font-display text-2xl font-bold"><CountUp value={totalFor(m)} format={inrShort} /></div>
-            <div className="mt-1 text-xs text-muted">{d.expenses.filter((e) => e.date.slice(0, 7) === m).length} entries</div>
-          </Card>
-        ))}
+        {months.map((m, i) => {
+          const selected = filter === m || (filter === 'THIS_MONTH' && i === 0);
+          return (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setFilter(i === 0 ? 'THIS_MONTH' : m)}
+              className="text-left"
+            >
+              <Card tilt className={cn('anim-pop p-5 transition-shadow', selected && 'ring-2 ring-primary/40')} style={{ animationDelay: `${i * 70}ms` }}>
+                <div className="text-[13px] text-muted">{monthLabel(m)}{i === 0 && ' · current'}</div>
+                <div className="mt-1 font-display text-2xl font-bold"><CountUp value={totalFor(m)} format={inrShort} /></div>
+                <div className="mt-1 text-xs text-muted">{d.expenses.filter((e) => e.date.slice(0, 7) === m).length} entries</div>
+              </Card>
+            </button>
+          );
+        })}
       </div>
 
       <Card className="anim-pop overflow-hidden p-4" style={{ animationDelay: '200ms' }}>
         <div className="mb-4 flex flex-wrap gap-2">
           {chips.map((c) => (
-            <button key={c.key} onClick={() => setFilter(c.key as typeof filter)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${filter === c.key ? 'bg-primary text-white' : 'border border-slate-200 dark:border-slate-700 text-muted hover:bg-slate-50 dark:hover:bg-white/[.05]'}`}>
+            <button key={c.key} onClick={() => setFilter(c.key)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${filter === c.key || (c.key === 'THIS_MONTH' && filter === months[0]) ? 'bg-primary text-white' : 'border border-slate-200 dark:border-slate-700 text-muted hover:bg-slate-50 dark:hover:bg-white/[.05]'}`}>
               {c.label}
             </button>
           ))}
