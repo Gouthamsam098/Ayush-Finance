@@ -1,18 +1,20 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  useData, LOAN_LABELS, isDailyLoan, cadenceDaysForLoan, behavesInterestOnly, type Loan,
+  useData, LOAN_LABELS, isDailyLoan, behavesInterestOnly, type Loan,
 } from '@/mock/DataContext';
 import { inr, inrShort, todayISO, isoLocal } from '@/lib/format';
 import { usePermissions } from '@/lib/permissions';
 import { useOpenSidebar } from '@/components/layout/AppShell';
-import { LiveClock } from '@/components/LiveClock';
 import {
   ChartCard, KpiCard, LoanPerformanceChart, CashFlowChart, EfficiencyGauge, RangeToggle, C,
   type LoanPerfPoint, type CashFlowPoint, type KpiTrend, type Range,
 } from '@/components/dashboard/Charts';
 import {
-  Wallet, CalendarClock, IndianRupee, Gauge, TrendingUp, Plus, Menu,
+  PeriodFilter, type PeriodMode, periodDisplayLabel, isPeriodDefault,
+} from '@/components/dashboard/PeriodFilter';
+import {
+  Wallet, CalendarClock, IndianRupee, Gauge, TrendingUp, Menu,
   Phone, Eye, HandCoins, ArrowRight, Search, Receipt,
 } from 'lucide-react';
 
@@ -97,12 +99,21 @@ export default function Dashboard() {
   const [overdueQuery, setOverdueQuery] = useState('');
   const [cashRange, setCashRange] = useState<Range>('month');
   const [perfRange, setPerfRange] = useState<Range>('6m');
+  // Period filter — day defaults to today; month to current calendar month.
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('day');
+  const [periodDate, setPeriodDate] = useState(todayISO);
 
   const active = d.loans.filter((l) => l.status === 'ACTIVE');
   const today = todayISO();
   const thisMonth = today.slice(0, 7);
+  const periodKey = periodDate.slice(0, 7);
   const [ly, lm] = thisMonth.split('-').map(Number);
   const lastMonthKey = `${lm === 1 ? ly - 1 : ly}-${String(lm === 1 ? 12 : lm - 1).padStart(2, '0')}`;
+
+  const resetPeriod = () => {
+    setPeriodMode('day');
+    setPeriodDate(todayISO());
+  };
 
   const dueFor = (l: Loan) => (isDailyLoan(l.type) ? d.totalDueForDaily(l) : d.totalDueForMonthly(l));
   const isOverdue = (l: Loan) => { const nd = d.nextDueFor(l); return !!nd && nd < today; };
@@ -124,7 +135,14 @@ export default function Dashboard() {
   const monthDue = active.reduce((s, l) => s + dueFor(l), 0);
   const totalOutstanding = active.reduce((s, l) => s + d.outstandingFor(l), 0);
 
-  const todayColl = d.collections.filter((c) => c.date === today).reduce((s, c) => s + c.amount, 0);
+  // Selected period (day or month) — drives Collections / Profit / Expenses KPIs.
+  const periodColl = periodMode === 'day'
+    ? d.collections.filter((c) => c.date === periodDate).reduce((s, c) => s + c.amount, 0)
+    : collInMonth(periodKey);
+  const periodExp = periodMode === 'day'
+    ? d.expenses.filter((e) => e.date === periodDate).reduce((s, e) => s + e.amount, 0)
+    : expInMonth(periodKey);
+
   const totalCollected = d.collections.reduce((s, c) => s + c.amount, 0); // all-time collections
   const dueTodayLoans = active.filter((l) => d.nextDueFor(l) === today);
   const dueToday = dueTodayLoans.reduce((s, l) => s + dueFor(l), 0);
@@ -190,17 +208,22 @@ export default function Dashboard() {
 
   const profitInMonth = (key: string) =>
     d.collections.reduce((s, c) => (c.date.slice(0, 7) === key ? s + (profitByCollectionId.get(c.id) ?? 0) : s), 0);
+  const periodProfit = periodMode === 'day'
+    ? d.collections.reduce((s, c) => (c.date === periodDate ? s + (profitByCollectionId.get(c.id) ?? 0) : s), 0)
+    : profitInMonth(periodKey);
   const monthInterest = profitInMonth(thisMonth);   // "Profit" this month (name kept for downstream use)
   const lastInterest = profitInMonth(lastMonthKey);
+  const periodLabel = periodDisplayLabel(periodMode, periodDate);
+  const periodIsDefault = isPeriodDefault(periodMode, periodDate, today);
 
   // ── Section 1 KPIs ──
   const kpis = [
     { icon: Wallet, tint: 'bg-indigo-50 dark:bg-indigo-500/15', iconColor: 'text-indigo-600 dark:text-indigo-400', label: 'Total Outstanding', value: inr(totalOutstanding), hint: 'Across active loans', trend: null as KpiTrend | null },
     { icon: CalendarClock, tint: 'bg-amber-50 dark:bg-amber-500/15', iconColor: 'text-amber-600 dark:text-amber-400', label: 'Due Today', value: inr(dueToday), hint: `${dueTodayLoans.length} loan${dueTodayLoans.length === 1 ? '' : 's'}`, trend: null },
-    { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Total Collections', value: inr(totalCollected), hint: `${inr(todayColl)} collected today`, trend: null },
+    { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Collections', value: inr(periodColl), hint: periodMode === 'day' ? periodLabel : `${periodLabel} · all-time ${inr(totalCollected)}`, trend: null },
     { icon: Gauge, tint: 'bg-blue-50 dark:bg-blue-500/15', iconColor: 'text-blue-600 dark:text-blue-400', label: 'Collection Efficiency', value: efficiency == null ? '—' : `${efficiency}%`, hint: efficiency == null ? 'No activity yet' : 'This month', trend: efficiency != null && lastEff != null ? trendOf(efficiency, lastEff) : null },
-    { icon: TrendingUp, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Profit', value: inr(monthInterest), hint: 'Interest earned this month', trend: trendOf(monthInterest, lastInterest) },
-    { icon: Receipt, tint: 'bg-rose-50 dark:bg-rose-500/15', iconColor: 'text-rose-600 dark:text-rose-400', label: 'Expenses', value: inr(monthExp), hint: 'This month', trend: trendOf(monthExp, lastExp) },
+    { icon: TrendingUp, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Profit', value: inr(periodProfit), hint: periodMode === 'day' ? `Realised on ${periodLabel}` : `Interest earned · ${periodLabel}`, trend: periodIsDefault ? trendOf(monthInterest, lastInterest) : null },
+    { icon: Receipt, tint: 'bg-rose-50 dark:bg-rose-500/15', iconColor: 'text-rose-600 dark:text-rose-400', label: 'Expenses', value: inr(periodExp), hint: periodLabel, trend: periodIsDefault && periodMode === 'month' ? trendOf(monthExp, lastExp) : null },
   ];
 
   // ── Section 2a — Loan Performance: money OUT (disbursed) vs money IN
@@ -299,12 +322,21 @@ export default function Dashboard() {
             <button onClick={openSidebar} aria-label="Open menu" className="grid h-10 w-10 place-items-center rounded-xl border-[0.5px] border-slate-200 bg-white text-slate-600 lg:hidden dark:border-white/10 dark:bg-white/5 dark:text-slate-300"><Menu size={18} /></button>
             <div>
               <h1 className="font-display text-[22px] font-bold tracking-tight text-ink">{greeting}, Admin 👋</h1>
-              <p className="text-[13px] text-muted">Here's what's happening with your portfolio today.</p>
+              <p className="text-[13px] text-muted">
+                {periodIsDefault && periodMode === 'day'
+                  ? "Here's what's happening with your portfolio today."
+                  : `Showing collections & profit for ${periodLabel}.`}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2.5">
-            <LiveClock />
-            <button onClick={() => navigate('/collections')} className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13.5px] font-semibold text-white shadow-sm transition-all hover:-translate-y-px hover:shadow-md" style={{ background: C.primary }}><Plus size={16} /> Record Collection</button>
+            <PeriodFilter
+              mode={periodMode}
+              dateISO={periodDate}
+              onModeChange={setPeriodMode}
+              onDateChange={setPeriodDate}
+              onReset={resetPeriod}
+            />
           </div>
         </div>
 
@@ -450,9 +482,9 @@ export default function Dashboard() {
             <h3 className="mb-2 text-[15px] font-bold tracking-tight text-ink">Collection Efficiency</h3>
             <EfficiencyGauge pct={efficiencyView} />
             <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 dark:bg-white/[.03]">
-              <GaugeStat label="Interest" value={inrShort(monthInterest)} color="text-emerald-600 dark:text-emerald-400" />
-              <GaugeStat label="Expenses" value={inrShort(monthExp)} color="text-red-500 dark:text-red-400" />
-              <GaugeStat label="Profit" value={inrShort(monthInterest)} color="text-indigo-600 dark:text-indigo-400" />
+              <GaugeStat label="Interest" value={inrShort(periodProfit)} color="text-emerald-600 dark:text-emerald-400" />
+              <GaugeStat label="Expenses" value={inrShort(periodExp)} color="text-red-500 dark:text-red-400" />
+              <GaugeStat label="Profit" value={inrShort(periodProfit)} color="text-indigo-600 dark:text-indigo-400" />
             </div>
             {canView('Reports') && (
               <button onClick={() => navigate('/reports')} className="mt-4 inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold" style={{ color: C.primary }}>View Collection Reports <ArrowRight size={14} /></button>
