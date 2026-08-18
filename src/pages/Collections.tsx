@@ -339,12 +339,12 @@ export default function Collections() {
       <Dialog open={!!form} onClose={() => setForm(null)} title={form?.id ? 'Edit collection' : 'Add collection'}
         footer={<><Button variant="ghost" onClick={() => setForm(null)} disabled={saving}>Cancel</Button><Button onClick={save} loading={saving}>{form?.id ? 'Save changes' : 'Save'}</Button></>}>
         {form && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 min-w-0 lg:grid-cols-2">
             <Select label="Customer" value={form.customerId} onChange={(e) => { set('customerId', e.target.value); set('loanId', ''); }}
               options={[{ value: '', label: 'All customers' }, ...d.customers.map((c) => ({ value: String(c.id), label: c.name }))]} />
             <Select label="Loan *" value={form.loanId} onChange={(e) => onLoanPick(e.target.value)}
               options={[{ value: '', label: 'Select loan…' }, ...custLoans.map((l) => ({ value: String(l.id), label: `${LOAN_LABELS[l.type]} · ${l.loanNumber}` }))]} />
-            <div>
+            <div className="min-w-0">
               <Input label="Amount *" type="number" value={form.amount} onChange={(e) => set('amount', e.target.value)} />
               {selectedLoan && (
                 <p className={`mt-1 text-[11px] ${overpay ? 'font-semibold text-warning' : 'text-muted'}`}>
@@ -354,9 +354,11 @@ export default function Collections() {
                 </p>
               )}
             </div>
-            <DatePicker label="Date" value={form.date} onChange={(e) => set('date', e.target.value)} />
+            <div className="min-w-0">
+              <DatePicker label="Date" value={form.date} onChange={(e) => set('date', e.target.value)} />
+            </div>
             <Select label="Payment mode" value={form.mode} onChange={(e) => set('mode', e.target.value as PayMode)} options={MODES.map((m) => ({ value: m, label: m }))} />
-            <div className="sm:col-span-2"><Input label="Remarks" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></div>
+            <div className="min-w-0 lg:col-span-2"><Input label="Remarks" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></div>
           </div>
         )}
       </Dialog>

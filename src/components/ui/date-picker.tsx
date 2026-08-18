@@ -150,12 +150,12 @@ export function DatePicker({ label, error, value, onChange, className, yearMin, 
   };
 
   return (
-    <div ref={containerRef}>
-      <label className="block">
+    <div ref={containerRef} className="min-w-0">
+      <label className="block min-w-0">
         {label && (
           <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">{label}</span>
         )}
-        <div className="relative">
+        <div className="relative min-w-0">
           <input
             type="text"
             readOnly
@@ -176,7 +176,7 @@ export function DatePicker({ label, error, value, onChange, className, yearMin, 
             aria-expanded={open}
             aria-haspopup="dialog"
             className={cn(
-              'w-full cursor-pointer rounded-xl border bg-white dark:bg-surface pl-3.5 pr-10 py-2.5 text-sm outline-none',
+              'box-border w-full min-w-0 max-w-full cursor-pointer rounded-xl border bg-white dark:bg-surface pl-3.5 pr-10 py-2.5 text-sm outline-none',
               'shadow-[inset_0_1px_2px_rgba(15,23,42,.03)] dark:shadow-none',
               'border-slate-200 dark:border-white/[.08] placeholder:text-slate-400 dark:placeholder:text-slate-500',
               'transition-shadow duration-150 select-none',

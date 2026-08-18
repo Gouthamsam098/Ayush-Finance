@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import type { Loan } from '@/mock/DataContext';
-import { LOAN_LABELS, isDailyLoan, isEmiLoan, upfrontDeduction, useData } from '@/mock/DataContext';
+import {
+  LOAN_LABELS, isDailyLoan, behavesEmi, behavesInterestOnly, upfrontDeduction, useData,
+} from '@/mock/DataContext';
 import { inr, fmtDate, todayISO } from '@/lib/format';
 import { buildSchedule } from '@/lib/loanSchedule';
 import { FileText, Wallet, Percent, CalendarDays, ArrowDownToLine } from 'lucide-react';
@@ -17,41 +19,59 @@ function Field({ k, v }: { k: string; v: string }) {
 }
 
 /**
- * Bank-style "Payment Schedule" statement for a loan — modelled on a Bajaj
- * repayment statement, rendered over this app's flat upfront-interest math.
- * Interest is deducted upfront (shown in the header), so each scheduled
- * instalment repays principal and the interest column is 0.
+ * Bank-style "Payment Schedule" statement — same chrome for every loan type
+ * (Daily Collection layout is the visual reference). Schedule math is per
+ * product; this component only presents rows from `buildSchedule`.
  */
 export function StatementView({ loan }: { loan: Loan }) {
   const d = useData();
   const cust = d.customers.find((c) => c.id === loan.customerId);
-  const collected = d.collectedFor(loan.id);
-  // Foreclosure context: the last payment on a CLOSED loan is the payoff — the
-  // schedule collapses to it (regular rows, then one settlement row, closing 0).
+  const interestOnly = behavesInterestOnly(loan);
+  const emi = behavesEmi(loan);
+
+  // Interest-only schedules are funded by INTEREST payments only (principal
+  // settlements must not mark interest periods as Paid).
+  const collected = useMemo(() => {
+    if (!interestOnly) return d.collectedFor(loan.id);
+    return d.collections
+      .filter((c) => c.loanId === loan.id && c.kind !== 'PRINCIPAL')
+      .reduce((s, c) => s + c.amount, 0);
+  }, [d.collections, d, loan.id, interestOnly]);
+
   const lastPayment = useMemo(() => {
     const colls = d.collections.filter((c) => c.loanId === loan.id);
     if (!colls.length) return null;
     const last = colls.reduce((a, b) => (b.id > a.id ? b : a));
     return { amount: last.amount, date: last.date };
   }, [d.collections, loan.id]);
+
   const schedule = useMemo(
     () => buildSchedule(loan, { collected, settlement: lastPayment }),
-    [loan, collected, lastPayment]
+    [loan, collected, lastPayment],
   );
 
-  const emi = isEmiLoan(loan.type);
   const instalment = loan.dailyAmount ?? 0;
   const paidCount = instalment > 0 ? Math.floor(collected / instalment) : 0;
-  // EMI disburses the full principal (no upfront cut); Daily Collection retains interest.
-  const deduction = emi ? 0 : (loan.deduction ?? upfrontDeduction(loan.type, loan.interest));
-  // Prefer the server-stored disbursed amount; fall back to the computation for mock loans.
+  const deduction = emi || interestOnly ? 0 : (loan.deduction ?? upfrontDeduction(loan.type, loan.interest));
   const netDisbursed = loan.disbursed ?? Math.max(0, loan.principal - deduction);
-  const freq = isDailyLoan(loan.type) ? 'Daily' : 'Monthly';
-  const tenure = loan.numDays ?? schedule.length;
+  const freq = isDailyLoan(loan.type)
+    ? 'Daily'
+    : loan.type === 'DAILY_INTEREST'
+      ? 'Daily'
+      : loan.type === 'FLEXIBLE'
+        ? 'Flexible cycle'
+        : 'Monthly';
+  const tenureLabel = interestOnly
+    ? (loan.type === 'FLEXIBLE'
+      ? `${loan.numDays ?? 30} days / cycle`
+      : loan.type === 'DAILY_INTEREST'
+        ? 'Open-ended (daily)'
+        : 'Open-ended (monthly)')
+    : `${loan.numDays ?? schedule.length} ${isDailyLoan(loan.type) ? 'days' : 'months'}`;
   const closed = loan.status !== 'ACTIVE';
 
   const totalPrincipal = schedule.reduce((s, r) => s + r.principal, 0);
-  const totalInterest = schedule.reduce((s, r) => s + r.interest, 0); // 0 for daily (upfront), real for EMI
+  const totalInterest = schedule.reduce((s, r) => s + r.interest, 0);
   const totalInstal = schedule.reduce((s, r) => s + r.instalment, 0);
 
   return (
@@ -87,10 +107,10 @@ export function StatementView({ loan }: { loan: Loan }) {
           <Field k="Loan Start Date" v={fmtDate(loan.loanDate)} />
           <Field k="Mobile" v={loan.contact || cust?.mobile || '—'} />
           <Field k="Frequency" v={`${freq} instalments`} />
-          <Field k="Total Tenure" v={`${tenure} ${isDailyLoan(loan.type) ? 'days' : 'months'}`} />
+          <Field k="Total Tenure" v={tenureLabel} />
           <Field k="Rate" v={`${loan.rate}%`} />
           <Field k="Loan Amount" v={inr(loan.principal)} />
-          <Field k={emi ? 'EMI' : 'Instalment'} v={inr(instalment)} />
+          <Field k={interestOnly ? 'Interest / period' : emi ? 'EMI' : 'Instalment'} v={inr(instalment)} />
         </div>
 
         {/* Key figures */}
@@ -98,8 +118,10 @@ export function StatementView({ loan }: { loan: Loan }) {
           <Stat k="Disbursement date" v={fmtDate(loan.loanDate)} icon={<CalendarDays size={14} />} />
           {emi
             ? <Stat k="Total payable" v={inr(loan.principal + loan.interest)} icon={<Wallet size={14} />} />
-            : <Stat k="Deduction (upfront)" v={inr(deduction)} tone="danger" icon={<ArrowDownToLine size={14} />} />}
-          <Stat k={emi ? 'Disbursed' : 'Net disbursed'} v={inr(netDisbursed)} tone="success" icon={<ArrowDownToLine size={14} />} />
+            : interestOnly
+              ? <Stat k="Principal (fixed)" v={inr(loan.principal)} icon={<Wallet size={14} />} />
+              : <Stat k="Deduction (upfront)" v={inr(deduction)} tone="danger" icon={<ArrowDownToLine size={14} />} />}
+          <Stat k={emi || interestOnly ? 'Disbursed' : 'Net disbursed'} v={inr(netDisbursed)} tone="success" icon={<ArrowDownToLine size={14} />} />
           <Stat k="Interest" v={inr(loan.interest)} icon={<Percent size={14} />} />
         </div>
 
@@ -162,8 +184,10 @@ export function StatementView({ loan }: { loan: Loan }) {
 
         <p className="text-[11px] leading-relaxed text-muted">
           {emi
-            ? `Full principal disbursed. Each EMI includes principal + interest; total interest ${inr(loan.interest)} (${loan.rate}% overall) spread evenly across ${tenure} months.`
-            : `Interest of ${inr(loan.interest)} was deducted upfront at disbursement; each instalment repays principal.`}
+            ? `Full principal disbursed. Each EMI includes principal + interest; total interest ${inr(loan.interest)} (${loan.rate}% overall) spread evenly across ${loan.numDays ?? schedule.length} months.`
+            : interestOnly
+              ? `Interest of ${inr(instalment)} falls due each period; principal stays outstanding until settle & close. Schedule shows periods due so far plus the next due.`
+              : `Interest of ${inr(loan.interest)} was deducted upfront at disbursement; each instalment repays principal.`}
         </p>
       </div>
     </div>

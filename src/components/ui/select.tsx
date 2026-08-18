@@ -7,11 +7,11 @@ interface Props extends React.SelectHTMLAttributes<HTMLSelectElement> {
 }
 export function Select({ label, error, options, className, ...props }: Props) {
   return (
-    <label className="block">
+    <label className="block min-w-0">
       {label && <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">{label}</span>}
       <select
         className={cn(
-          'w-full rounded-xl border border-slate-200 dark:border-white/[.08] bg-white dark:bg-surface px-3 py-2.5 text-sm outline-none cursor-pointer',
+          'box-border w-full min-w-0 max-w-full rounded-xl border border-slate-200 dark:border-white/[.08] bg-white dark:bg-surface px-3 py-2.5 text-sm outline-none cursor-pointer',
           'shadow-[inset_0_1px_2px_rgba(15,23,42,.03)] dark:shadow-none transition-shadow duration-150',
           'focus:border-primary focus:ring-4 focus:ring-primary/10',
           error && 'border-danger focus:border-danger focus:ring-danger/10',

@@ -9,7 +9,7 @@ import { todayISO } from '@/lib/format';
 import { withUiModuleAccess } from '@/lib/uiModuleAccess';
 import { cn } from '@/lib/utils';
 import {
-  LayoutDashboard, Users, FileText, Receipt, Wallet, BarChart3,
+  LayoutDashboard, Users, FileText, HandCoins, Wallet, BarChart3,
   FolderOpen, Settings, ChevronsLeft, LogOut, Moon, Sun,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -24,7 +24,7 @@ const NAV: NavSection[] = [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, module: 'Dashboard' },
       { to: '/customers', label: 'Customers', icon: Users, module: 'Customers' },
       { to: '/loans', label: 'Loans', icon: FileText, badgeKey: 'overdue', module: 'Loans' },
-      { to: '/collections', label: 'Collections', icon: Receipt, module: 'Collections' },
+      { to: '/collections', label: 'Collections', icon: HandCoins, module: 'Collections' },
     ],
   },
   {

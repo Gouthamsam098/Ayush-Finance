@@ -459,102 +459,94 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     // jsPDF + jspdf-autotable are ~415 KB and are only needed when the user
     // actually asks for a PDF, so they are fetched on demand instead of being
     // bundled into the initial download.
+    //
+    // Every download matches the on-screen Statement tab (Payment Schedule),
+    // for all loan types — not the operational ledger table.
     const { buildLedgerReportPDF, shareOrDownloadPDF } = await import('@/lib/pdfReport');
-    let tableTitle = '', tableHead: string[] = [], tableBody: (string | number)[][] = [];
-    const unit = loan.type === 'FLEXIBLE' ? 'Cycle' : (isMonthly || loan.type === 'MONTHLY_INTEREST') ? 'Month' : 'Day';
-    // Mirror the on-screen ledger exactly — including the upcoming "Next due"
-    // row (previously filtered out with date <= today, so e.g. September was
-    // missing from the PDF while visible in the dialog).
-    tableTitle = `${unit}-by-${unit} Ledger`;
-    if (interestOnly) {
-      tableHead = [unit, 'Due Date', 'Collection Date', 'Interest Due', 'Amount', 'Payment Mode', 'Status', 'Remarks'];
-      tableBody = displayRows.map((r) => [
-        r.sn,
-        fmtDate(r.dueDate ?? r.date),
-        r.paidOn ? fmtDate(r.paidOn) : '—',
-        inr(r.due),
-        r.collected ? inr(r.collected) : '—',
-        r.mode ?? '—',
-        r.status,
-        r.remarks ?? '—',
-      ]);
-    } else if (!isSimple) {
-      tableHead = [unit, 'Due Date', 'Collection Date', `${isMonthly ? 'Monthly' : 'Daily'} Due`, 'Amount', 'Principal Remaining', 'Payment Mode', 'Status', 'Remarks'];
-      tableBody = displayRows.map((r) => [
-        r.sn,
-        fmtDate(r.dueDate ?? r.date),
-        r.paidOn ? fmtDate(r.paidOn) : '—',
-        inr(r.due),
-        r.collected ? inr(r.collected) : '—',
-        inr(r.remaining),
-        r.mode ?? '—',
-        r.status,
-        r.remarks ?? '—',
-      ]);
-    } else {
-      tableTitle = 'Payment History';
-      tableHead = ['Date', 'Amount', 'Mode', 'Status'];
-      tableBody = displayRows.map((r) => [
-        fmtDate(r.dueDate ?? r.date),
-        r.collected ? inr(r.collected) : r.due ? inr(r.due) : '—',
-        r.mode ?? '—',
-        r.status,
-      ]);
-    }
-    // Statement tab → bank-style Payment Schedule PDF over the flat model.
-    // A foreclosed loan collapses to its settlement row (Bajaj-style).
-    if (tab === 'statement' && isInstalmentLoan(loan.type)) {
-      const loanColls = d.collections.filter((c) => c.loanId === loan.id);
-      const lastPay = loanColls.length
-        ? loanColls.reduce((a, b) => (b.id > a.id ? b : a))
-        : null;
-      const sched = buildSchedule(loan, { collected, settlement: lastPay ? { amount: lastPay.amount, date: lastPay.date } : null });
-      const paidCount = instalment > 0 ? Math.floor(collected / instalment) : 0;
-      const doc = buildLedgerReportPDF({
-        loanNumber: loan.loanNumber,
-        loanTypeLabel: `${LOAN_LABELS[loan.type]} · Payment Schedule`,
-        customerName: cust?.name ?? '—',
-        customerMobile: loan.contact || cust?.mobile || '—',
-        loanDate: fmtDate(loan.loanDate),
-        summary: [
-          { label: 'Loan Amount', value: inr(loan.principal) },
-          { label: 'Interest (upfront)', value: inr(loan.interest) },
-          { label: 'Net Disbursed', value: inr(netDisbursed) },
-          { label: 'Instalment', value: inr(instalment) },
-          { label: 'Tenure', value: `${totalTerm} ${isMonthly ? 'months' : 'days'}` },
-          { label: 'Rate', value: `${loan.rate}%` },
-        ],
-        progress: { label: 'Instalments paid', paid: paidCount, total: totalTerm },
-        tableTitle: 'Payment Schedule',
-        tableHead: ['Instl', 'Due Date', 'Opening', 'Instalment', 'Principal', 'Interest', 'Closing', 'Status'],
-        tableBody: sched.map((r) => [
-          r.sn, fmtDate(r.dueDate), inr(r.opening), inr(r.instalment), inr(r.principal), inr(r.interest), inr(r.closing),
-          r.settled ? 'Foreclosed' : r.sn <= paidCount ? 'Paid' : 'Due',
-        ]),
-      });
-      const result = await shareOrDownloadPDF(doc, `Statement-${loan.loanNumber}-${todayISO()}.pdf`);
-      toast(result === 'shared' ? 'Statement shared' : 'Statement downloaded');
-      return;
-    }
-
-    const progress = { label: 'Collection Progress', paid: paidDays, total: progressTotal };
+    const loanColls = d.collections.filter((c) => c.loanId === loan.id);
+    const lastPay = loanColls.length
+      ? loanColls.reduce((a, b) => (b.id > a.id ? b : a))
+      : null;
+    // Interest-only schedules are funded by INTEREST payments only (same as StatementView).
+    const scheduleCollected = interestOnly
+      ? loanColls.filter((c) => c.kind !== 'PRINCIPAL').reduce((s, c) => s + c.amount, 0)
+      : collected;
+    const sched = buildSchedule(loan, {
+      collected: scheduleCollected,
+      settlement: lastPay ? { amount: lastPay.amount, date: lastPay.date } : null,
+    });
+    const paidCount = instalment > 0 ? Math.floor(scheduleCollected / instalment) : 0;
+    // Same labels / figures as StatementView header + key-figure cards.
+    const stmtDeduction = emiLoan || interestOnly ? 0 : (loan.deduction ?? upfrontDeduction(loan.type, loan.interest));
+    const stmtNet = loan.disbursed ?? (emiLoan || interestOnly ? loan.principal : Math.max(0, loan.principal - stmtDeduction));
+    const tenureLabel = interestOnly
+      ? (loan.type === 'FLEXIBLE'
+        ? `${loan.numDays ?? 30} days / cycle`
+        : loan.type === 'DAILY_INTEREST'
+          ? 'Open-ended (daily)'
+          : 'Open-ended (monthly)')
+      : `${loan.numDays ?? sched.length} ${isDailyLoan(loan.type) ? 'days' : 'months'}`;
+    const freq = isDailyLoan(loan.type)
+      ? 'Daily'
+      : loan.type === 'DAILY_INTEREST'
+        ? 'Daily'
+        : loan.type === 'FLEXIBLE'
+          ? 'Flexible cycle'
+          : 'Monthly';
+    const instalmentLabel = interestOnly ? 'Interest / period' : emiLoan ? 'EMI' : 'Instalment';
+    const midStat = emiLoan
+      ? { label: 'Total payable', value: inr(loan.principal + loan.interest) }
+      : interestOnly
+        ? { label: 'Principal (fixed)', value: inr(loan.principal) }
+        : { label: 'Deduction (upfront)', value: inr(stmtDeduction) };
     const doc = buildLedgerReportPDF({
       loanNumber: loan.loanNumber,
-      loanTypeLabel: LOAN_LABELS[loan.type],
+      documentTitle: 'Payment Schedule',
+      loanTypeLabel: `${LOAN_LABELS[loan.type]} · ${loan.loanNumber}`,
       customerName: cust?.name ?? '—',
       customerMobile: loan.contact || cust?.mobile || '—',
       loanDate: fmtDate(loan.loanDate),
-      summary: summaryCards.map((c) => ({ label: c.k, value: c.v })),
-      progress, tableTitle, tableHead, tableBody,
+      detailFields: [
+        { label: 'Customer', value: cust?.name ?? '—' },
+        { label: 'Loan Type', value: LOAN_LABELS[loan.type] },
+        { label: 'Loan Reference', value: loan.loanNumber },
+        { label: 'Loan Start Date', value: fmtDate(loan.loanDate) },
+        { label: 'Mobile', value: loan.contact || cust?.mobile || '—' },
+        { label: 'Frequency', value: `${freq} instalments` },
+        { label: 'Total Tenure', value: tenureLabel },
+        { label: 'Rate', value: `${loan.rate}%` },
+        { label: 'Loan Amount', value: inr(loan.principal) },
+        { label: instalmentLabel, value: inr(instalment) },
+      ],
+      summary: [
+        { label: 'Disbursement date', value: fmtDate(loan.loanDate) },
+        midStat,
+        { label: emiLoan || interestOnly ? 'Disbursed' : 'Net disbursed', value: inr(stmtNet) },
+        { label: 'Interest', value: inr(loan.interest) },
+      ],
+      progress: interestOnly
+        ? { label: 'Periods paid', paid: paidCount, total: Math.max(sched.filter((r) => !r.settled).length, paidCount) }
+        : { label: 'Instalments paid', paid: paidCount, total: totalTerm },
+      tableTitle: 'Payment Schedule',
+      tableHead: ['Instl', 'Due Date', 'Opening', 'Instalment', 'Principal', 'Interest', 'Closing', 'Status'],
+      tableBody: sched.map((r) => [
+        r.sn,
+        fmtDate(r.dueDate),
+        inr(r.opening),
+        inr(r.instalment),
+        inr(r.principal),
+        inr(r.interest),
+        inr(r.closing),
+        r.settled ? 'Foreclosed' : r.sn <= paidCount ? 'Paid' : r.dueDate < todayISO() ? 'Overdue' : 'Due',
+      ]),
     });
-    const filename = `Ledger-${loan.loanNumber}-${todayISO()}.pdf`;
-    const result = await shareOrDownloadPDF(doc, filename);
-    toast(result === 'shared' ? 'Report shared' : 'Report downloaded');
+    const result = await shareOrDownloadPDF(doc, `Statement-${loan.loanNumber}-${todayISO()}.pdf`);
+    toast(result === 'shared' ? 'Statement shared' : 'Statement downloaded');
   };
 
   return (
     <Dialog open onClose={onClose} title={`${statementOnly && !isSimple ? 'Loan Statement' : 'Collection Ledger'} · ${loan.loanNumber}`} subtitle={isSimple ? `${LOAN_LABELS[loan.type]} · Payment history` : `${LOAN_LABELS[loan.type]} · ${totalTerm} ${isMonthly ? 'months' : 'days'}`} xl
-      footer={<><Button variant="ghost" onClick={generateReport} title="Download or share a PDF"><FileDown size={15} /> {tab === 'statement' ? 'Generate Statement' : 'Generate Report'}</Button><Button onClick={onClose}>Close</Button></>}>
+      footer={<><Button variant="ghost" onClick={generateReport} title="Download or share a PDF"><FileDown size={15} /> Generate Statement</Button><Button onClick={onClose}>Close</Button></>}>
       {/* Customer information */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
         <div className="flex items-center gap-3">
@@ -567,9 +559,9 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
         <div className="text-xs text-muted">Loan date: <span className="font-semibold text-slate-600 dark:text-slate-300">{fmtDate(loan.loanDate)}</span></div>
       </div>
 
-      {/* View toggle: operational ledger vs bank-style statement (instalment loans only).
+      {/* View toggle: operational ledger vs bank-style statement — all loan types.
           Hidden when statementOnly (Loans page) — the ledger lives on Collections. */}
-      {!isSimple && !statementOnly && (
+      {!statementOnly && (
         <div className="mb-4 inline-flex rounded-lg border-[0.5px] border-slate-200/70 bg-slate-100/70 p-1 dark:border-white/[.06] dark:bg-white/[.04]">
           <button
             onClick={() => setTab('ledger')}
@@ -587,10 +579,10 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       )}
 
       {/* ── Statement (bank-style schedule) ── */}
-      {!isSimple && tab === 'statement' && <StatementView loan={loan} />}
+      {tab === 'statement' && <StatementView loan={loan} />}
 
       {/* ── Operational ledger ── */}
-      {(isSimple || tab === 'ledger') && (
+      {tab === 'ledger' && (
       <>
       {/* Summary cards — fixed 3-slot layout (label / value / caption) so every
           card is the same height and the values line up across the row. */}
@@ -723,7 +715,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           <Button variant={isSettlement ? 'success' : 'primary'} onClick={addColl} loading={saving}>
             {editId ? 'Save changes' : isSettlement ? <><CheckCircle2 size={15} /> Settle &amp; close</> : <><Plus size={15} /> Record payment</>}
           </Button></>}>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {/* Context banner */}
           {isSettlement ? (
             <div className="flex items-start gap-2.5 rounded-xl border-[0.5px] border-emerald-200 bg-emerald-50 px-3.5 py-3 dark:border-emerald-500/25 dark:bg-emerald-500/10">
@@ -796,7 +788,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           {/* Payment mode — segmented picker with icons */}
           <div>
             <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Payment mode</span>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 min-w-0 md:grid-cols-4">
               {MODES.map((m) => {
                 const Icon = MODE_ICON[m];
                 const on = mode === m;
@@ -814,13 +806,18 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
             </div>
           </div>
 
-          {/* Date + remarks */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input label="Date" type="date" value={date}
-              min={minPaymentDate}
-              max={maxPaymentDate} onChange={(e) => setDate(e.target.value)}
-              error={date && date < minPaymentDate ? `On/after loan date (${fmtDate(minPaymentDate)})` : date && date > maxPaymentDate ? `Not beyond next due (${fmtDate(maxPaymentDate)})` : undefined} />
-            <Input label="Remarks" placeholder="Optional note" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+          {/* Date + remarks — stack on phone/tablet (iPad Air ~820px) so native
+              date controls don't squeeze Remarks; side-by-side from lg up. */}
+          <div className="grid grid-cols-1 gap-4 min-w-0 lg:grid-cols-2">
+            <div className="min-w-0">
+              <Input label="Date" type="date" value={date}
+                min={minPaymentDate}
+                max={maxPaymentDate} onChange={(e) => setDate(e.target.value)}
+                error={date && date < minPaymentDate ? `On/after loan date (${fmtDate(minPaymentDate)})` : date && date > maxPaymentDate ? `Not beyond next due (${fmtDate(maxPaymentDate)})` : undefined} />
+            </div>
+            <div className="min-w-0">
+              <Input label="Remarks" placeholder="Optional note" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+            </div>
           </div>
         </div>
       </Dialog>

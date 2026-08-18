@@ -91,6 +91,26 @@ select:focus-visible {
   box-shadow: none;
 }
 
+/* Tablet / iPad: Safari date & number controls can refuse to shrink and push
+   sibling fields (e.g. Remarks) out of alignment inside dialog grids. */
+input[type='date'],
+input[type='datetime-local'],
+input[type='month'],
+input[type='time'],
+input[type='number'],
+input[type='text'],
+input[type='email'],
+input[type='password'],
+input[type='search'],
+input[type='tel'],
+input[type='url'],
+select,
+textarea {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 /* Glassmorphism utility for topbar / dialogs / overlays */
 .glass {
   background: rgb(var(--surface) / 0.72);

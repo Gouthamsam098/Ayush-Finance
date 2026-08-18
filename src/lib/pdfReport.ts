@@ -8,11 +8,16 @@ export interface ReportParams {
   customerName: string;
   customerMobile: string;
   loanDate: string;
+  /** Two-column loan/borrower fields — mirrors Statement tab detail grid. */
+  detailFields?: ReportSummaryItem[];
+  /** Key-figure strip (e.g. Disbursement date, Deduction, Net disbursed, Interest). */
   summary: ReportSummaryItem[];
   progress?: { label: string; paid: number; total: number };
   tableTitle: string;
   tableHead: string[];
   tableBody: (string | number)[][];
+  /** Document title; defaults to Payment Schedule (Statement tab). */
+  documentTitle?: string;
 }
 
 function safeCurrency(val: string): string {
@@ -23,11 +28,28 @@ function safeValue(val: string | number): string {
   return safeCurrency(String(val));
 }
 
+/** Pack detail fields into 4-column rows: Label | Value | Label | Value. */
+function detailRows(fields: ReportSummaryItem[]): string[][] {
+  const rows: string[][] = [];
+  for (let i = 0; i < fields.length; i += 2) {
+    const a = fields[i];
+    const b = fields[i + 1];
+    rows.push([
+      a?.label ?? '',
+      a ? safeValue(a.value) : '',
+      b?.label ?? '',
+      b ? safeValue(b.value) : '',
+    ]);
+  }
+  return rows;
+}
+
 export function buildLedgerReportPDF(p: ReportParams): jsPDF {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 40;
   let y = 40;
+  const title = p.documentTitle ?? 'Payment Schedule';
 
   // Header — date stamp only (right-aligned), no letterhead
   const genStamp = `Generated ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
@@ -37,11 +59,11 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
   doc.text(genStamp, pageWidth - margin, y, { align: 'right' });
   y += 22;
 
-  // Title
+  // Title — matches Statement tab "Payment Schedule" band
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
   doc.setTextColor(15, 23, 42);
-  doc.text(`Collection Ledger · ${p.loanNumber}`, margin, y);
+  doc.text(`${title} · ${p.loanNumber}`, margin, y);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
   doc.setTextColor(100, 116, 139);
@@ -62,24 +84,45 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
   doc.text(`Loan date: ${p.loanDate}`, pageWidth - margin - 14, y + 18, { align: 'right' });
   y += 44 + 18;
 
-  // Summary cards as a compact table (₹ replaced with Rs. for font compatibility)
-  autoTable(doc, {
-    startY: y,
-    margin: { left: margin, right: margin },
-    body: [
-      p.summary.map((s) => s.label),
-      p.summary.map((s) => safeValue(s.value)),
-    ],
-    theme: 'plain',
-    styles: { fontSize: 8.5, cellPadding: { top: 3, bottom: 1, left: 6, right: 6 } },
-    bodyStyles: { textColor: [100, 116, 139] },
-    didParseCell: (data) => {
-      if (data.row.index === 1) { data.cell.styles.textColor = [15, 23, 42]; data.cell.styles.fontStyle = 'bold'; data.cell.styles.fontSize = 10.5; }
-      else { data.cell.styles.fontStyle = 'normal'; data.cell.styles.fontSize = 7.5; }
-    },
-  });
-  // @ts-expect-error lastAutoTable is attached by the plugin at runtime
-  y = doc.lastAutoTable.finalY + 16;
+  // Borrower / loan detail grid (Statement tab two-column fields)
+  if (p.detailFields && p.detailFields.length) {
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      body: detailRows(p.detailFields),
+      theme: 'plain',
+      styles: { fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 } },
+      columnStyles: {
+        0: { cellWidth: 95, textColor: [100, 116, 139], fontStyle: 'bold', fontSize: 8 },
+        1: { cellWidth: (pageWidth - margin * 2) / 2 - 95, textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 9.5 },
+        2: { cellWidth: 95, textColor: [100, 116, 139], fontStyle: 'bold', fontSize: 8 },
+        3: { cellWidth: (pageWidth - margin * 2) / 2 - 95, textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 9.5 },
+      },
+    });
+    // @ts-expect-error lastAutoTable is attached by the plugin at runtime
+    y = doc.lastAutoTable.finalY + 14;
+  }
+
+  // Key figures — same four cards as Statement tab
+  if (p.summary.length) {
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      body: [
+        p.summary.map((s) => s.label.toUpperCase()),
+        p.summary.map((s) => safeValue(s.value)),
+      ],
+      theme: 'plain',
+      styles: { fontSize: 8.5, cellPadding: { top: 4, bottom: 2, left: 6, right: 6 } },
+      bodyStyles: { textColor: [100, 116, 139] },
+      didParseCell: (data) => {
+        if (data.row.index === 1) { data.cell.styles.textColor = [15, 23, 42]; data.cell.styles.fontStyle = 'bold'; data.cell.styles.fontSize = 11; }
+        else { data.cell.styles.fontStyle = 'bold'; data.cell.styles.fontSize = 7; data.cell.styles.textColor = [100, 116, 139]; }
+      },
+    });
+    // @ts-expect-error lastAutoTable is attached by the plugin at runtime
+    y = doc.lastAutoTable.finalY + 16;
+  }
 
   // Detail table
   doc.setFont('helvetica', 'bold');
@@ -95,14 +138,14 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
     body: p.tableBody.map((row) => row.map(safeValue)),
     theme: 'grid',
     styles: { fontSize: 8, cellPadding: 5, lineColor: [226, 232, 240], lineWidth: 0.5 },
-    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    headStyles: { fillColor: [2, 41, 153], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     didDrawPage: () => {
       const str = `Page ${doc.getNumberOfPages()}`;
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
       doc.text(str, pageWidth - margin, doc.internal.pageSize.getHeight() - 16, { align: 'right' });
-      doc.text('Collection Ledger — Confidential', margin, doc.internal.pageSize.getHeight() - 16);
+      doc.text('Payment Schedule — Confidential', margin, doc.internal.pageSize.getHeight() - 16);
     },
   });
 

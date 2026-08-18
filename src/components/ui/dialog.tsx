@@ -86,7 +86,7 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 md:p-6" onClick={onClose}>
       <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-md" />
       <div
         ref={panelRef}
@@ -98,17 +98,19 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
         // 90dvh (not vh): on mobile Safari `vh` resolves against the largest
         // viewport, so with the toolbar visible the non-scrolling footer — which
         // holds the confirm action — could sit under the browser chrome.
-        className={`relative flex max-h-[90dvh] w-full ${xl ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'} flex-col overflow-hidden rounded-card border border-slate-200/70 dark:border-white/[.08] bg-white dark:bg-surface shadow-[0_24px_70px_-20px_rgba(0,0,0,.35)] dark:shadow-[0_24px_70px_-20px_rgba(0,0,0,.7)] animate-rise`}
+        // min-w-0 + calc width: iPad Air / tablet split-view must not let
+        // native date controls blow past the panel and misalign Remarks, etc.
+        className={`relative flex max-h-[90dvh] w-full min-w-0 flex-col overflow-hidden rounded-card border border-slate-200/70 dark:border-white/[.08] bg-white dark:bg-surface shadow-[0_24px_70px_-20px_rgba(0,0,0,.35)] dark:shadow-[0_24px_70px_-20px_rgba(0,0,0,.7)] animate-rise ${xl ? 'max-w-[min(72rem,calc(100vw-1.5rem))]' : wide ? 'max-w-[min(48rem,calc(100vw-1.5rem))]' : 'max-w-[min(32rem,calc(100vw-1.5rem))]'}`}
       >
-        <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/[.06] px-6 py-4">
-          <div>
+        <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/[.06] px-4 py-4 sm:px-6">
+          <div className="min-w-0 pr-3">
             <h3 id={titleId} className="font-display text-lg font-bold tracking-tight">{title}</h3>
             {subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
           </div>
           <button onClick={onClose} aria-label="Close dialog" title="Close" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-slate-100 dark:hover:bg-white/[.06] transition-colors"><X size={18} /></button>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-slate-100 dark:border-white/[.06] bg-slate-50/50 dark:bg-white/[.02] px-6 py-4">{footer}</div>}
+        <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6">{children}</div>
+        {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 dark:border-white/[.06] bg-slate-50/50 dark:bg-white/[.02] px-4 py-4 sm:px-6">{footer}</div>}
       </div>
     </div>
   );

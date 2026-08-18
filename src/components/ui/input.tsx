@@ -7,7 +7,7 @@ interface Props extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 export const Input = forwardRef<HTMLInputElement, Props>(({ className, label, error, id, ...props }, ref) => (
-  <label className="block">
+  <label className="block min-w-0">
     {label && (
       <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">{label}</span>
     )}
@@ -15,7 +15,7 @@ export const Input = forwardRef<HTMLInputElement, Props>(({ className, label, er
       ref={ref}
       id={id}
       className={cn(
-        'w-full rounded-xl border bg-white dark:bg-surface px-3.5 py-2.5 text-sm outline-none',
+        'box-border w-full min-w-0 max-w-full rounded-xl border bg-white dark:bg-surface px-3.5 py-2.5 text-sm outline-none',
         'shadow-[inset_0_1px_2px_rgba(15,23,42,.03)] dark:shadow-none',
         'border-slate-200 dark:border-white/[.08] placeholder:text-slate-400 dark:placeholder:text-slate-500',
         'transition-shadow duration-150',

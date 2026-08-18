@@ -146,15 +146,15 @@ export default function Expenses() {
       <Dialog open={!!form} onClose={() => setForm(null)} title={form?.id ? 'Edit expense' : 'Add expense'}
         footer={<><Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button><Button onClick={save}>{form?.id ? 'Save changes' : 'Save'}</Button></>}>
         {form && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input label="Date" type="date" value={form.date} onChange={(e) => set('date', e.target.value)} />
+          <div className="grid grid-cols-1 gap-4 min-w-0 lg:grid-cols-2">
+            <div className="min-w-0"><Input label="Date" type="date" value={form.date} onChange={(e) => set('date', e.target.value)} /></div>
             <Select label="Category" value={form.category} onChange={(e) => set('category', e.target.value)} options={EXPENSE_CATEGORIES.map((c) => ({ value: c, label: c }))} />
             <Select label="Sub category" value={form.subCategory} onChange={(e) => set('subCategory', e.target.value)}
               options={[{ value: '', label: '— None —' }, ...EXPENSE_SUB_CATEGORIES.map((c) => ({ value: c, label: c }))]} />
-            <div className="sm:col-span-2"><Input label="Expense name" value={form.name} onChange={(e) => set('name', e.target.value)} /></div>
+            <div className="min-w-0 lg:col-span-2"><Input label="Expense name" value={form.name} onChange={(e) => set('name', e.target.value)} /></div>
             <Input label="Amount" type="number" value={form.amount} onChange={(e) => set('amount', e.target.value)} />
             <Select label="Payment mode" value={form.mode} onChange={(e) => set('mode', e.target.value as PayMode)} options={MODES.map((m) => ({ value: m, label: m }))} />
-            <div className="sm:col-span-2"><Input label="Remarks" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></div>
+            <div className="min-w-0 lg:col-span-2"><Input label="Remarks" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></div>
           </div>
         )}
       </Dialog>

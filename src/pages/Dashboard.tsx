@@ -23,6 +23,44 @@ function daysBetween(aISO: string, bISO: string): number {
   return Math.round((new Date(ay, am - 1, ad).getTime() - new Date(by, bm - 1, bd).getTime()) / 86400000);
 }
 
+/** Digits-only tel: href for the device dialer (user still confirms the call). */
+function telHref(raw: string): string | null {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 10) return null;
+  return `tel:${digits}`;
+}
+
+/**
+ * Normalise an Indian mobile to E.164 digits without '+' for WhatsApp (wa.me).
+ * Works on phone/tablet (opens WhatsApp app) and desktop (app or WhatsApp Web).
+ */
+function whatsappDigits(raw: string): string | null {
+  let digits = raw.replace(/\D/g, '');
+  if (digits.length < 10) return null;
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  if (digits.length === 10) digits = `91${digits}`;
+  return digits;
+}
+
+function whatsappHref(raw: string, message: string): string | null {
+  const digits = whatsappDigits(raw);
+  if (!digits) return null;
+  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+}
+
+function overdueWhatsAppMessage(customerName: string, dueAmount: number): string {
+  return `Hi *${customerName}*, this is a reminder from Anush Finserv regarding your overdue loan. Your total due amount till date is *${inr(dueAmount)}*. Please clear the dues at the earliest. Thank you.`;
+}
+
+/** Official-style WhatsApp glyph (Lucide has no brand icons). */
+function WhatsAppIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M20.52 3.48A11.86 11.86 0 0012.01 0C5.4 0 .04 5.36.04 11.96c0 2.11.55 4.17 1.6 5.99L0 24l6.2-1.62a11.94 11.94 0 005.8 1.48h.01c6.6 0 11.96-5.36 11.96-11.96 0-3.19-1.24-6.19-3.45-8.42zM12.01 21.8h-.01a9.9 9.9 0 01-4.99-1.36l-.36-.21-3.68.91.98-3.59-.23-.37a9.86 9.86 0 01-1.51-4.95c0-5.45 4.44-9.88 9.9-9.88 2.64 0 5.12 1.03 6.99 2.9a9.82 9.82 0 012.9 6.98c0 5.45-4.44 9.87-9.89 9.87zm5.43-7.4c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.16-.17.2-.35.22-.65.08-.3-.15-1.26-.46-2.4-1.48-.89-.79-1.48-1.76-1.65-2.06-.17-.3-.02-.46.13-.61.14-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.61-.92-2.2-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.87 1.21 3.07c.15.2 2.1 3.2 5.08 4.49.7.31 1.26.49 1.69.63.71.23 1.36.19 1.87.12.57-.08 1.76-.72 2.01-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35z" />
+    </svg>
+  );
+}
+
 /** Last N months as {key:'YYYY-MM', label, endISO}, oldest first. */
 function lastMonths(n: number): { key: string; label: string; endISO: string }[] {
   const out: { key: string; label: string; endISO: string }[] = [];
@@ -222,7 +260,15 @@ export default function Dashboard() {
     .map((l) => {
       const nd = d.nextDueFor(l)!;
       const cust = d.customers.find((c) => c.id === l.customerId);
-      return { id: l.id, customer: cust?.name ?? '—', loanNo: l.loanNumber, due: dueFor(l), days: daysBetween(today, nd), type: LOAN_LABELS[l.type] };
+      return {
+        id: l.id,
+        customer: cust?.name ?? '—',
+        loanNo: l.loanNumber,
+        due: dueFor(l),
+        days: daysBetween(today, nd),
+        type: LOAN_LABELS[l.type],
+        mobile: (l.contact || cust?.mobile || '').trim(),
+      };
     })
     .sort((a, b) => b.days - a.days)
     .slice(0, 6),
@@ -325,6 +371,10 @@ export default function Dashboard() {
                       <tr><td colSpan={6} className="py-16 text-center text-[13px] text-muted">No loans match "{overdueQuery}".</td></tr>
                     ) : overdueFiltered.map((r) => {
                       const risk = riskFor(r.days);
+                      const callHref = r.mobile ? telHref(r.mobile) : null;
+                      const waHref = r.mobile
+                        ? whatsappHref(r.mobile, overdueWhatsAppMessage(r.customer, r.due))
+                        : null;
                       return (
                         <tr key={r.id} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-slate-50/60 dark:border-white/[.04] dark:hover:bg-white/[.02]">
                           <td className="px-3 py-3">
@@ -341,7 +391,46 @@ export default function Dashboard() {
                             <div className="flex items-center justify-end gap-1.5">
                               <button onClick={() => navigate('/loans')} title="View" className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-500/15"><Eye size={15} /></button>
                               <button onClick={() => navigate('/collections')} title="Collect" className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-white" style={{ background: C.primary }}>Collect</button>
-                              <button title="Call" className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-500/15"><Phone size={15} /></button>
+                              {callHref ? (
+                                <a
+                                  href={callHref}
+                                  title={`Call ${r.mobile}`}
+                                  aria-label={`Call ${r.customer} at ${r.mobile}`}
+                                  className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-500/15"
+                                >
+                                  <Phone size={15} />
+                                </a>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled
+                                  title="No mobile on file"
+                                  className="grid h-8 w-8 place-items-center rounded-lg text-muted/40 cursor-not-allowed"
+                                >
+                                  <Phone size={15} />
+                                </button>
+                              )}
+                              {waHref ? (
+                                <a
+                                  href={waHref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={`WhatsApp ${r.mobile}`}
+                                  aria-label={`WhatsApp ${r.customer} at ${r.mobile}`}
+                                  className="grid h-8 w-8 place-items-center rounded-lg text-[#25D366] hover:bg-[#25D366]/15 dark:hover:bg-[#25D366]/20"
+                                >
+                                  <WhatsAppIcon size={15} />
+                                </a>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled
+                                  title="No mobile on file"
+                                  className="grid h-8 w-8 place-items-center rounded-lg text-muted/40 cursor-not-allowed"
+                                >
+                                  <WhatsAppIcon size={15} />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
