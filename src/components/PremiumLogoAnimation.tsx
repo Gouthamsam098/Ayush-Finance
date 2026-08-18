@@ -10,8 +10,6 @@ import { EnergyWave } from './EnergyWave';
 import { ShineSweep } from './ShineSweep';
 import { CursorGlow } from './CursorGlow';
 
-const TAGLINE = 'GROW. PROTECT. PROSPER.';
-
 const NOISE_URI =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E";
 
@@ -245,23 +243,6 @@ export default function PremiumLogoAnimation() {
           <div className="mt-4">
             <EnergyWave active={waveActive} />
           </div>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 3.8, duration: 0.6, ease: 'easeOut' }}
-            className="text-center font-semibold uppercase tracking-[0.28em]"
-            style={{
-              color: '#f4f8ff',
-              fontSize: 'clamp(0.55rem, 0.85vw, 0.72rem)',
-              marginTop: '14px',
-              textShadow: '0 0 18px rgba(24,139,252,.45), 0 1px 0 rgba(255,255,255,.2)',
-            }}
-          >
-            <span className="mr-2.5 inline-block h-px w-5 align-middle" style={{ background: 'linear-gradient(to right, transparent, rgba(255,255,255,.75))' }} />
-            {TAGLINE}
-            <span className="ml-2.5 inline-block h-px w-5 align-middle" style={{ background: 'linear-gradient(to left, transparent, rgba(255,255,255,.75))' }} />
-          </motion.div>
         </motion.div>
       </motion.div>
 
