@@ -112,11 +112,17 @@ export interface Loan {
  *  outstanding); PRINCIPAL = repayment/settlement that reduces principal. Only
  *  interest-only loans distinguish the two. */
 export type CollectionKind = 'INTEREST' | 'PRINCIPAL';
-export interface Collection { id: number; receiptNo: string; loanId: number; date: string; amount: number; mode: PayMode; kind?: CollectionKind; remarks?: string; }
+/** targetDate = the schedule slot the collector explicitly chose to pay (the
+ *  ledger row whose Add was clicked). Display attribution only — never money
+ *  math. Absent on bulk/clear-overdue/foreclosure/legacy records. */
+export interface Collection { id: number; receiptNo: string; loanId: number; date: string; amount: number; mode: PayMode; kind?: CollectionKind; remarks?: string; targetDate?: string; }
 export interface Expense { id: number; date: string; category: string; subCategory?: string; name: string; amount: number; mode: PayMode; remarks?: string; }
 export interface DocItem { id: number; customerId: number; type: string; fileName: string; size: string; dataUrl: string | null; mime: string | null; date: string; }
 
-export const EXPENSE_CATEGORIES = ['Personal', 'Office', 'Savings'];
+// 'Investor Interest' is auto-posted by the Investments page (interest paid to
+// investors who funded the book) — kept as its own category so investor cost
+// stays separable from office costs in every expense report.
+export const EXPENSE_CATEGORIES = ['Personal', 'Office', 'Savings', 'Investor Interest'];
 export const EXPENSE_SUB_CATEGORIES = ['Office Rent', 'Electricity Bill', 'Office Boy Salary', 'Petrol', 'Diesel', 'Internet', 'Stationery', 'Marketing', 'Maintenance', 'Tea', 'Travel', 'Courier', 'Miscellaneous'];
 
 let _uidSeq = 1000;
@@ -206,6 +212,11 @@ interface DataShape {
   addExpense: (e: Omit<Expense, 'id'>) => Promise<void> | void;
   updateExpense: (id: number, e: Partial<Expense>) => Promise<void> | void;
   deleteExpense: (id: number) => Promise<void> | void;
+  /** Re-fetch expenses from the server. Needed when something OTHER than
+   *  addExpense creates one — e.g. an investor interest payout, where the
+   *  backend writes the expense inside its own transaction, so this cached
+   *  list would otherwise stay stale and under-report spending. */
+  refreshExpenses: () => Promise<void> | void;
   addDocument: (d: Omit<DocItem, 'id'>) => void;
   deleteDocument: (id: number) => void;
   collectedFor: (loanId: number) => number;
@@ -415,7 +426,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (behavesInterestOnly(loan)) {
         const per = loan.dailyAmount ?? loan.interest;
         if (per <= 0) return loan.nextDueDate ?? null;
-        const paid = Math.floor(interestCollectedFor(loan.id) / per);
+        // Cycles funded, CAPPED AT WHAT HAS ACCRUED. Without the cap, money paid
+        // in advance (beyond today's accrual) pushed the next due past cycles
+        // that are still unpaid, so a loan in arrears reported a future due date
+        // and vanished from the dashboard's overdue list. Advance money still
+        // counts once its cycle accrues; it can no longer mask real arrears.
+        const paid = Math.min(
+          Math.floor(interestCollectedFor(loan.id) / per),
+          interestPeriodsElapsed(loan),
+        );
         // Flexible's first cycle is due on the loan date (day 0), so its steps
         // are one earlier than Daily/Monthly Interest (first due at +cadence).
         const step = loan.type === 'FLEXIBLE' ? paid : paid + 1;
@@ -425,9 +444,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
       const inst = loan.dailyAmount ?? 0;
       if (inst <= 0) return loan.nextDueDate ?? null;
-      const paid = Math.floor(collectedFor(loan.id) / inst);
-      if (loan.numDays != null && paid >= loan.numDays) return null; // every instalment collected
+      const fundedSlots = Math.floor(collectedFor(loan.id) / inst);
+      if (loan.numDays != null && fundedSlots >= loan.numDays) return null; // every instalment collected
       const step = isDailyLoan(loan.type) ? 1 : 30;
+      // Same arrears-masking guard as the interest-only branch above: cap the
+      // funded count at the instalments that have actually fallen due, so an
+      // advance payment cannot push the next due past still-unpaid slots.
+      const elapsedSlots = isDailyLoan(loan.type)
+        ? Math.max(0, elapsedDaysSinceLoan(loan.loanDate) - 1)
+        : monthlyCyclesElapsed(loan.loanDate, 30);
+      const paid = Math.min(fundedSlots, elapsedSlots);
       return step === 30
         ? addMonths(loan.loanDate, paid + 1, 0)
         : addDays(loan.loanDate, (paid + 1) * step);
@@ -580,6 +606,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
           return expenseApi.remove(id).then(() => setExpenses((s) => s.filter((e) => e.id !== id)));
         }
         setExpenses((s) => s.filter((e) => e.id !== id));
+      },
+      refreshExpenses: () => {
+        if (!config.useApi) return;
+        return expenseApi.list().then(setExpenses).catch(() => { /* surfaced per-action */ });
       },
       addDocument: (d) => setDocuments((s) => [{ ...d, id: uid() }, ...s]),
       deleteDocument: (id) => setDocuments((s) => s.filter((d) => d.id !== id)),

@@ -9,7 +9,7 @@ import { todayISO } from '@/lib/format';
 import { withUiModuleAccess } from '@/lib/uiModuleAccess';
 import { cn } from '@/lib/utils';
 import {
-  LayoutDashboard, Users, FileText, HandCoins, Wallet, BarChart3,
+  LayoutDashboard, Users, FileText, HandCoins, Wallet, BarChart3, Landmark,
   FolderOpen, Settings, ChevronsLeft, LogOut, Moon, Sun,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -31,6 +31,9 @@ const NAV: NavSection[] = [
     heading: 'Finance',
     items: [
       { to: '/expenses', label: 'Expenses', icon: Wallet, module: 'Expenses' },
+      // Investor capital + the interest it costs. Gated on Expenses because
+      // every interest payout IS an expense write.
+      { to: '/investments', label: 'Investments', icon: Landmark, module: 'Expenses' },
       { to: '/reports', label: 'Reports', icon: BarChart3, module: 'Reports' },
     ],
   },

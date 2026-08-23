@@ -213,7 +213,7 @@ export default function Collections() {
       <div className="hidden lg:block">
       {typeFilter === 'DAILY_COLLECTION' ? (
         /* ── Daily Collection: expanded view with start/end date, due, and balance ── */
-        <TableCard note="Total Due Amount is the cumulative shortfall from what's owed by today. Balance is Principal − Collected. Open View Report to add, edit, or delete individual payments.">
+        <TableCard note="Total Due Amount is the cumulative shortfall from what's owed by today. Balance is Principal − Collected. Click a row to add, edit, or delete individual payments.">
           <thead><HeaderRow cols={['Customer', 'Collection Progress', 'Loan Type', 'Loan Start', 'Loan End', 'Total Due', 'Balance', 'Amount Paid', 'Actions']} /></thead>
           <tbody>
             {loansToShow.map((l) => {
@@ -225,8 +225,8 @@ export default function Collections() {
               const totalDue = d.totalDueForDaily(l);
               const balance = d.outstandingFor(l); // Principal − Collected, for Daily Collection
               return (
-                <Row key={l.id}>
-                  <Td className="font-medium">{cust?.name ?? '—'}</Td>
+                <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
+                  <NameTd name={cust?.name ?? '—'} />
                   <Td><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></Td>
                   <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
                   <Td>{fmtDate(l.loanDate)}</Td>
@@ -242,15 +242,15 @@ export default function Collections() {
         </TableCard>
       ) : typeFilter !== 'ALL' && isMonthlyLike(typeFilter) ? (
         /* ── Monthly Collection / Vehicle / Property: monthly instalment repays principal ── */
-        <TableCard note="Total Due Amount is the cumulative shortfall vs. the instalments owed by today (30-day cycles). Open View Report to add, edit, or delete individual payments.">
+        <TableCard note="Total Due Amount is the cumulative shortfall vs. the instalments owed by today (30-day cycles). Click a row to add, edit, or delete individual payments.">
           <thead><HeaderRow cols={['Customer', 'Principal', 'Monthly Instalment', 'Total Due', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
           <tbody>
             {loansToShow.map((l) => {
               const cust = d.customers.find((c) => c.id === l.customerId);
               const totalDue = d.totalDueForMonthly(l);
               return (
-                <Row key={l.id}>
-                  <Td className="font-medium">{cust?.name ?? '—'}</Td>
+                <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
+                  <NameTd name={cust?.name ?? '—'} />
                   <Td>{inr(l.principal)}</Td>
                   <Td>{inr(l.dailyAmount ?? 0)}</Td>
                   <Td className="font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</Td>
@@ -272,8 +272,8 @@ export default function Collections() {
               const cust = d.customers.find((c) => c.id === l.customerId);
               const due = d.totalDueForInterestOnly(l);
               return (
-                <Row key={l.id}>
-                  <Td className="font-medium">{cust?.name ?? '—'}</Td>
+                <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
+                  <NameTd name={cust?.name ?? '—'} />
                   <Td>{inr(l.principal)}</Td>
                   <Td>{inr(l.dailyAmount ?? 0)}</Td>
                   <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
@@ -294,7 +294,7 @@ export default function Collections() {
               collections worklist is NEXT DUE: oldest unpaid slot via
               d.nextDueFor (matches Ledger). When that date is past we label
               it "Due since" so it isn't read as an upcoming due. ── */
-        <TableCard note="Amount Paid is the total collected so far for each loan. Open View Report to add, edit, or delete individual payments.">
+        <TableCard note="Amount Paid is the total collected so far for each loan. Click a row to add, edit, or delete individual payments.">
           <thead><HeaderRow cols={['Customer', 'Next Due', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
           <tbody>
             {loansToShow.map((l) => {
@@ -304,8 +304,8 @@ export default function Collections() {
               const overdue = !!nd && nd < today;
               const dueToday = !!nd && nd === today;
               return (
-                <Row key={l.id}>
-                  <Td className="font-medium">{cust?.name ?? '—'}</Td>
+                <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
+                  <NameTd name={cust?.name ?? '—'} />
                   <Td>
                     {nd ? (
                       <span className="inline-flex items-center gap-2 whitespace-nowrap">
@@ -393,17 +393,51 @@ function HeaderRow({ cols }: { cols: string[] }) {
   );
 }
 
-function Row({ children }: { children: ReactNode }) {
-  return <tr className="border-t border-slate-100 transition-colors hover:bg-primary-50/40 dark:border-white/[.06] dark:hover:bg-primary/[.06]">{children}</tr>;
+/** A loan row. When `onOpen` is given the WHOLE row opens the ledger — clicking
+ *  the customer/loan is the natural way to record a collection, and hunting for
+ *  the small "View Report" button every time was needless friction. The button
+ *  stays for discoverability; the action cell stops row clicks so its own
+ *  handler is never double-fired. */
+function Row({ children, onOpen, label }: { children: ReactNode; onOpen?: () => void; label?: string }) {
+  return (
+    <tr
+      {...(onOpen ? {
+        onClick: onOpen,
+        onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); }
+        },
+        tabIndex: 0,
+        role: 'button' as const,
+        'aria-label': label ?? 'Open collection ledger',
+      } : {})}
+      className={`group border-t border-slate-100 transition-colors hover:bg-primary-50/40 dark:border-white/[.06] dark:hover:bg-primary/[.06] ${
+        onOpen ? 'cursor-pointer focus:outline-none focus-visible:bg-primary-50/60 dark:focus-visible:bg-primary/[.1]' : ''
+      }`}
+    >
+      {children}
+    </tr>
+  );
 }
 
 function Td({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <td className={`whitespace-nowrap px-5 py-4 ${className}`}>{children}</td>;
 }
 
+/** The customer cell of a clickable row — styled as the primary affordance so
+ *  it is visibly the thing to click. */
+function NameTd({ name }: { name: string }) {
+  return (
+    <td className="whitespace-nowrap px-5 py-4">
+      <span className="font-semibold text-primary underline-offset-2 group-hover:underline">{name}</span>
+    </td>
+  );
+}
+
 function ActionTd({ onView }: { onView: () => void }) {
   return (
-    <td className="px-4 py-3 text-center">
+    // stopPropagation: the row itself is clickable, so without this the ledger
+    // would be opened twice (harmless today, but a latent double-action bug).
+    <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
       <button onClick={onView} title="View Report" aria-label="View Report"
         className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-muted transition-colors hover:border-primary/40 hover:text-primary dark:border-slate-700">
         <ScrollText size={14} /> View Report

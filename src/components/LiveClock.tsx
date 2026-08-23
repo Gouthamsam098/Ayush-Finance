@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { Calendar, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -67,12 +67,26 @@ export function LiveClock({
 
   return (
     <div
+      // The WHOLE widget is the calendar trigger — hunting for the small icon
+      // was needless precision. Inner buttons (reset, icon) stopPropagation.
+      {...(onCalendarClick ? {
+        onClick: onCalendarClick,
+        onKeyDown: (e: KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCalendarClick(); }
+        },
+        tabIndex: 0,
+        role: 'button' as const,
+        'aria-expanded': calendarOpen,
+        'aria-haspopup': 'dialog' as const,
+        'aria-label': 'Open period calendar',
+      } : {})}
       className={cn(
         'relative shrink-0 overflow-hidden rounded-2xl border backdrop-blur-xl transition-shadow duration-300',
         'border-sky-200/70 bg-gradient-to-br from-white via-sky-50/90 to-indigo-50/70',
         'shadow-[0_8px_28px_-14px_rgba(56,119,210,.35),0_1px_0_rgba(255,255,255,.9)_inset]',
         'dark:border-white/12 dark:from-[#0c1220]/95 dark:via-[#0f172a]/90 dark:to-[#111827]/85',
         'dark:shadow-[0_12px_32px_-16px_rgba(0,0,0,.55)]',
+        onCalendarClick && 'cursor-pointer select-none focus:outline-none focus-visible:ring-4 focus-visible:ring-sky-300/40',
         calendarOpen && 'ring-4 ring-sky-300/35 dark:ring-sky-400/20',
       )}
       aria-live="polite"
@@ -120,7 +134,7 @@ export function LiveClock({
               {onResetPeriod && (
                 <button
                   type="button"
-                  onClick={onResetPeriod}
+                  onClick={(e) => { e.stopPropagation(); onResetPeriod(); }}
                   title="Reset to today"
                   aria-label="Reset period to today"
                   className="grid h-8 w-8 place-items-center rounded-xl border border-sky-200/70 bg-white/80 text-sky-600 shadow-sm transition-all hover:-translate-y-px hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 dark:border-white/10 dark:bg-white/[.06] dark:text-sky-300 dark:hover:bg-white/[.1]"
@@ -131,7 +145,7 @@ export function LiveClock({
               {onCalendarClick && (
                 <button
                   type="button"
-                  onClick={onCalendarClick}
+                  onClick={(e) => { e.stopPropagation(); onCalendarClick(); }}
                   aria-expanded={calendarOpen}
                   aria-haspopup="dialog"
                   title="Filter by day or month"

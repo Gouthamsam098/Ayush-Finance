@@ -23,7 +23,9 @@
       "PowerShell(docker info --format \"{{.ServerVersion}}\")",
       "Bash(node -e \"const p=require\\('./package.json'\\);const d=p.dependencies;Object.keys\\(d\\).sort\\(\\).forEach\\(k=>console.log\\('  '+k.padEnd\\(34\\)+d[k]\\)\\)\")",
       "Bash(node -e \"const p=require\\('./package.json'\\);const d=p.devDependencies;Object.keys\\(d\\).sort\\(\\).forEach\\(k=>console.log\\('  '+k.padEnd\\(34\\)+d[k]\\)\\)\")",
-      "Bash(node -e \"const p=require\\('./package.json'\\);Object.entries\\(p.scripts\\).forEach\\(\\([k,v]\\)=>console.log\\('  '+k.padEnd\\(10\\)+v\\)\\)\")"
+      "Bash(node -e \"const p=require\\('./package.json'\\);Object.entries\\(p.scripts\\).forEach\\(\\([k,v]\\)=>console.log\\('  '+k.padEnd\\(10\\)+v\\)\\)\")",
+      "PowerShell(npm run dev)",
+      "PowerShell(docker compose -f backend/docker-compose.yml --project-directory backend up --build -d)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Goutham.P\\Downloads"

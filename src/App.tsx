@@ -22,6 +22,7 @@ const Customers = lazy(() => import('@/pages/Customers'));
 const Loans = lazy(() => import('@/pages/Loans'));
 const Collections = lazy(() => import('@/pages/Collections'));
 const Expenses = lazy(() => import('@/pages/Expenses'));
+const Investments = lazy(() => import('@/pages/Investments'));
 const Documents = lazy(() => import('@/pages/Documents'));
 const Reports = lazy(() => import('@/pages/Reports'));
 const Settings = lazy(() => import('@/pages/Settings'));
@@ -62,6 +63,7 @@ export default function App() {
           <Route path="/loans" element={page(<Loans />)} />
           <Route path="/collections" element={page(<Collections />)} />
           <Route path="/expenses" element={page(<Expenses />)} />
+          <Route path="/investments" element={page(<Investments />)} />
           <Route path="/documents" element={page(<Documents />)} />
           <Route element={<ModuleRoute module="Reports" />}>
             <Route path="/reports" element={page(<Reports />)} />

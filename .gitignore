@@ -57,6 +57,25 @@ Screenshot*.jpg
 .sisyphus/
 .claude/settings.local.json
 
+# Generated customer-facing documents. Named by the builders in
+# src/lib/pdfReport.ts, which prefix the borrower's name — so these carry real
+# personal data even when the extension is not .pdf.
+*Statement-*
+*Overdue-Notice-*
+Ledger-*
+
+# Report exports (Reports page CSV/PDF). Real portfolio data.
+anush-*.csv
+anush-*.pdf
+Anush-*.pdf
+
+# Throwaway verification scripts run at the repo root to check money math on
+# the console. A root-level *.cjs / *.mjs is never app code here — the app is
+# TypeScript under src/ and the configs are *.config.ts. If a real .cjs config
+# is ever added, re-allow it with a `!` line.
+/*.cjs
+/*.mjs
+
 # Unrelated vendored project (was committed as a broken gitlink with no
 # .gitmodules entry, which breaks a fresh `git clone`).
 orbit/

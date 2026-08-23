@@ -80,6 +80,12 @@ Extend these helpers rather than recalculating inline in pages, and preserve the
 
 ## Collections, profit & ledger — binding rules (MANDATORY)
 
+> **`docs/COLLECTION_LEDGER_BASELINE.md` records the ledger behaviour verified working for
+> ALL loan types on 22 Aug 2026 — allocation priority, per-day records, day-edit, statuses
+> and colours, actions per row, validation, header figures, and the dashboard interactions.
+> Read it before touching `LedgerDialog.tsx`, the collection helpers in `DataContext.tsx`,
+> or the overdue/profit logic in `Dashboard.tsx`, and re-verify its regression matrix after.**
+
 These rules exist because violating any one of them silently corrupts money reporting. Do not weaken them for UX convenience.
 
 1. **Receipt-date rule.** A collection's `date` is when the money was **actually received** — it defaults to today (clamped to ≥ `loanDate`), never to a schedule slot's due date. Allocation of payments to schedule slots is **FIFO from the total pool** — the date NEVER drives allocation, and no guard may force `date ≥ nextDue` (after a bulk payment the next slot sits weeks ahead; forcing receipts there future-dates them and corrupts profit-by-month). Max date stays `max(today+1, nextDue)` (explicit forward-dating allowed, never the default). Applies to both entry points: `LedgerDialog.openRow` and `Collections.tsx onLoanPick/save`.

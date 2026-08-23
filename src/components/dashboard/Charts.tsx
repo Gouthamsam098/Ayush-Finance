@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ComposedChart, Area,
@@ -82,11 +83,24 @@ function EmptyChart({ label, height = 300 }: { label: string; height?: number })
 
 // ── KPI card (Section 1) ──
 export interface KpiTrend { value: string; positive: boolean }
-export function KpiCard({ icon: Icon, tint, iconColor, label, value, hint, trend }: {
+export function KpiCard({ icon: Icon, tint, iconColor, label, value, hint, trend, onClick, actionLabel }: {
   icon: LucideIcon; tint: string; iconColor: string; label: string; value: string; hint?: string; trend?: KpiTrend | null;
+  /** Optional drill-down. When given the card renders as a real <button> so it is
+   *  keyboard-focusable and announced as actionable; otherwise it stays a plain
+   *  <div> exactly as before. */
+  onClick?: () => void;
+  /** Accessible name for the drill-down (e.g. "View active loans"). */
+  actionLabel?: string;
 }) {
+  const Tag = onClick ? 'button' : 'div';
   return (
-    <div className="group rounded-2xl border-[0.5px] border-slate-200/80 bg-white p-4 shadow-[0_1px_3px_rgba(17,24,39,.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_30px_-14px_rgba(17,24,39,.22)] dark:border-white/[.08] dark:bg-surface">
+    <Tag
+      {...(onClick ? { type: 'button' as const, onClick, 'aria-label': actionLabel ?? `${label}: ${value}` } : {})}
+      className={cn(
+        'group rounded-2xl border-[0.5px] border-slate-200/80 bg-white p-4 shadow-[0_1px_3px_rgba(17,24,39,.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_30px_-14px_rgba(17,24,39,.22)] dark:border-white/[.08] dark:bg-surface',
+        onClick && 'w-full cursor-pointer text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface hover:border-primary/40',
+      )}
+    >
       <div className="flex items-start justify-between">
         <span className={cn('grid h-10 w-10 place-items-center rounded-xl transition-transform duration-200 group-hover:scale-105', tint, iconColor)}>
           <Icon size={19} />
@@ -97,10 +111,15 @@ export function KpiCard({ icon: Icon, tint, iconColor, label, value, hint, trend
           </span>
         )}
       </div>
-      <div className="mt-3 text-[12.5px] font-medium text-muted">{label}</div>
-      <div className="mt-1 font-display text-[23px] font-bold leading-none tracking-tight tabular-nums text-ink">{value}</div>
-      {hint && <div className="mt-1.5 text-[11.5px] text-muted">{hint}</div>}
-    </div>
+      <div className="mt-3 flex items-center gap-1 text-[12.5px] font-medium text-muted">
+        <span className="min-w-0 truncate">{label}</span>
+        {onClick && <ChevronRight size={13} className="shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100" aria-hidden />}
+      </div>
+      {/* Value steps down a little on xl, where the KPI row packs 7 cards —
+          full rupee figures must not wrap or clip in a narrow column. */}
+      <div className="mt-1 font-display text-[23px] font-bold leading-none tracking-tight tabular-nums text-ink xl:text-[19px]">{value}</div>
+      {hint && <div className="mt-1.5 truncate text-[11.5px] text-muted" title={hint}>{hint}</div>}
+    </Tag>
   );
 }
 

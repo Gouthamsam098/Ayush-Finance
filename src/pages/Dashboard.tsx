@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   useData, LOAN_LABELS, isDailyLoan, behavesInterestOnly, type Loan,
 } from '@/mock/DataContext';
-import { inr, inrShort, todayISO, isoLocal } from '@/lib/format';
+import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { usePermissions } from '@/lib/permissions';
 import { useOpenSidebar } from '@/components/layout/AppShell';
 import {
@@ -11,11 +11,13 @@ import {
   type LoanPerfPoint, type CashFlowPoint, type KpiTrend, type Range,
 } from '@/components/dashboard/Charts';
 import {
-  PeriodFilter, type PeriodMode, periodDisplayLabel, isPeriodDefault,
+  PeriodFilter, type PeriodMode, type PeriodRangeKey, RANGE_PRESETS, periodDisplayLabel, isPeriodDefault,
 } from '@/components/dashboard/PeriodFilter';
+import { computeFunds, interestRealised } from '@/lib/funds';
+import { buildSchedule } from '@/lib/loanSchedule';
 import {
-  Wallet, CalendarClock, IndianRupee, Gauge, TrendingUp, Menu,
-  Phone, Eye, HandCoins, ArrowRight, Search, Receipt,
+  Wallet, CalendarClock, IndianRupee, TrendingUp, Menu, Landmark, PiggyBank,
+  Phone, Eye, HandCoins, ArrowRight, Search, Receipt, FileDown,
 } from 'lucide-react';
 
 /** Whole calendar days between two YYYY-MM-DD dates (a − b). */
@@ -50,8 +52,74 @@ function whatsappHref(raw: string, message: string): string | null {
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }
 
-function overdueWhatsAppMessage(customerName: string, dueAmount: number): string {
-  return `Hi *${customerName}*, this is a reminder from Anush Finserv regarding your overdue loan. Your total due amount till date is *${inr(dueAmount)}*. Please clear the dues at the earliest. Thank you.`;
+/**
+ * Overdue reminder for WhatsApp.
+ *
+ * WhatsApp carries PLAIN TEXT only — no colour, HTML or tables; the sole
+ * formatting is *bold*, _italic_ and ~strike~. Emoji are therefore the only
+ * elements that render in colour, so each fact is led by one: the message stays
+ * scannable in a notification preview without any alignment that could wrap.
+ *
+ * A monospace block was tried and dropped — it wrapped badly on narrow phones,
+ * which looked worse than no alignment at all.
+ */
+function overdueWhatsAppMessage(r: {
+  customer: string; loanNo: string; type: string; due: number; days: number; dueSince: string;
+}): string {
+  return [
+    '🔔 *Payment Reminder*',
+    `Hi *${r.customer}*,`,
+    '',
+    'Your payment is currently overdue.',
+    '',
+    // Emoji chosen from Emoji 1.0/2.0 ONLY (2015-era), so they render on old
+    // Android builds and on desktop clients with incomplete emoji fonts. The
+    // receipt glyph 🧾 (U+1F9FE) was dropped for 📄: it is Emoji 12.0 (2019)
+    // and shows as a ◆ placeholder wherever the font predates it.
+    `💰 Amount: *${inr(r.due)}*`,
+    `📅 Due date: ${r.dueSince}`,
+    // A loan number is this business's equivalent of an invoice number.
+    `📄 Loan: ${r.loanNo} (${r.type})`,
+    `⏰ Overdue by: *${r.days} ${r.days === 1 ? 'day' : 'days'}*`,
+    '',
+    'If you have already made the payment, please ignore this message.',
+    '',
+    'Thank you,',
+    '*Anush Finserv*',
+  ].join('\n');
+}
+
+/**
+ * Unpaid instalments for an overdue notice: the elapsed schedule slots that
+ * FIFO-funding has not covered. Mirrors the ledger's allocation (payments fund
+ * the oldest slot first), so the notice lists exactly the rows the Collection
+ * Ledger shows as Overdue/Partial — never a different set.
+ */
+function unpaidRowsFor(
+  loan: Loan, collected: number, todayStr: string, cadence: 'day' | 'month',
+): { label: string; dueDate: string; amount: string; pending: number }[] {
+  const sched = buildSchedule(loan, { collected, settlement: null });
+  const per = loan.dailyAmount ?? 0;
+  if (per <= 0) return [];
+  const out: { label: string; dueDate: string; amount: string; pending: number }[] = [];
+  let pool = collected;
+  for (const row of sched) {
+    if (row.settled) continue;
+    const funded = Math.max(0, Math.min(pool, row.instalment));
+    pool -= funded;
+    const pending = row.instalment - funded;
+    // Only ELAPSED slots that are still short — an upcoming instalment is not
+    // overdue, and including it would overstate what the customer owes today.
+    if (pending > 0 && row.dueDate < todayStr) {
+      out.push({
+        label: `${cadence === 'day' ? 'Day' : 'Month'} ${row.sn}`,
+        dueDate: fmtDate(row.dueDate),
+        amount: inr(pending),
+        pending,
+      });
+    }
+  }
+  return out;
 }
 
 /** Official-style WhatsApp glyph (Lucide has no brand icons). */
@@ -99,9 +167,12 @@ export default function Dashboard() {
   const [overdueQuery, setOverdueQuery] = useState('');
   const [cashRange, setCashRange] = useState<Range>('month');
   const [perfRange, setPerfRange] = useState<Range>('6m');
-  // Period filter — day defaults to today; month to current calendar month.
+  // Period filter — day defaults to today; month to current calendar month;
+  // 'range' scopes the KPIs to a quick-range preset AND drives both chart
+  // toggles to the same window, so the whole dashboard describes one period.
   const [periodMode, setPeriodMode] = useState<PeriodMode>('day');
   const [periodDate, setPeriodDate] = useState(todayISO);
+  const [periodRange, setPeriodRange] = useState<PeriodRangeKey>('month');
 
   const active = d.loans.filter((l) => l.status === 'ACTIVE');
   const today = todayISO();
@@ -110,12 +181,37 @@ export default function Dashboard() {
   const [ly, lm] = thisMonth.split('-').map(Number);
   const lastMonthKey = `${lm === 1 ? ly - 1 : ly}-${String(lm === 1 ? 12 : lm - 1).padStart(2, '0')}`;
 
+  // Range window = the SAME calendar months the charts bucket over
+  // (lastMonths(n)), so the range KPIs are exactly the sum of the chart bars —
+  // never a rolling window that would quietly disagree with the chart next to it.
+  const rangeMonthsN = RANGE_PRESETS.find((p) => p.key === periodRange)?.months ?? 1;
+  const rangeFrom = `${lastMonths(rangeMonthsN)[0].key}-01`;
+  const inRange = (date: string) => date >= rangeFrom;
+
+  const applyRangePreset = (key: PeriodRangeKey) => {
+    setPeriodMode('range');
+    setPeriodRange(key);
+    // Re-scope the charts to the same window (their Range keys are identical).
+    setCashRange(key);
+    setPerfRange(key);
+  };
+
   const resetPeriod = () => {
+    // Leaving a range restores the charts' defaults too (the range set them).
+    if (periodMode === 'range') { setCashRange('month'); setPerfRange('6m'); }
     setPeriodMode('day');
     setPeriodDate(todayISO());
   };
 
-  const dueFor = (l: Loan) => (isDailyLoan(l.type) ? d.totalDueForDaily(l) : d.totalDueForMonthly(l));
+  // Scheduled shortfall, dispatched by BEHAVIOUR (three economic groups), not by
+  // "daily vs everything else": an interest-only loan (incl. a monthly-mode
+  // Vehicle/Property) accrues interest cycles, so measuring it with the EMI
+  // formula compared EMI-style expectations against total collections and
+  // reported the wrong Due Amount on the overdue list.
+  const dueFor = (l: Loan) =>
+    behavesInterestOnly(l) ? d.totalDueForInterestOnly(l)
+      : isDailyLoan(l.type) ? d.totalDueForDaily(l)
+        : d.totalDueForMonthly(l);
   const isOverdue = (l: Loan) => { const nd = d.nextDueFor(l); return !!nd && nd < today; };
 
   // Current loan-status counts (for the Loan Performance summary strip).
@@ -133,15 +229,39 @@ export default function Dashboard() {
   const lastExp = expInMonth(lastMonthKey);
 
   const monthDue = active.reduce((s, l) => s + dueFor(l), 0);
+  // Total Outstanding stays GROSS — the true amount borrowers owe. It must
+  // match the Loans and Reports pages, which list those very loans.
   const totalOutstanding = active.reduce((s, l) => s + d.outstandingFor(l), 0);
+  // Funding position on a CASH basis — the same helper the Loans page uses to
+  // gate lending, so the KPI and the guard can never disagree. Interest earned
+  // raises it (it arrives inside collections); every expense lowers it.
+  const funds = useMemo(
+    () => computeFunds(
+      d.loans, d.expenses,
+      interestRealised(d.loans, d.collections),
+      // TOTAL COLLECTED (cash in) — not the outstanding receivable. See
+      // computeFunds: passing a receivable made the business look overdrawn by
+      // its own unearned margin.
+      d.collections.reduce((s, c) => s + c.amount, 0),
+    ),
+    [d.loans, d.collections, d.expenses],
+  );
+  const investorCapital = funds.capital;
+  // Cash currently out with borrowers, capped at the capital raised so the
+  // "lent out" hint never exceeds the capital it describes.
+  const deployedCapital = Math.min(totalOutstanding, investorCapital);
 
   // Selected period (day or month) — drives Collections / Profit / Expenses KPIs.
   const periodColl = periodMode === 'day'
     ? d.collections.filter((c) => c.date === periodDate).reduce((s, c) => s + c.amount, 0)
-    : collInMonth(periodKey);
+    : periodMode === 'range'
+      ? d.collections.filter((c) => inRange(c.date)).reduce((s, c) => s + c.amount, 0)
+      : collInMonth(periodKey);
   const periodExp = periodMode === 'day'
     ? d.expenses.filter((e) => e.date === periodDate).reduce((s, e) => s + e.amount, 0)
-    : expInMonth(periodKey);
+    : periodMode === 'range'
+      ? d.expenses.filter((e) => inRange(e.date)).reduce((s, e) => s + e.amount, 0)
+      : expInMonth(periodKey);
 
   const totalCollected = d.collections.reduce((s, c) => s + c.amount, 0); // all-time collections
   const dueTodayLoans = active.filter((l) => d.nextDueFor(l) === today);
@@ -150,12 +270,10 @@ export default function Dashboard() {
   // Collection efficiency = collected ÷ (collected + still-due) this month.
   // NULL when there's no collection activity at all — showing "100%" with zero
   // collections is misleading, so we render "—" instead.
+  // (The month-on-month trend that fed the retired KPI card is gone with it —
+  // the gauge below shows the current figure, not a comparison.)
   const hasEfficiency = monthColl + monthDue > 0;
   const efficiency = hasEfficiency ? Math.round((monthColl / (monthColl + monthDue)) * 100) : null;
-  const lastEff = (() => {
-    const lc = lastColl; const denom = lc + monthDue;
-    return lc > 0 ? Math.round((lc / (denom || lc)) * 100) : null;
-  })();
 
   const loanById = useMemo(() => new Map(d.loans.map((l) => [l.id, l])), [d.loans]);
 
@@ -208,22 +326,66 @@ export default function Dashboard() {
 
   const profitInMonth = (key: string) =>
     d.collections.reduce((s, c) => (c.date.slice(0, 7) === key ? s + (profitByCollectionId.get(c.id) ?? 0) : s), 0);
+  // Range profit = sum of each in-range receipt's realised profit — the SAME
+  // per-collection recognition profitInMonth uses (interest-only: full payment;
+  // upfront/EMI: profit-last band), just bucketed by a wider window.
   const periodProfit = periodMode === 'day'
     ? d.collections.reduce((s, c) => (c.date === periodDate ? s + (profitByCollectionId.get(c.id) ?? 0) : s), 0)
-    : profitInMonth(periodKey);
+    : periodMode === 'range'
+      ? d.collections.reduce((s, c) => (inRange(c.date) ? s + (profitByCollectionId.get(c.id) ?? 0) : s), 0)
+      : profitInMonth(periodKey);
   const monthInterest = profitInMonth(thisMonth);   // "Profit" this month (name kept for downstream use)
   const lastInterest = profitInMonth(lastMonthKey);
-  const periodLabel = periodDisplayLabel(periodMode, periodDate);
+  // NET profit for the selected period: interest earned LESS expenses paid in
+  // the SAME window (periodExp already follows day/month/range). Deliberately
+  // not clamped — a loss-making month must read as a loss.
+  const netPeriodProfit = periodProfit - periodExp;
+  const periodLabel = periodDisplayLabel(periodMode, periodDate, periodRange);
   const periodIsDefault = isPeriodDefault(periodMode, periodDate, today);
 
   // ── Section 1 KPIs ──
+  // Each card drills down to the page that can show the SAME figure:
+  //  • Total Outstanding / Due Today → Loans, pre-filtered to ACTIVE (the set
+  //    both figures sum over; Due Today additionally sorts by urgency).
+  //  • Collections / Expenses → Reports on that tab, which lists the underlying
+  //    records (the Collections page is a loan tracker, not a receipt list, so
+  //    it cannot reproduce the figure).
+  //  • Profit → Reports' Collections tab: profit is recognised per collection,
+  //    so those receipts ARE its source records.
+  //  • Collection Efficiency is a ratio with no record list — NOT clickable.
   const kpis = [
-    { icon: Wallet, tint: 'bg-indigo-50 dark:bg-indigo-500/15', iconColor: 'text-indigo-600 dark:text-indigo-400', label: 'Total Outstanding', value: inr(totalOutstanding), hint: 'Across active loans', trend: null as KpiTrend | null },
-    { icon: CalendarClock, tint: 'bg-amber-50 dark:bg-amber-500/15', iconColor: 'text-amber-600 dark:text-amber-400', label: 'Due Today', value: inr(dueToday), hint: `${dueTodayLoans.length} loan${dueTodayLoans.length === 1 ? '' : 's'}`, trend: null },
-    { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Collections', value: inr(periodColl), hint: periodMode === 'day' ? periodLabel : `${periodLabel} · all-time ${inr(totalCollected)}`, trend: null },
-    { icon: Gauge, tint: 'bg-blue-50 dark:bg-blue-500/15', iconColor: 'text-blue-600 dark:text-blue-400', label: 'Collection Efficiency', value: efficiency == null ? '—' : `${efficiency}%`, hint: efficiency == null ? 'No activity yet' : 'This month', trend: efficiency != null && lastEff != null ? trendOf(efficiency, lastEff) : null },
-    { icon: TrendingUp, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Profit', value: inr(periodProfit), hint: periodMode === 'day' ? `Realised on ${periodLabel}` : `Interest earned · ${periodLabel}`, trend: periodIsDefault ? trendOf(monthInterest, lastInterest) : null },
-    { icon: Receipt, tint: 'bg-rose-50 dark:bg-rose-500/15', iconColor: 'text-rose-600 dark:text-rose-400', label: 'Expenses', value: inr(periodExp), hint: periodLabel, trend: periodIsDefault && periodMode === 'month' ? trendOf(monthExp, lastExp) : null },
+    // Investor capital leads: it is the funding the whole book sits on.
+    { icon: Landmark, tint: 'bg-violet-50 dark:bg-violet-500/15', iconColor: 'text-violet-600 dark:text-violet-400', label: 'Investments', value: inr(investorCapital),
+      hint: investorCapital > 0 ? `${inr(deployedCapital)} lent out` : 'No investor capital', trend: null as KpiTrend | null,
+      onClick: () => navigate('/investments'), actionLabel: `Investor capital ${inr(investorCapital)} — view investors` },
+    // Available to lend: capital − lent out + net profit (interest − expenses).
+    { icon: PiggyBank, tint: 'bg-teal-50 dark:bg-teal-500/15', iconColor: 'text-teal-600 dark:text-teal-400', label: 'Available Funds', value: inr(funds.available),
+      hint: investorCapital > 0
+        ? `${inr(investorCapital)} − ${inr(funds.outstanding)} lent ${funds.netProfit >= 0 ? '+' : '−'} ${inr(Math.abs(funds.netProfit))} profit`
+        : 'No investor capital',
+      trend: null,
+      onClick: () => navigate('/investments'), actionLabel: `Available funds ${inr(funds.available)} — view investors` },
+    { icon: Wallet, tint: 'bg-indigo-50 dark:bg-indigo-500/15', iconColor: 'text-indigo-600 dark:text-indigo-400', label: 'Total Outstanding', value: inr(totalOutstanding),
+      hint: 'Across active loans', trend: null,
+      onClick: () => navigate('/loans?status=ACTIVE'), actionLabel: `Total outstanding ${inr(totalOutstanding)} — view active loans` },
+    // Links to the Loans page's 'today' bucket — the SAME strictly-today set
+    // this card counts, so the list matches the figure exactly.
+    { icon: CalendarClock, tint: 'bg-amber-50 dark:bg-amber-500/15', iconColor: 'text-amber-600 dark:text-amber-400', label: 'Due Today', value: inr(dueToday), hint: `${dueTodayLoans.length} loan${dueTodayLoans.length === 1 ? '' : 's'}`, trend: null,
+      onClick: () => navigate('/loans?status=ACTIVE&urgency=today'), actionLabel: `Due today ${inr(dueToday)} — view the ${dueTodayLoans.length} loan${dueTodayLoans.length === 1 ? '' : 's'} due today` },
+    { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Collections', value: inr(periodColl), hint: periodMode === 'day' ? periodLabel : `${periodLabel} · all-time ${inr(totalCollected)}`, trend: null,
+      onClick: () => navigate('/reports?tab=collections'), actionLabel: `Collections ${inr(periodColl)} — view the collections report` },
+    // NET profit — interest earned in the period LESS the expenses paid in it.
+    // Can be negative in a month with heavy costs; shown as-is (never clamped),
+    // because hiding a loss would misreport the business.
+    { icon: TrendingUp, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Profit', value: inr(netPeriodProfit),
+      hint: `${inr(periodProfit)} interest − ${inr(periodExp)} expenses`,
+      trend: periodIsDefault ? trendOf(monthInterest - monthExp, lastInterest - lastExp) : null,
+      // Opens the Business Profit breakdown (which loans earned it, what it was
+      // spent on) rather than a generic report.
+      onClick: () => navigate('/investments?view=profit'),
+      actionLabel: `Profit ${inr(netPeriodProfit)} — see which loans earned it and what it was spent on` },
+    { icon: Receipt, tint: 'bg-rose-50 dark:bg-rose-500/15', iconColor: 'text-rose-600 dark:text-rose-400', label: 'Expenses', value: inr(periodExp), hint: periodLabel, trend: periodIsDefault && periodMode === 'month' ? trendOf(monthExp, lastExp) : null,
+      onClick: () => navigate('/reports?tab=expenses'), actionLabel: `Expenses ${inr(periodExp)} — view the expenses report` },
   ];
 
   // ── Section 2a — Loan Performance: money OUT (disbursed) vs money IN
@@ -289,7 +451,11 @@ export default function Dashboard() {
         loanNo: l.loanNumber,
         due: dueFor(l),
         days: daysBetween(today, nd),
+        // The date the oldest unpaid instalment fell due — states WHEN the
+        // arrears began, rather than only how large they are.
+        dueSince: nd,
         type: LOAN_LABELS[l.type],
+        loan: l, // carried so the notice can itemise the unpaid instalments
         mobile: (l.contact || cust?.mobile || '').trim(),
       };
     })
@@ -297,6 +463,35 @@ export default function Dashboard() {
     .slice(0, 6),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [active, d, today]);
+
+  /** Build the overdue notice PDF and hand it to the OS share sheet, so it can
+   *  be sent to the customer on WhatsApp as a document. jsPDF is ~415 KB, so it
+   *  is imported on demand rather than bundled into the dashboard. */
+  const sendOverdueNotice = async (r: typeof overdueRows[number]) => {
+    const { buildOverdueNoticePDF, sharePDF, fileNamePart } = await import('@/lib/pdfReport');
+    const cust = d.customers.find((c) => c.id === r.loan.customerId);
+    const collected = d.collectedFor(r.loan.id);
+    const cadence = isDailyLoan(r.loan.type) ? 'day' : 'month';
+    const rows = unpaidRowsFor(r.loan, collected, today, cadence);
+    const doc = buildOverdueNoticePDF({
+      customerName: r.customer,
+      customerMobile: r.mobile || cust?.mobile || '—',
+      loanNumber: r.loanNo,
+      loanTypeLabel: r.type,
+      loanDate: fmtDate(r.loan.loanDate),
+      // Fall back to a single summary line when the schedule cannot be itemised
+      // (interest-only loans are open-ended), so the notice is never empty.
+      rows: rows.length > 0
+        ? rows.map((u) => ({ label: u.label, dueDate: u.dueDate, amount: u.amount }))
+        : [{ label: '—', dueDate: fmtDate(r.dueSince), amount: inr(r.due) }],
+      totalDue: inr(r.due),
+      dueSince: fmtDate(r.dueSince),
+      daysOverdue: r.days,
+      contactLine: 'Anush Finserv · Please contact us if you have any questions.',
+    });
+    const who = fileNamePart(r.customer);
+    await sharePDF(doc, `${who ? `${who}-` : ''}Overdue-Notice-${r.loanNo}-${today}.pdf`);
+  };
 
   const greeting = (() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })();
 
@@ -333,15 +528,19 @@ export default function Dashboard() {
             <PeriodFilter
               mode={periodMode}
               dateISO={periodDate}
+              rangeKey={periodRange}
               onModeChange={setPeriodMode}
               onDateChange={setPeriodDate}
+              onRangeSelect={applyRangePreset}
               onReset={resetPeriod}
             />
           </div>
         </div>
 
         {/* SECTION 1 — Portfolio Summary (5 KPI cards) */}
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+        {/* 7 cards in ONE row from xl up. Tighter gap at that breakpoint so
+            seven cards fit without the values wrapping. */}
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7 xl:gap-3">
           {kpisView.map((k) => <KpiCard key={k.label} {...k} />)}
         </div>
 
@@ -405,7 +604,10 @@ export default function Dashboard() {
                       const risk = riskFor(r.days);
                       const callHref = r.mobile ? telHref(r.mobile) : null;
                       const waHref = r.mobile
-                        ? whatsappHref(r.mobile, overdueWhatsAppMessage(r.customer, r.due))
+                        ? whatsappHref(r.mobile, overdueWhatsAppMessage({
+                          customer: r.customer, loanNo: r.loanNo, type: r.type,
+                          due: r.due, days: r.days, dueSince: fmtDate(r.dueSince),
+                        }))
                         : null;
                       return (
                         <tr key={r.id} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-slate-50/60 dark:border-white/[.04] dark:hover:bg-white/[.02]">
@@ -442,6 +644,18 @@ export default function Dashboard() {
                                   <Phone size={15} />
                                 </button>
                               )}
+                              {/* Overdue NOTICE — a one-page PDF listing the
+                                  unpaid instalments, handed to the share sheet
+                                  so it can be sent as a WhatsApp document. */}
+                              <button
+                                type="button"
+                                onClick={() => sendOverdueNotice(r)}
+                                title="Send overdue notice (PDF)"
+                                aria-label={`Send an overdue notice to ${r.customer}`}
+                                className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/15"
+                              >
+                                <FileDown size={15} />
+                              </button>
                               {waHref ? (
                                 <a
                                   href={waHref}
@@ -484,7 +698,9 @@ export default function Dashboard() {
             <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 dark:bg-white/[.03]">
               <GaugeStat label="Interest" value={inrShort(periodProfit)} color="text-emerald-600 dark:text-emerald-400" />
               <GaugeStat label="Expenses" value={inrShort(periodExp)} color="text-red-500 dark:text-red-400" />
-              <GaugeStat label="Profit" value={inrShort(periodProfit)} color="text-indigo-600 dark:text-indigo-400" />
+              {/* Profit is NET (interest − expenses); previously this repeated
+                  the interest figure, so two of the three tiles were identical. */}
+              <GaugeStat label="Profit" value={inrShort(netPeriodProfit)} color={netPeriodProfit < 0 ? 'text-red-500 dark:text-red-400' : 'text-indigo-600 dark:text-indigo-400'} />
             </div>
             {canView('Reports') && (
               <button onClick={() => navigate('/reports')} className="mt-4 inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold" style={{ color: C.primary }}>View Collection Reports <ArrowRight size={14} /></button>

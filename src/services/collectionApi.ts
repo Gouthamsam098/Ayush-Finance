@@ -34,6 +34,7 @@ interface CollectionWire {
   mode: PayMode;
   kind: CollectionKind;
   remarks?: string;
+  target_due_date?: string;
   posted_by?: number;
   created_at: string;
   updated_at: string;
@@ -49,6 +50,7 @@ function toCollection(w: CollectionWire): Collection {
     mode: w.mode,
     kind: w.kind,
     remarks: w.remarks,
+    targetDate: w.target_due_date ? w.target_due_date.slice(0, 10) : undefined,
   };
 }
 
@@ -60,6 +62,7 @@ function toWire(c: Partial<Collection>): Record<string, unknown> {
   if (c.mode !== undefined) w.mode = c.mode;
   if (c.kind !== undefined) w.kind = c.kind;
   if (c.remarks !== undefined) w.remarks = c.remarks;
+  if (c.targetDate !== undefined) w.target_due_date = c.targetDate;
   return w;
 }
 

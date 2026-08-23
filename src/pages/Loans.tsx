@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useData, LOAN_LABELS, isDailyLoan, isEmiLoan, isInstalmentLoan, isInterestOnly, emiFor, upfrontDeduction, DAILY_COLLECTION_RETAINED_MONTHS, type Loan, type LoanType, type RepaymentMode } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +9,8 @@ import { useToast } from '@/components/ui/toast';
 import { Drawer } from '@/components/ui/drawer';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { usePermissions } from '@/lib/permissions';
+import { cn } from '@/lib/utils';
+import { computeFunds, interestRealised, cashDisbursedFor } from '@/lib/funds';
 import { inr, inrShort, fmtDate, todayISO, addDays, initials, DAILY_TERM } from '@/lib/format';
 import { emptyNum, matchNum, numActive, type NumFilter } from '@/lib/customerFilters';
 import { FilterCard, SegGroup, Seg, NumFilterRow, MatchPreview } from '@/components/ui/filter-kit';
@@ -18,7 +21,7 @@ import { loanApi } from '@/services/loanApi';
 import {
   Search, Plus, FileText, Pencil, Trash2, CheckCircle2, SlidersHorizontal, MoreVertical,
   Wallet, AlertTriangle, CalendarClock, Layers, Lock, RotateCcw, ArrowUpDown, Activity, IndianRupee,
-  User, Calendar, Car, Phone, Calculator, Percent, X, ChevronLeft, ChevronRight, ChevronDown,
+  User, Calendar, Car, Phone, Calculator, Percent, X, ChevronLeft, ChevronRight, ChevronDown, PiggyBank,
 } from 'lucide-react';
 import { LedgerDialog } from '@/components/LedgerDialog';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -165,7 +168,10 @@ function validateLoanForm(f: LoanForm): LoanErrors {
   return e;
 }
 
-type Urgency = 'all' | 'overdue' | 'soon';
+// 'today' = the next instalment falls due TODAY. Distinct from 'soon'
+// (due within 3 days), so the Dashboard's "Due Today" KPI can link to exactly
+// the set it counted rather than a wider one.
+type Urgency = 'all' | 'overdue' | 'today' | 'soon';
 type SortMode = 'newest' | 'urgency' | 'amount';
 
 /** Drawer-managed loan filters (draft is edited in the drawer, applied on button). */
@@ -207,10 +213,27 @@ export default function Loans() {
   const [confirm, setConfirm] = useState<Loan | null>(null);
   const [closeTarget, setCloseTarget] = useState<Loan | null>(null);
   const [menuFor, setMenuFor] = useState<number | null>(null); // row whose ⋮ menu is open
-  const [urgency, setUrgency] = useState<Urgency>('all');
+  // Deep links from the Dashboard KPIs (?status=ACTIVE, ?urgency=overdue) so the
+  // list opens on EXACTLY the scope the clicked card counted. Read once as the
+  // initial state — the user stays free to change filters afterwards.
+  const [searchParams] = useSearchParams();
+  const initialStatus = ((): LoanFilters['status'] => {
+    const s = (searchParams.get('status') ?? '').toUpperCase();
+    return s === 'ACTIVE' || s === 'CLOSED' ? s : '';
+  })();
+  const initialUrgency = ((): Urgency => {
+    const u = (searchParams.get('urgency') ?? '').toLowerCase();
+    return u === 'overdue' || u === 'soon' || u === 'today' ? u : 'all';
+  })();
+  const initialSort = ((): SortMode => {
+    const s = (searchParams.get('sort') ?? '').toLowerCase();
+    return s === 'urgency' || s === 'amount' || s === 'newest' ? s : 'newest';
+  })();
+  const initialFilters = (): LoanFilters => ({ ...defaultLoanFilters(), status: initialStatus, sort: initialSort });
+  const [urgency, setUrgency] = useState<Urgency>(initialUrgency);
   const [query, setQuery] = useState('');
-  const [filters, setFilters] = useState<LoanFilters>(defaultLoanFilters);
-  const [draft, setDraft] = useState<LoanFilters>(defaultLoanFilters);
+  const [filters, setFilters] = useState<LoanFilters>(initialFilters);
+  const [draft, setDraft] = useState<LoanFilters>(initialFilters);
   const [filterOpen, setFilterOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [errors, setErrors] = useState<LoanErrors>({});
@@ -222,6 +245,38 @@ export default function Loans() {
     setForm((f) => (f ? { ...f, [k]: v } : f));
     setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e)); // clear this field's error as the user edits
   };
+
+  // ── Available funds guard ───────────────────────────────────────────────
+  // CASH basis, from the shared helper the Dashboard KPI also uses, so the
+  // number shown and the number that blocks a loan are always the same:
+  //   capital + collections − disbursed − expenses
+  // Interest earned raises capacity; every expense lowers it. Recomputed as
+  // loans/collections/expenses change, so a repayment frees funds immediately.
+  // When NO investor capital exists the guard is OFF (the business lends its
+  // own money) — otherwise every loan would be blocked on day one.
+  const funds = useMemo(
+    () => computeFunds(
+      d.loans, d.expenses,
+      interestRealised(d.loans, d.collections),
+      // Cash IN (total collected) — see computeFunds for why a receivable is wrong.
+      d.collections.reduce((s, c) => s + c.amount, 0),
+    ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [d.loans, d.collections, d.expenses],
+  );
+  const fundsEnforced = funds.enforced;
+  const investorCapital = funds.capital;
+  // On EDIT, this loan's own CASH OUT is already inside the subtraction, so add
+  // it back — otherwise editing a funded loan would look unfunded. Uses the
+  // cash disbursed (not the receivable), matching computeFunds.
+  const editingDisbursed = form?.id ? (() => {
+    const orig = d.loans.find((l) => l.id === form.id);
+    return orig ? cashDisbursedFor(orig) : 0;
+  })() : 0;
+  // Built from rawAvailable, NOT the 0-floored `available`: when the business is
+  // genuinely overdrawn, adding the edited loan back to a clamped 0 erased the
+  // deficit and let an edit raise a loan beyond real capacity.
+  const fundsCeiling = Math.max(0, funds.rawAvailable + editingDisbursed);
 
   // ── Live loan preview — the single source of truth for every auto-calc shown
   //    in the form. Mirrors backend/internal/domain/loan.go economics exactly. ──
@@ -332,12 +387,15 @@ export default function Loans() {
     outstanding: d.loans.reduce((s, l) => s + d.outstandingFor(l), 0),
     overdue: d.loans.filter((l) => { const dd = dueInDaysOf(l); return dd != null && dd < 0; }).length,
     soon: d.loans.filter((l) => { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); return dd != null && dd >= 0 && dd <= 3; }).length,
+    // Strictly TODAY — the same set the Dashboard's "Due Today" KPI counts.
+    dueToday: d.loans.filter((l) => dueInDaysOf(l) === 0).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [d.loans, d.collections]);
 
   /** Does a loan pass the toolbar state (urgency, query) plus a filter set? */
   const loanPasses = (l: Loan, f: LoanFilters): boolean => {
     if (urgency === 'overdue') { const dd = dueInDaysOf(l); if (dd == null || dd >= 0) return false; }
+    if (urgency === 'today') { const dd = dueInDaysOf(l); if (dd !== 0) return false; }
     if (urgency === 'soon') { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); if (dd == null || dd < 0 || dd > 3) return false; }
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -376,7 +434,9 @@ export default function Loans() {
 
   const activeFilterCount = countLoanFilters(filters);
   const filtersOn = activeFilterCount > 0 || urgency !== 'all' || !!query;
-  const activeLabel = urgency === 'overdue' ? 'overdue' : urgency === 'soon' ? 'due soon' : 'loans';
+  const activeLabel = urgency === 'overdue' ? 'overdue'
+    : urgency === 'today' ? 'due today'
+      : urgency === 'soon' ? 'due soon' : 'loans';
   const openFilters = () => { setDraft(filters); setFilterOpen(true); };
   const applyDraft = () => { setFilters(draft); setFilterOpen(false); };
 
@@ -384,9 +444,29 @@ export default function Loans() {
     if (!form) return;
     // Industrial-standard validation — every field asserted before save.
     const found = validateLoanForm(form);
+    // FUNDING GUARD: never lend more than the investor capital that is still
+    // free. Checked here (not only inline) so it cannot be bypassed by typing
+    // fast, pasting, or submitting with the keyboard.
+    if (fundsEnforced) {
+      // Compare the CASH that will actually leave (Daily Collection retains its
+      // interest upfront, so that is net-disbursed, not the principal).
+      const want = preview.netDisbursed || Number(form.principal);
+      if (fundsCeiling <= 0) {
+        found.principal = investorCapital <= 0
+          ? 'No funds available — add investor capital first'
+          : 'No funds available — all cash is lent out';
+      } else if (want > fundsCeiling) {
+        found.principal = `Needs ${inr(want)} cash — only ${inr(fundsCeiling)} available`;
+      }
+    }
     if (Object.keys(found).length > 0) {
       setErrors(found);
-      toast('Please fix the highlighted fields', 'error');
+      toast(
+        fundsEnforced && found.principal?.startsWith('No funds')
+          ? 'No funds available to lend — add investor capital or wait for repayments'
+          : 'Please fix the highlighted fields',
+        'error',
+      );
       return;
     }
     setErrors({});
@@ -422,7 +502,9 @@ export default function Loans() {
       numDays: term,
       nextDueDate: form.type === 'FLEXIBLE' ? addDays(form.loanDate, monthsNum)
         : instalment || interestOnly || emi ? addDays(form.loanDate, cadenceDays) : undefined,
-      vehicleNumber: form.type === 'VEHICLE' ? form.vehicleNumber : undefined,
+      // Plates are stored uppercase (input uppercases live; trim+uppercase here
+      // also normalises pre-existing lowercase records on their next edit).
+      vehicleNumber: form.type === 'VEHICLE' ? form.vehicleNumber.trim().toUpperCase() : undefined,
       vehicleBrand: form.type === 'VEHICLE' ? form.vehicleBrand : undefined,
       vehicleName: form.type === 'VEHICLE' ? form.vehicleName : undefined,
     };
@@ -477,12 +559,15 @@ export default function Loans() {
 
       <div className="flex flex-1 flex-col gap-4 p-3.5 sm:px-5">
         {/* Stat cards / triage filters */}
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
           <StatCard label="Total loans" value={String(stats.count)} accent="#6366f1" icon={<Layers size={16} />}
             active={urgency === 'all'} onClick={() => setUrgency('all')} />
           <StatCard label="Total outstanding" value={inr(stats.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={stats.outstanding} />
           <StatCard label="Overdue" value={String(stats.overdue)} accent="#ef4444" icon={<AlertTriangle size={16} />}
             active={urgency === 'overdue'} onClick={() => setUrgency('overdue')} />
+          {/* Strictly today — the Dashboard's Due Today KPI links here. */}
+          <StatCard label="Due today" value={String(stats.dueToday)} accent="#0ea5e9" icon={<CalendarClock size={16} />}
+            active={urgency === 'today'} onClick={() => setUrgency('today')} />
           <StatCard label="Due within 3 days" value={String(stats.soon)} accent="#f59e0b" icon={<CalendarClock size={16} />}
             active={urgency === 'soon'} onClick={() => setUrgency('soon')} />
         </div>
@@ -862,7 +947,17 @@ export default function Loans() {
             <Button variant="ghost" onClick={() => setSummaryOpen(true)}>
               <Calculator size={15} /> Preview summary
             </Button>
-            <Button onClick={save}>{form?.id ? 'Save changes' : 'Create loan'}</Button>
+            {/* Disabled outright when there is nothing left to lend — clearer
+                than letting the form be filled in only to fail on submit.
+                Editing an existing loan is never blocked (its own capital is
+                already counted in fundsCeiling). */}
+            <Button
+              onClick={save}
+              disabled={fundsEnforced && !form?.id && fundsCeiling <= 0}
+              title={fundsEnforced && !form?.id && fundsCeiling <= 0 ? 'No investor funds available to lend' : undefined}
+            >
+              {form?.id ? 'Save changes' : 'Create loan'}
+            </Button>
           </>
         }
       >
@@ -896,8 +991,40 @@ export default function Loans() {
 
             {/* 2 — Amounts & interest */}
             <FormCard icon={<IndianRupee size={16} />} title="Amounts & interest" color="emerald">
+              {/* Funding capacity — ALWAYS shown: a loan can only be funded from
+                  available funds, so this is the ceiling, not a hint. */}
+              <div className={cn(
+                'mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-3 py-2 text-[12px]',
+                fundsCeiling <= 0
+                  ? 'bg-danger/10 text-danger'
+                  : 'bg-teal-50 text-teal-700 dark:bg-teal-500/10 dark:text-teal-300',
+              )}>
+                <PiggyBank size={14} className="shrink-0" />
+                {fundsCeiling <= 0 ? (
+                  investorCapital <= 0
+                    // Distinguish "no capital at all" from "capital fully lent
+                    // out" — the fix differs (add an investor vs wait for repayments).
+                    ? <span><span className="font-bold">No funds available.</span> Add investor capital on the Investments page before creating a loan.</span>
+                    : <span><span className="font-bold">No funds available.</span> All capital is lent out — wait for repayments or add investor capital.</span>
+                ) : (
+                  <span>Available to lend: <span className="font-bold">{inr(fundsCeiling)}</span> ({inr(investorCapital)} capital − {inr(funds.outstanding)} lent out {funds.netProfit >= 0 ? '+' : '−'} {inr(Math.abs(funds.netProfit))} net profit)</span>
+                )}
+              </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Input label="Principal amount *" type="number" placeholder="0" value={form.principal} onChange={(e) => set('principal', e.target.value)} error={errors.principal} />
+                <Input
+                  label="Principal amount *" type="number" placeholder="0"
+                  value={form.principal}
+                  onChange={(e) => set('principal', e.target.value)}
+                  // Live funding feedback beats waiting for submit; the save
+                  // handler re-checks the same rule so this is UX, not the gate.
+                  // Measured on CASH OUT (net disbursed), which for Daily
+                  // Collection is less than the principal.
+                  error={errors.principal ?? (
+                    fundsEnforced && preview.netDisbursed > 0 && preview.netDisbursed > fundsCeiling
+                      ? `Needs ${inr(preview.netDisbursed)} cash — only ${inr(fundsCeiling)} available`
+                      : undefined
+                  )}
+                />
                 <Input label={preview.emi ? 'Interest rate (% overall) *' : 'Interest rate (%) *'} type="number" step="0.01" placeholder="0" value={form.rate} onChange={(e) => set('rate', e.target.value)} error={errors.rate} />
                 {preview.emi && (
                   <Input label="Tenure (months) *" type="number" min="1" placeholder="e.g. 12" value={form.numDays} onChange={(e) => set('numDays', e.target.value)} error={errors.numDays} />
@@ -962,7 +1089,7 @@ export default function Loans() {
               <FormCard icon={<Car size={16} />} title="Vehicle details" color="amber"
                 hint="Collateral information for the vehicle loan.">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Input label="Vehicle number *" placeholder="KL-07-AB-1234" value={form.vehicleNumber} onChange={(e) => set('vehicleNumber', e.target.value)} error={errors.vehicleNumber} />
+                  <Input label="Vehicle number *" placeholder="KL-07-AB-1234" value={form.vehicleNumber} onChange={(e) => set('vehicleNumber', e.target.value.toUpperCase())} error={errors.vehicleNumber} />
                   <Input label="Vehicle brand" placeholder="Maruti" value={form.vehicleBrand} onChange={(e) => set('vehicleBrand', e.target.value)} />
                   <Input label="Vehicle name" placeholder="Ertiga" value={form.vehicleName} onChange={(e) => set('vehicleName', e.target.value)} />
                 </div>

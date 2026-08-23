@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  useData, LOAN_LABELS, EXPENSE_CATEGORIES, type LoanType,
+  useData, LOAN_LABELS, EXPENSE_CATEGORIES, behavesInterestOnly, type LoanType,
   type Customer, type Loan, type Collection, type Expense,
 } from '@/mock/DataContext';
 import { StatCard } from '@/components/ui/stat-card';
 import { Button } from '@/components/ui/button';
 import { Drawer } from '@/components/ui/drawer';
+import { Dialog } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import { FilterCard, SegGroup, Seg, MatchPreview } from '@/components/ui/filter-kit';
 import { useToast } from '@/components/ui/toast';
 import { PageHeader, HeaderGhostButton } from '@/components/layout/PageHeader';
@@ -169,15 +172,85 @@ function buildReport(tab: ReportKey, data: Dataset, f: BuildArgs): BuiltReport {
   };
 }
 
+/** One row of the Collections tab's grouped PREVIEW: a loan with its collection
+ *  totals. Purely a display aggregation over the same rows buildReport() emits —
+ *  the CSV/PDF exports still use the flat receipt list, unchanged. */
+interface LoanCollectionGroup {
+  loan: Loan;
+  customer: string;
+  receipts: Collection[];
+  collected: number;   // total money received on this loan (in range)
+  interest: number;    // profit portion — see the recognition rules below
+  principal: number;   // collected − interest
+  lastDate: string;    // most recent receipt in range
+}
+
+/** Group the in-range receipts by loan, with the interest/principal split.
+ *  Recognition mirrors Dashboard.profitByCollectionId (the single source of
+ *  truth for profit) so the two screens can never disagree:
+ *   • interest-only behaviour → every non-PRINCIPAL payment is interest;
+ *   • upfront/EMI → profit-last: the band (disbursed, disbursed + margin]. */
+function groupCollectionsByLoan(rows: Collection[], loans: Loan[], customers: Customer[]): LoanCollectionGroup[] {
+  const nameById = new Map(customers.map((c) => [c.id, c.name] as const));
+  const loanById = new Map(loans.map((l) => [l.id, l] as const));
+  const byLoan = new Map<number, Collection[]>();
+  for (const c of rows) {
+    const arr = byLoan.get(c.loanId) ?? [];
+    arr.push(c);
+    byLoan.set(c.loanId, arr);
+  }
+  const out: LoanCollectionGroup[] = [];
+  for (const [loanId, list] of byLoan) {
+    const loan = loanById.get(loanId);
+    if (!loan) continue; // receipt whose loan is filtered out / deleted
+    const ordered = [...list].sort((a, b) => (a.date === b.date ? a.id - b.id : a.date < b.date ? -1 : 1));
+    const collected = ordered.reduce((s, c) => s + c.amount, 0);
+    let interest = 0;
+    if (behavesInterestOnly(loan)) {
+      interest = ordered.filter((c) => c.kind !== 'PRINCIPAL').reduce((s, c) => s + c.amount, 0);
+    } else {
+      const disbursed = loan.disbursed ?? Math.max(0, loan.principal - (loan.deduction ?? 0));
+      const margin = (loan.deduction ?? 0) > 0 ? (loan.deduction ?? 0) : loan.interest;
+      let cum = 0;
+      for (const c of ordered) {
+        const before = cum;
+        cum += c.amount;
+        interest += Math.max(0, Math.min(cum, disbursed + margin) - Math.max(before, disbursed));
+      }
+    }
+    out.push({
+      loan,
+      customer: nameById.get(loan.customerId) ?? '—',
+      receipts: [...ordered].reverse(), // newest first for the drill-down
+      collected,
+      interest,
+      principal: Math.max(0, collected - interest),
+      lastDate: ordered[ordered.length - 1]?.date ?? '',
+    });
+  }
+  // Most recently active loan first.
+  return out.sort((a, b) => (a.lastDate === b.lastDate ? b.collected - a.collected : a.lastDate < b.lastDate ? 1 : -1));
+}
+
 export default function Reports() {
   const d = useData();
   const toast = useToast();
-  const [tab, setTab] = useState<ReportKey>('loans');
+  // Deep link from the Dashboard KPIs (?tab=collections|expenses) — opens the
+  // matching report directly. Read once as the initial tab; the user is free to
+  // switch afterwards.
+  const [searchParams] = useSearchParams();
+  const initialTab = ((): ReportKey => {
+    const t = (searchParams.get('tab') ?? '') as ReportKey;
+    return REPORTS.some((r) => r.key === t) ? t : 'loans';
+  })();
+  const [tab, setTab] = useState<ReportKey>(initialTab);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<ReportFilters>(defaultFilters());
   const [draft, setDraft] = useState<ReportFilters>(defaultFilters());
   const [filterOpen, setFilterOpen] = useState(false);
   const [exporting, setExporting] = useState<'' | 'csv' | 'pdf'>('');
+  // Collections drill-down: the loan whose receipts are being inspected.
+  const [detail, setDetail] = useState<LoanCollectionGroup | null>(null);
 
   // Portfolio KPI band — real figures, no fabricated trends.
   const portfolio = useMemo(() => {
@@ -200,6 +273,25 @@ export default function Reports() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tab, filters, query, d],
   );
+
+  // Collections tab PREVIEW is grouped by loan (319 raw receipts are unreadable);
+  // clicking a row opens its receipts. Exports stay flat — see runExport.
+  const collectionGroups = useMemo(() => {
+    if (tab !== 'collections') return [];
+    let rows = d.collections;
+    if (since) rows = rows.filter((c) => c.date >= since);
+    if (q) {
+      const loanById = new Map(d.loans.map((l) => [l.id, l] as const));
+      const nameById = new Map(d.customers.map((c) => [c.id, c.name] as const));
+      rows = rows.filter((c) => {
+        const loan = loanById.get(c.loanId);
+        return c.receiptNo.toLowerCase().includes(q)
+          || (loan ? (nameById.get(loan.customerId) ?? '').toLowerCase().includes(q) : false)
+          || (loan?.loanNumber.toLowerCase().includes(q) ?? false);
+      });
+    }
+    return groupCollectionsByLoan(rows, d.loans, d.customers);
+  }, [tab, since, q, d]);
 
   const meta = REPORTS.find((r) => r.key === tab)!;
   const periodLabel = PERIODS.find((p) => p.key === filters.period)!.label;
@@ -319,8 +411,17 @@ export default function Reports() {
         <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-white/[.06] lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-2.5 text-[13px] mb-5 lg:mb-0">
             <span className="text-muted">Showing</span>
-            <span className="font-semibold text-ink">{report.body.length}</span>
-            <span className="text-muted">{report.body.length === 1 ? 'record' : 'records'}</span>
+            {tab === 'collections' ? (
+              <>
+                <span className="font-semibold text-ink">{collectionGroups.length}</span>
+                <span className="text-muted">{collectionGroups.length === 1 ? 'loan' : 'loans'} · {report.body.length} {report.body.length === 1 ? 'payment' : 'payments'}</span>
+              </>
+            ) : (
+              <>
+                <span className="font-semibold text-ink">{report.body.length}</span>
+                <span className="text-muted">{report.body.length === 1 ? 'record' : 'records'}</span>
+              </>
+            )}
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[12px] font-medium text-ink/70 dark:bg-white/[.06]">
               <CalendarRange size={12} /> {periodLabel}
             </span>
@@ -356,6 +457,58 @@ export default function Reports() {
               <p className="text-sm font-medium text-muted">No {meta.label.toLowerCase()} match this filter.</p>
               <p className="text-[12px] text-muted/70">Try a wider period or clear the filters.</p>
             </div>
+          ) : tab === 'collections' ? (
+            /* Collections preview: ONE ROW PER LOAN with its totals — click to see
+               the individual receipts. The flat receipt list still backs both
+               exports, so CSV/PDF output is unchanged. */
+            <table className="w-full min-w-[900px] border-collapse text-sm">
+              <thead>
+                <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">Customer</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">Loan</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Principal</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Collected</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Interest</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Outstanding</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">Payments</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">Last / Closed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {collectionGroups.slice(0, 50).map((g) => {
+                  const closed = g.loan.status === 'CLOSED';
+                  return (
+                    <tr
+                      key={g.loan.id}
+                      onClick={() => setDetail(g)}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`${g.customer}, loan ${g.loan.loanNumber} — view ${g.receipts.length} payments`}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetail(g); } }}
+                      className="group cursor-pointer border-t border-[#EEF2F7] transition-colors odd:bg-slate-50/30 hover:bg-blue-50/50 focus:outline-none focus-visible:bg-blue-50/60 dark:border-white/[.05] dark:odd:bg-white/[.015] dark:hover:bg-blue-500/[.06]"
+                    >
+                      <td className="h-[60px] whitespace-nowrap px-6 align-middle font-semibold text-ink">{g.customer}</td>
+                      <td className="h-[60px] whitespace-nowrap px-6 align-middle">
+                        <div className="font-mono text-xs text-ink">{g.loan.loanNumber}</div>
+                        <div className="text-[11.5px] text-muted">{LOAN_LABELS[g.loan.type]}</div>
+                      </td>
+                      <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle tabular-nums text-ink/80">{inr(g.loan.principal)}</td>
+                      <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{inr(g.collected)}</td>
+                      <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle tabular-nums text-ink/80">{inr(g.interest)}</td>
+                      <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle font-semibold tabular-nums text-ink">{closed ? inr(0) : inr(d.outstandingFor(g.loan))}</td>
+                      <td className="h-[60px] whitespace-nowrap px-6 align-middle text-ink/80">{g.receipts.length}</td>
+                      <td className="h-[60px] whitespace-nowrap px-6 align-middle">
+                        <div className="flex items-center gap-2">
+                          <span className="text-ink/80">{g.lastDate ? fmtDate(g.lastDate) : '—'}</span>
+                          {/* Green = settled and closed, blue = still running. */}
+                          <Badge tone={closed ? 'ok' : 'info'}>{closed ? 'Closed' : 'Active'}</Badge>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           ) : (
             <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
               <thead>
@@ -367,16 +520,84 @@ export default function Reports() {
               </thead>
               <tbody>
                 {report.body.slice(0, 50).map((row, ri) => (
-                  <tr key={ri} className="border-t border-[#EEF2F7] transition-colors hover:bg-blue-50/30 odd:bg-slate-50/20 dark:border-white/[.05] dark:hover:bg-blue-500/[.04] dark:odd:bg-white/[.01]">
-                    {row.map((cell, ci) => (
-                      <td key={ci} className={cn('h-[60px] align-middle whitespace-nowrap px-6 tabular-nums', report.rightAlignCols.includes(ci) ? 'text-right font-semibold text-ink' : 'text-ink/80', ci === 0 && 'font-mono text-xs text-ink')}>{cell}</td>
-                    ))}
+                  <tr key={ri} className="border-t border-[#EEF2F7] transition-colors odd:bg-slate-50/30 hover:bg-blue-50/50 dark:border-white/[.05] dark:odd:bg-white/[.015] dark:hover:bg-blue-500/[.05]">
+                    {row.map((cell, ci) => {
+                      const header = report.head[ci];
+                      const money = report.rightAlignCols.includes(ci);
+                      return (
+                        <td key={ci} className={cn(
+                          'h-[54px] align-middle whitespace-nowrap px-6 tabular-nums',
+                          // Money right-aligned and heavier — it is what the eye
+                          // scans for; everything else recedes.
+                          money ? 'text-right font-display text-[14.5px] font-bold text-ink' : 'text-[13.5px] text-ink/75',
+                          ci === 0 && 'font-mono text-xs font-semibold text-ink',
+                        )}>
+                          {/* Typed cells render as coloured chips so status,
+                              category and mode are scannable. Plain text
+                              otherwise — and the EXPORTS are unaffected, since
+                              they read report.body, not this markup. */}
+                          {header === 'Status' && (cell === 'ACTIVE' || cell === 'CLOSED')
+                            ? <Badge tone={cell === 'CLOSED' ? 'ok' : 'info'}>{cell === 'CLOSED' ? 'Closed' : 'Active'}</Badge>
+                            : header === 'Mode'
+                              ? <Badge tone="neutral">{cell}</Badge>
+                              : header === 'Category'
+                                ? <span className={cn(
+                                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold',
+                                  cell === 'Investor Interest' ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+                                    : cell === 'Office' ? 'bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
+                                      : cell === 'Personal' ? 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300'
+                                        : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+                                )}>
+                                  <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />{cell}
+                                </span>
+                                : header === 'Loan Type'
+                                  ? <Badge tone="info">{cell}</Badge>
+                                  : cell}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
+              {/* Column totals for the money columns — a report without totals
+                  makes the reader add it up themselves. */}
+              {report.body.length > 0 && report.rightAlignCols.length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
+                    {report.head.map((h, i) => {
+                      if (i === 0) {
+                        return (
+                          <td key={h} className="px-6 py-3.5 text-[11.5px] font-bold uppercase tracking-wide text-muted">
+                            Total · {report.body.length} {report.body.length === 1 ? 'row' : 'rows'}
+                          </td>
+                        );
+                      }
+                      if (!report.rightAlignCols.includes(i)) return <td key={h} />;
+                      // Sum only parseable money cells; a non-numeric column is
+                      // left blank rather than shown as a false 0.
+                      let sum = 0; let seen = false;
+                      for (const row of report.body) {
+                        const n = Number(String(row[i]).replace(/[₹,\s]/g, ''));
+                        if (Number.isFinite(n)) { sum += n; seen = true; }
+                      }
+                      return (
+                        <td key={h} className="whitespace-nowrap px-6 py-3.5 text-right font-display text-[15px] font-bold tabular-nums text-ink">
+                          {seen ? inr(sum) : ''}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </tfoot>
+              )}
             </table>
           )}
-          {report.body.length > 50 && (
+          {tab === 'collections' ? (
+            collectionGroups.length > 50 && (
+              <div className="border-t border-[#EEF2F7] px-6 py-3 text-center text-[12px] text-muted dark:border-white/[.06]">
+                Preview shows first 50 of {collectionGroups.length} loans · export includes all {report.body.length} payments
+              </div>
+            )
+          ) : report.body.length > 50 && (
             <div className="border-t border-[#EEF2F7] px-6 py-3 text-center text-[12px] text-muted dark:border-white/[.06]">
               Preview shows first 50 of {report.body.length} rows · export includes all
             </div>
@@ -384,6 +605,107 @@ export default function Reports() {
         </div>
       </div>
       </div>
+
+      {/* Collections drill-down: the selected loan's own receipts. Read-only —
+          money is edited in the loan's Collection Ledger, never from a report. */}
+      <Dialog
+        wide
+        open={!!detail}
+        onClose={() => setDetail(null)}
+        title={detail ? `${detail.customer} · ${detail.loan.loanNumber}` : ''}
+        subtitle={detail ? `${LOAN_LABELS[detail.loan.type]} · ${detail.receipts.length} ${detail.receipts.length === 1 ? 'payment' : 'payments'} · ${periodLabel}` : ''}
+        footer={<Button variant="ghost" onClick={() => setDetail(null)}>Close</Button>}
+      >
+        {detail && (
+          <div className="space-y-4">
+            {/* Identity band — avatar, borrower, loan facts, status. Brand
+                blue→violet gradient, matching the app's accent. */}
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-blue-500 to-violet-500 px-5 py-4 text-white shadow-[0_10px_30px_-14px_rgba(37,99,235,.55)]">
+              {/* soft light bloom, purely decorative */}
+              <div aria-hidden className="pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full bg-white/15 blur-2xl" />
+              <div className="relative flex flex-wrap items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/20 font-display text-[16px] font-bold backdrop-blur-sm">
+                    {detail.customer.trim().charAt(0).toUpperCase() || '—'}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate font-display text-[17px] font-bold leading-tight">{detail.customer}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-white/85">
+                      <span className="font-mono">{detail.loan.loanNumber}</span>
+                      <span aria-hidden>·</span>
+                      <span>{LOAN_LABELS[detail.loan.type]}</span>
+                      <span aria-hidden>·</span>
+                      <span>{detail.loan.rate}%</span>
+                    </div>
+                  </div>
+                </div>
+                <span className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11.5px] font-bold backdrop-blur-sm',
+                  detail.loan.status === 'CLOSED' ? 'bg-emerald-400/25 text-emerald-50' : 'bg-white/20 text-white',
+                )}>
+                  <span className="h-1.5 w-1.5 rounded-full bg-current opacity-90" />
+                  {detail.loan.status === 'CLOSED' ? 'Closed' : 'Active'}
+                </span>
+              </div>
+              {/* Loan-date / instalment strip */}
+              <div className="relative mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/20 pt-2.5 text-[12px] text-white/85">
+                <span>Loan date <span className="font-semibold text-white">{fmtDate(detail.loan.loanDate)}</span></span>
+                {detail.loan.dailyAmount ? <span>Instalment <span className="font-semibold text-white">{inr(detail.loan.dailyAmount)}</span></span> : null}
+                <span>Last payment <span className="font-semibold text-white">{detail.lastDate ? fmtDate(detail.lastDate) : '—'}</span></span>
+              </div>
+            </div>
+
+            {/* Money summary */}
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              {[
+                { k: 'Principal', v: inr(detail.loan.principal) },
+                { k: 'Collected', v: inr(detail.collected), tone: 'text-emerald-600 dark:text-emerald-400' },
+                { k: 'Interest', v: inr(detail.interest) },
+                { k: detail.loan.status === 'CLOSED' ? 'Closed on' : 'Outstanding', v: detail.loan.status === 'CLOSED' ? fmtDate(detail.lastDate) : inr(d.outstandingFor(detail.loan)) },
+              ].map((s) => (
+                <div key={s.k} className="rounded-xl border-[0.5px] border-slate-200/80 bg-slate-50/60 px-3 py-2.5 dark:border-white/[.08] dark:bg-white/[.02]">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{s.k}</div>
+                  <div className={cn('mt-0.5 font-display text-[15px] font-bold tabular-nums text-ink', s.tone)}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+            {/* Receipts, newest first */}
+            <div>
+              <div className="mb-2 flex items-baseline justify-between">
+                <h4 className="text-[11px] font-bold uppercase tracking-wide text-muted">Payment history</h4>
+                <span className="text-[11.5px] text-muted">{detail.receipts.length} {detail.receipts.length === 1 ? 'receipt' : 'receipts'}</span>
+              </div>
+              <div className="max-h-80 overflow-auto rounded-xl border-[0.5px] border-slate-200/80 dark:border-white/[.08]">
+                <table className="w-full min-w-[520px] text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
+                      <th>Receipt</th><th>Date</th><th className="text-right">Amount</th><th>Mode</th><th>Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.receipts.map((c) => (
+                      <tr key={c.id} className="border-t border-slate-100 transition-colors hover:bg-slate-50/70 dark:border-white/[.06] dark:hover:bg-white/[.03]">
+                        <td className="px-3 py-2 font-mono text-xs text-ink">{c.receiptNo}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-ink/80">{fmtDate(c.date)}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums text-ink">{inr(c.amount)}</td>
+                        <td className="px-3 py-2"><Badge tone="neutral">{c.mode}</Badge></td>
+                        <td className="px-3 py-2 text-muted">{c.remarks ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
+                      <td className="px-3 py-2.5 text-[12px] font-bold uppercase tracking-wide text-muted" colSpan={2}>Total</td>
+                      <td className="px-3 py-2.5 text-right font-display text-[14px] font-bold tabular-nums text-ink">{inr(detail.collected)}</td>
+                      <td colSpan={2} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </Dialog>
 
       {/* Filters — premium right-side drawer (draft, applied on button) — same pattern as Loans */}
       <Drawer

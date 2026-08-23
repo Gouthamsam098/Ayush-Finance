@@ -46,6 +46,9 @@ type collectionRequest struct {
 	Mode    string  `json:"mode"`
 	Kind    string  `json:"kind"` // INTEREST (default) | PRINCIPAL
 	Remarks *string `json:"remarks"`
+	// Optional schedule slot the collector explicitly chose to pay (YYYY-MM-DD).
+	// Display attribution only — never part of balance math.
+	TargetDueDate *string `json:"target_due_date"`
 }
 
 func (req collectionRequest) toInput() (domain.CollectionInput, error) {
@@ -66,29 +69,44 @@ func (req collectionRequest) toInput() (domain.CollectionInput, error) {
 		}
 		in.Date = t
 	}
+	if req.TargetDueDate != nil {
+		if s := strings.TrimSpace(*req.TargetDueDate); s != "" {
+			t, err := time.ParseInLocation("2006-01-02", s, time.Local)
+			if err != nil {
+				return in, domain.NewValidation("Invalid target day", map[string]string{"target_due_date": "Use YYYY-MM-DD"})
+			}
+			in.TargetDueDate = &t
+		}
+	}
 	return in, nil
 }
 
 // collectionResponse is the public snake_case projection. Money is emitted as rupees.
 type collectionResponse struct {
-	ID        int64   `json:"id"`
-	ReceiptNo string  `json:"receipt_no"`
-	LoanID    int64   `json:"loan_id"`
-	Date      string  `json:"date"`
-	Amount    float64 `json:"amount"`
-	Mode      string  `json:"mode"`
-	Kind      string  `json:"kind"`
-	Remarks   *string `json:"remarks,omitempty"`
-	PostedBy  *int64  `json:"posted_by,omitempty"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID            int64   `json:"id"`
+	ReceiptNo     string  `json:"receipt_no"`
+	LoanID        int64   `json:"loan_id"`
+	Date          string  `json:"date"`
+	Amount        float64 `json:"amount"`
+	Mode          string  `json:"mode"`
+	Kind          string  `json:"kind"`
+	Remarks       *string `json:"remarks,omitempty"`
+	TargetDueDate *string `json:"target_due_date,omitempty"`
+	PostedBy      *int64  `json:"posted_by,omitempty"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
 }
 
 func toResponse(c *domain.Collection) collectionResponse {
+	var target *string
+	if c.TargetDueDate != nil {
+		s := c.TargetDueDate.Format("2006-01-02")
+		target = &s
+	}
 	return collectionResponse{
 		ID: c.ID, ReceiptNo: c.ReceiptNo, LoanID: c.LoanID,
 		Date: c.Date.Format("2006-01-02"), Amount: c.Amount.Rupees(), Mode: string(c.Mode),
-		Kind: string(c.Kind), Remarks: c.Remarks, PostedBy: c.PostedBy,
+		Kind: string(c.Kind), Remarks: c.Remarks, TargetDueDate: target, PostedBy: c.PostedBy,
 		CreatedAt: c.CreatedAt.Format(time.RFC3339), UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 	}
 }

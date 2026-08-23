@@ -52,9 +52,14 @@ type Collection struct {
 	Mode      PayMode
 	Kind      CollectionKind
 	Remarks   *string
-	PostedBy  *int64
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// TargetDueDate is the schedule slot the collector explicitly chose to pay
+	// (the ledger row whose Add button was clicked). Attribution/display only —
+	// never part of balance math. Nil = no explicit target (bulk/clear-overdue/
+	// foreclosure/legacy): the ledger falls back to the receipt-date rule.
+	TargetDueDate *time.Time
+	PostedBy      *int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // Collected is the split of a loan's recorded collections. Interest and
@@ -80,6 +85,8 @@ type CollectionInput struct {
 	Mode    PayMode
 	Kind    CollectionKind
 	Remarks *string
+	// Optional explicit schedule-slot target (see Collection.TargetDueDate).
+	TargetDueDate *time.Time
 }
 
 const maxCollectionRemarksLen = 300
@@ -144,6 +151,14 @@ func (in *CollectionInput) Validate(loan *Loan, collected Collected, now time.Ti
 
 	if in.Remarks != nil && len([]rune(*in.Remarks)) > maxCollectionRemarksLen {
 		fields["remarks"] = "Max 300 characters"
+	}
+
+	// Target slot (if supplied) must lie on the loan's timeline: never before
+	// disbursement. No upper bound beyond sanity — it is display attribution,
+	// not money math, and a valid target can sit anywhere on the schedule.
+	if in.TargetDueDate != nil && loan != nil &&
+		truncateToDay(*in.TargetDueDate).Before(truncateToDay(loan.LoanDate)) {
+		fields["target_due_date"] = "Target day cannot be before the loan date"
 	}
 
 	if len(fields) > 0 {

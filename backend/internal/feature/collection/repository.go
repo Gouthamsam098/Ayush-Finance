@@ -39,18 +39,18 @@ type querier interface {
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 const collectionColumns = `
-	id, receipt_no, loan_id, date, amount, mode, kind, remarks, posted_by, created_at, updated_at`
+	id, receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, created_at, updated_at`
 
 // Create inserts a payment, minting its RCPT-###### number from the sequence in
 // the same statement so the number is allocated atomically. Amount is stored as
 // whole rupees (see domain.Paise.DBRupees).
 func (r *Repository) Create(ctx context.Context, in domain.CollectionInput, postedBy *int64) (*domain.Collection, error) {
 	const query = `
-		INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, posted_by, posted_at)
-		VALUES ('RCPT-' || nextval('receipt_no_seq'), $1, $2, $3, $4, $5, $6, $7, now())
+		INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, posted_at)
+		VALUES ('RCPT-' || nextval('receipt_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, now())
 		RETURNING ` + collectionColumns
 	row := r.pool.QueryRow(ctx, query,
-		in.LoanID, in.Date, in.Amount.DBRupees(), string(in.Mode), string(in.Kind), nilIfEmpty(in.Remarks), postedBy)
+		in.LoanID, in.Date, in.Amount.DBRupees(), string(in.Mode), string(in.Kind), nilIfEmpty(in.Remarks), in.TargetDueDate, postedBy)
 	c, err := scanCollection(row)
 	if err != nil {
 		return nil, translateWriteError(err)
@@ -95,8 +95,8 @@ func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, in domain.Collecti
 		}
 	}
 	const query = `
-		INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, posted_by, posted_at, idempotency_key)
-		VALUES ('RCPT-' || nextval('receipt_no_seq'), $1, $2, $3, $4, $5, $6, $7, now(), $8)
+		INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, posted_at, idempotency_key)
+		VALUES ('RCPT-' || nextval('receipt_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, now(), $9)
 		RETURNING ` + collectionColumns
 	// An empty key must be stored as NULL, not "": the partial unique index
 	// ignores NULLs, so unkeyed payments never collide with each other.
@@ -106,7 +106,7 @@ func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, in domain.Collecti
 	}
 	row := tx.QueryRow(ctx, query,
 		in.LoanID, in.Date, in.Amount.DBRupees(), string(in.Mode), string(in.Kind),
-		nilIfEmpty(in.Remarks), postedBy, keyArg)
+		nilIfEmpty(in.Remarks), in.TargetDueDate, postedBy, keyArg)
 	c, err := scanCollection(row)
 	if err != nil {
 		return nil, false, translateWriteError(err)
@@ -327,7 +327,7 @@ func scanCollection(row rowScanner) (*domain.Collection, error) {
 	var amount int64
 	err := row.Scan(
 		&c.ID, &c.ReceiptNo, &c.LoanID, &c.Date, &amount, &mode, &kind,
-		&c.Remarks, &c.PostedBy, &c.CreatedAt, &c.UpdatedAt,
+		&c.Remarks, &c.TargetDueDate, &c.PostedBy, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

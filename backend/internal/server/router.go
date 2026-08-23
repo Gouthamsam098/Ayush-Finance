@@ -15,6 +15,7 @@ import (
 	"github.com/anush-capitals/lms-backend/internal/feature/customer"
 	"github.com/anush-capitals/lms-backend/internal/feature/document"
 	"github.com/anush-capitals/lms-backend/internal/feature/expense"
+	"github.com/anush-capitals/lms-backend/internal/feature/investment"
 	"github.com/anush-capitals/lms-backend/internal/feature/loan"
 	"github.com/anush-capitals/lms-backend/internal/feature/user"
 	"github.com/anush-capitals/lms-backend/internal/httpx"
@@ -67,6 +68,12 @@ func NewRouter(deps Dependencies) http.Handler {
 	expenseRepo := expense.NewRepository(deps.Pool)
 	expenseService := expense.NewService(expenseRepo)
 	expenseHandler := expense.NewHandler(expenseService)
+
+	// Investor capital + the interest payouts it costs. Paying interest writes
+	// the payout and its expense in ONE transaction (see investment.Service).
+	investmentRepo := investment.NewRepository(deps.Pool)
+	investmentService := investment.NewService(investmentRepo)
+	investmentHandler := investment.NewHandler(investmentService)
 
 	userRepo := user.NewRepository(deps.Pool)
 	userService := user.NewService(userRepo, deps.Hasher)
@@ -122,6 +129,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			protected.With(perm("Collections")).Mount("/loans/{loanId}/collections", collectionHandler.LoanRoutes())
 			protected.With(perm("Collections")).Mount("/collections", collectionHandler.FlatRoutes())
 			protected.With(perm("Expenses")).Mount("/expenses", expenseHandler.Routes())
+			// Gated on Expenses: every interest payout IS an expense write, so
+			// anyone who may record investor interest already needs that right.
+			protected.With(perm("Expenses")).Mount("/investments", investmentHandler.Routes())
 			protected.Mount("/users", userHandler.Routes()) // admin-only, guarded in handler
 		})
 	})

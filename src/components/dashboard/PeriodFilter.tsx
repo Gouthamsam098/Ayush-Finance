@@ -6,11 +6,23 @@ import { cn } from '@/lib/utils';
 import { fmtDate, todayISO } from '@/lib/format';
 import { LiveClock } from '@/components/LiveClock';
 
-export type PeriodMode = 'day' | 'month';
+export type PeriodMode = 'day' | 'month' | 'range';
+
+/** Quick-range presets. The keys deliberately MATCH the charts' Range type
+ *  ('month' | '3m' | '6m' | '1y'), so picking one can drive the Cash Flow and
+ *  Loan Performance toggles to the same window — the whole dashboard then
+ *  describes one period, and the KPI totals equal the sum of the chart bars. */
+export type PeriodRangeKey = 'month' | '3m' | '6m' | '1y';
+export const RANGE_PRESETS: { key: PeriodRangeKey; chip: string; label: string; months: number }[] = [
+  { key: 'month', chip: 'This Month', label: 'This Month', months: 1 },
+  { key: '3m', chip: '3 Months', label: 'Last 3 Months', months: 3 },
+  { key: '6m', chip: '6 Months', label: 'Last 6 Months', months: 6 },
+  { key: '1y', chip: '1 Year', label: 'Last 1 Year', months: 12 },
+];
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS_HEADER = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-const POPUP_WIDTH = 304;
+const POPUP_WIDTH = 324; // four quick-range chips must fit on one row without wrapping
 const GAP = 10;
 const MARGIN = 12;
 
@@ -28,11 +40,13 @@ function monthLabel(iso: string) {
   return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
 }
 
-export function periodDisplayLabel(mode: PeriodMode, dateISO: string) {
+export function periodDisplayLabel(mode: PeriodMode, dateISO: string, rangeKey?: PeriodRangeKey) {
+  if (mode === 'range') return RANGE_PRESETS.find((p) => p.key === rangeKey)?.label ?? 'Range';
   return mode === 'day' ? fmtDate(dateISO) : monthLabel(dateISO);
 }
 
 export function isPeriodDefault(mode: PeriodMode, dateISO: string, today = todayISO()) {
+  if (mode === 'range') return false; // a range is always an explicit selection
   if (mode === 'day') return dateISO === today;
   return dateISO.slice(0, 7) === today.slice(0, 7);
 }
@@ -40,8 +54,11 @@ export function isPeriodDefault(mode: PeriodMode, dateISO: string, today = today
 interface PeriodFilterProps {
   mode: PeriodMode;
   dateISO: string;
+  /** Active quick-range preset (meaningful when mode === 'range'). */
+  rangeKey: PeriodRangeKey;
   onModeChange: (mode: PeriodMode) => void;
   onDateChange: (iso: string) => void;
+  onRangeSelect: (key: PeriodRangeKey) => void;
   onReset: () => void;
 }
 
@@ -49,7 +66,7 @@ interface PeriodFilterProps {
  * Premium day/month period control — calendar icon lives inside LiveClock.
  * Popup uses a light, soft palette.
  */
-export function PeriodFilter({ mode, dateISO, onModeChange, onDateChange, onReset }: PeriodFilterProps) {
+export function PeriodFilter({ mode, dateISO, rangeKey, onModeChange, onDateChange, onRangeSelect, onReset }: PeriodFilterProps) {
   const today = todayISO();
   const [ty, tm, td] = parseISO(today);
   const [sy, sm, sd] = parseISO(dateISO);
@@ -120,7 +137,14 @@ export function PeriodFilter({ mode, dateISO, onModeChange, onDateChange, onRese
   const selectDay = (day: number) => {
     const iso = toISO(viewYear, viewMonth, day);
     if (iso > today) return;
+    // Picking a concrete day always means day mode (also the path OUT of a range).
+    if (mode !== 'day') onModeChange('day');
     onDateChange(iso);
+    close();
+  };
+
+  const selectRange = (key: PeriodRangeKey) => {
+    onRangeSelect(key);
     close();
   };
 
@@ -136,7 +160,7 @@ export function PeriodFilter({ mode, dateISO, onModeChange, onDateChange, onRese
     else onDateChange(toISO(ty, tm, 1));
   };
 
-  const label = periodDisplayLabel(mode, dateISO);
+  const label = periodDisplayLabel(mode, dateISO, rangeKey);
 
   return (
     <div ref={containerRef} className="shrink-0">
@@ -158,7 +182,9 @@ export function PeriodFilter({ mode, dateISO, onModeChange, onDateChange, onRese
             exit={{ opacity: 0, y: -4, scale: 0.98 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             style={{ top: popupStyle.top, left: popupStyle.left, width: POPUP_WIDTH }}
-            className="fixed z-[300] overflow-hidden rounded-2xl border border-sky-200/70 bg-gradient-to-b from-white via-sky-50/40 to-white shadow-[0_24px_60px_-20px_rgba(56,119,210,.35),0_0_0_1px_rgba(255,255,255,.8)_inset] dark:border-white/[.1] dark:from-[#0f172a] dark:via-[#0f172a] dark:to-[#111827] dark:shadow-[0_24px_60px_-16px_rgba(0,0,0,.55)]"
+            /* FULLY OPAQUE surface: an alpha stop here let the charts underneath
+               bleed through the popup (bars/toggles visible through the panel). */
+            className="fixed z-[300] overflow-hidden rounded-2xl border border-sky-200/70 bg-white bg-gradient-to-b from-white via-sky-50 to-white shadow-[0_24px_60px_-20px_rgba(56,119,210,.35),0_0_0_1px_rgba(255,255,255,.8)_inset] dark:border-white/[.1] dark:bg-[#0f172a] dark:from-[#0f172a] dark:via-[#0f172a] dark:to-[#111827] dark:shadow-[0_24px_60px_-16px_rgba(0,0,0,.55)]"
           >
             {/* Light premium header */}
             <div className="relative overflow-hidden border-b border-sky-100/80 bg-gradient-to-r from-sky-50 via-indigo-50/70 to-sky-50 px-3.5 py-3 dark:border-white/[.06] dark:from-sky-500/10 dark:via-indigo-500/10 dark:to-transparent">
@@ -190,6 +216,32 @@ export function PeriodFilter({ mode, dateISO, onModeChange, onDateChange, onRese
               </div>
             </div>
 
+            {/* Quick ranges — one tap re-scopes the ENTIRE dashboard (KPIs +
+                both charts) to the same calendar-month window. */}
+            <div className="border-b border-sky-100/80 px-3 pb-2.5 pt-2.5 dark:border-white/[.06]">
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700/55 dark:text-sky-200/55">Quick ranges</div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {RANGE_PRESETS.map((p) => {
+                  const active = mode === 'range' && rangeKey === p.key;
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => selectRange(p.key)}
+                      className={cn(
+                        'whitespace-nowrap rounded-lg px-1 py-1.5 text-[10.5px] font-bold transition-colors',
+                        active
+                          ? 'bg-sky-500 text-white shadow-sm shadow-sky-500/30'
+                          : 'border border-sky-200/70 bg-white text-sky-800/80 hover:bg-sky-400/45 hover:text-sky-950 dark:border-white/[.08] dark:bg-white/[.05] dark:text-sky-200/80 dark:hover:bg-sky-400/25 dark:hover:text-sky-100',
+                      )}
+                    >
+                      {p.chip}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="p-3">
               <div className="mb-2.5 flex items-center justify-between gap-2">
                 <button
@@ -204,7 +256,7 @@ export function PeriodFilter({ mode, dateISO, onModeChange, onDateChange, onRese
                 >
                   <ChevronLeft size={16} />
                 </button>
-                {mode === 'day' ? (
+                {mode !== 'month' ? (
                   <div className="flex items-center gap-1.5">
                     <span className="text-[13px] font-bold text-ink">{MONTHS[viewMonth]}</span>
                     <select
@@ -239,7 +291,7 @@ export function PeriodFilter({ mode, dateISO, onModeChange, onDateChange, onRese
                 </button>
               </div>
 
-              {mode === 'day' ? (
+              {mode !== 'month' ? (
                 <>
                   <div className="mb-1 grid grid-cols-7 gap-0.5">
                     {DAYS_HEADER.map((d) => (

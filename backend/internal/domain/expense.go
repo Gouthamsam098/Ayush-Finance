@@ -13,10 +13,15 @@ const (
 	ExpensePersonal ExpenseCategory = "Personal"
 	ExpenseOffice   ExpenseCategory = "Office"
 	ExpenseSavings  ExpenseCategory = "Savings"
+	// ExpenseInvestorInterest is interest paid to investors who funded the book.
+	// Auto-posted by the Investments feature; kept as its own category so
+	// investor cost never mixes with office costs in expense reporting.
+	ExpenseInvestorInterest ExpenseCategory = "Investor Interest"
 )
 
 var validExpenseCategories = map[ExpenseCategory]bool{
 	ExpensePersonal: true, ExpenseOffice: true, ExpenseSavings: true,
+	ExpenseInvestorInterest: true,
 }
 
 // IsValidExpenseCategory reports whether c is an accepted expense category.

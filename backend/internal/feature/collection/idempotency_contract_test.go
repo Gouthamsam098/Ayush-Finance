@@ -73,7 +73,7 @@ func TestCreateTxShortCircuitsOnAReplayedIdempotencyKey(t *testing.T) {
 	// The replay check must happen BEFORE the INSERT, otherwise the retry
 	// duplicates the payment and only then discovers the conflict.
 	checkAt := strings.Index(src, "r.findByIdempotencyKey(ctx, tx, in.LoanID, idempotencyKey)")
-	insertAt := strings.Index(src, "INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, posted_by, posted_at, idempotency_key)")
+	insertAt := strings.Index(src, "INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, posted_at, idempotency_key)")
 	if checkAt < 0 {
 		t.Fatal("CreateTx must look up a prior payment by idempotency key")
 	}
