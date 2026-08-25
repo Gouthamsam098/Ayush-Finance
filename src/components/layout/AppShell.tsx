@@ -8,6 +8,7 @@ import { useData } from '@/mock/DataContext';
 import { todayISO } from '@/lib/format';
 import { withUiModuleAccess } from '@/lib/uiModuleAccess';
 import { cn } from '@/lib/utils';
+import { BrandLogo } from '@/components/LoginBrandLogo';
 import {
   LayoutDashboard, Users, FileText, HandCoins, Wallet, BarChart3, Landmark,
   FolderOpen, Settings, ChevronsLeft, LogOut, Moon, Sun,
@@ -52,7 +53,8 @@ export const useOpenSidebar = () => useContext(OpenSidebarCtx);
 
 export function AppShell() {
   const [collapsed, setCollapsed] = useState(false);
-  // Off-canvas drawer state for mobile/tablet (<lg). Desktop ignores this.
+  // Off-canvas drawer state for phone (<md). iPad portrait (820px) keeps the
+  // sidebar pinned so Investments and other pages get full tablet chrome.
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   const dispatch = useDispatch();
@@ -103,7 +105,7 @@ export function AppShell() {
       {/* Mobile/tablet overlay — tap to dismiss the off-canvas sidebar */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm md:hidden"
           onClick={() => setMobileOpen(false)}
           aria-hidden
         />
@@ -111,42 +113,29 @@ export function AppShell() {
       {/* ── Sidebar ─────────────────────────────────────────── */}
       <aside
         className={cn(
-          // Mobile/tablet: fixed off-canvas drawer that slides in over the content.
+          // Phone: fixed off-canvas drawer. md+ (iPad portrait/landscape): pinned sidebar.
           'fixed inset-y-0 left-0 z-50 flex w-[240px] flex-col overflow-hidden border-r border-slate-200 bg-white transition-transform duration-200 ease-[cubic-bezier(.4,0,.2,1)] dark:border-transparent dark:bg-[#0c1220]',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
-          // Desktop (lg+): static in-flow sidebar, width driven by collapse — unchanged.
-          'lg:static lg:z-auto lg:shrink-0 lg:translate-x-0 lg:transition-[width]',
-          collapsed ? 'lg:w-[72px]' : 'lg:w-[200px]',
+          'md:static md:z-auto md:shrink-0 md:translate-x-0 md:transition-[width]',
+          collapsed ? 'md:w-[72px]' : 'md:w-[200px]',
         )}
       >
         {/* Logo + collapse toggle */}
         <div className={cn(
-          'flex min-h-[58px] items-center gap-2.5 border-b border-slate-200 px-2.5 py-3 dark:border-white/[.07]',
-          collapsed && 'justify-center gap-1 px-1.5',
+          'flex border-b border-slate-200 dark:border-white/[.07]',
+          collapsed
+            ? 'flex-col items-center gap-1.5 px-1 py-2.5 md:min-h-[72px]'
+            : 'min-h-[58px] items-center gap-2 px-2 py-3',
         )}>
-          <div className="h-8 w-8 shrink-0 overflow-hidden rounded-[9px] shadow-sm shadow-[#2e0196]/25 ring-1 ring-black/5 dark:ring-white/15">
-            <img
-              src="/logo-mark.png"
-              alt="Anush Finserv"
-              className="h-full w-full object-cover"
-            />
-          </div>
-          {!collapsed && (
-            <div className="min-w-0 flex-1 overflow-hidden">
-              <div className="leading-none">
-                <img
-                  src="/anush-text.svg"
-                  alt="Anush Finserv"
-                  className="brightness-[0.2] dark:brightness-100"
-                  style={{ height: '28px', width: 'auto', objectFit: 'contain' }}
-                />
-              </div>
-            </div>
-          )}
+          <BrandLogo
+            variant="menu"
+            collapsed={collapsed}
+            className={cn(collapsed ? 'shrink-0' : 'min-w-0 flex-1')}
+          />
           <button
             onClick={() => setCollapsed((c) => !c)}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="hidden h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 hover:text-slate-600 lg:flex dark:border-white/10 dark:bg-white/[.04] dark:text-slate-500 dark:hover:text-slate-300"
+            className="hidden h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 hover:text-slate-600 md:flex dark:border-white/10 dark:bg-white/[.04] dark:text-slate-500 dark:hover:text-slate-300"
           >
             <ChevronsLeft size={14} className={cn('transition-transform duration-200', collapsed && 'rotate-180')} />
           </button>

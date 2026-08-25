@@ -411,7 +411,7 @@ export default function Investments() {
         actions={editable ? <HeaderPrimaryButton onClick={openCreate} icon={<Plus size={16} />}>Add Investor</HeaderPrimaryButton> : undefined}
       />
 
-      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5 md:gap-6 md:px-6 md:py-1">
         {/* ── Hero: the one number that matters (capital deployed) plus the
             cost of carrying it, on the brand gradient. */}
         {items.length > 0 && (
@@ -453,7 +453,7 @@ export default function Investments() {
         {/* KPI strip — figures that COMPLEMENT the hero (which already shows
             capital, monthly carry, due and paid), so nothing is stated twice. */}
         {items.length > 0 && (
-          <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2.5 md:gap-3 lg:grid-cols-4">
             <StatCard label="Investors" value={String(totals.investors)} accent="#6366f1" icon={<Landmark size={16} />} />
             <StatCard label="Annual interest cost" value={inrShort(totals.monthlyOutgo * 12)} accent="#f59e0b" icon={<TrendingDown size={16} />} />
             {totals.overdueCount > 0 ? (
@@ -477,7 +477,7 @@ export default function Investments() {
           className="anim-pop group relative w-full overflow-hidden rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 p-0 text-left shadow-card transition-all hover:-translate-y-0.5 hover:shadow-[0_16px_36px_-20px_rgba(16,185,129,.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 dark:border-emerald-500/20 dark:from-emerald-500/[.08] dark:via-surface dark:to-teal-500/[.05]"
         >
           <span aria-hidden className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-emerald-300/20 blur-3xl" />
-          <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+          <div className="relative flex flex-col gap-4 px-5 py-4 md:flex-row md:items-center md:justify-between">
             <div className="flex min-w-0 items-center gap-3.5">
               <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-sm">
                 <PiggyBank size={22} />
@@ -498,7 +498,7 @@ export default function Investments() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3 md:gap-4 md:justify-end">
               <div className="text-right">
                 <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted">From loans</div>
                 <div className="mt-0.5 font-display text-[15px] font-bold tabular-nums text-ink">{profitData.earningLoans}</div>
@@ -608,7 +608,7 @@ export default function Investments() {
               plain 8-column table flattened everything that matters (urgency,
               cadence, payout progress) into equal-weight text; cards give each
               investment a hierarchy and show its state at a glance. ── */}
-          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
             {rows.map((inv, idx) => (
               <InvestorCard
                 key={inv.id}
@@ -641,7 +641,7 @@ export default function Investments() {
       >
         <div className="space-y-4">
           {/* Headline equation, so the net figure is auditable at a glance */}
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
             {[
               { k: 'Interest earned', v: inr(profitData.earned), tone: 'text-emerald-600 dark:text-emerald-400' },
               { k: 'Expenses', v: inr(profitData.spent), tone: 'text-danger' },
@@ -664,8 +664,8 @@ export default function Investments() {
               <h4 className="text-[11px] font-bold uppercase tracking-wide text-muted">Profit earned from loans</h4>
               <span className="text-[11.5px] text-muted">{profitData.rows.length} {profitData.rows.length === 1 ? 'loan' : 'loans'}</span>
             </div>
-            <div className="max-h-64 overflow-auto rounded-xl border-[0.5px] border-slate-200/80 dark:border-white/[.08]">
-              <table className="w-full min-w-[520px] text-sm">
+            <div className="tablet-scroll max-h-64 overflow-auto rounded-xl border-[0.5px] border-slate-200/80 dark:border-white/[.08]">
+              <table className="w-full min-w-[480px] text-sm">
                 <thead>
                   <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
                     <th>Loan</th><th>Type</th><th className="text-right">Collected</th><th className="text-right">Profit</th><th>Status</th>
@@ -719,8 +719,8 @@ export default function Investments() {
                 ))}
               </div>
             )}
-            <div className="max-h-56 overflow-auto rounded-xl border-[0.5px] border-slate-200/80 dark:border-white/[.08]">
-              <table className="w-full min-w-[520px] text-sm">
+            <div className="tablet-scroll max-h-56 overflow-auto rounded-xl border-[0.5px] border-slate-200/80 dark:border-white/[.08]">
+              <table className="w-full min-w-[480px] text-sm">
                 <thead>
                   <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
                     <th>Date</th><th>Category</th><th>Name</th><th className="text-right">Amount</th>
@@ -781,7 +781,7 @@ export default function Investments() {
               <Input label="Mobile" placeholder="10-digit mobile" inputMode="numeric" value={form.mobile} onChange={(e) => set('mobile', e.target.value.replace(/\D/g, '').slice(0, 10))} error={errors.mobile} />
             </div>
             <Input label="Email" placeholder="Optional" value={form.email} onChange={(e) => set('email', e.target.value)} error={errors.email} />
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               <Input label="Investment amount *" placeholder="0" inputMode="numeric" value={form.principal} onChange={(e) => set('principal', e.target.value.replace(/[^0-9]/g, '').slice(0, 10))} error={errors.principal} />
               <Input label="Interest rate % *" placeholder="0" inputMode="decimal" value={form.rate} onChange={(e) => set('rate', e.target.value.replace(/[^0-9.]/g, '').slice(0, 6))} error={errors.rate} />
               <Select
@@ -794,7 +794,7 @@ export default function Investments() {
                 ]}
               />
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 min-w-0 lg:grid-cols-2">
               <Input label="Start date *" type="date" max={todayISO()} value={form.startDate} onChange={(e) => set('startDate', e.target.value)} error={errors.startDate} />
               <Input label="Notes" placeholder="Optional" value={form.notes} onChange={(e) => set('notes', e.target.value)} />
             </div>
@@ -834,15 +834,15 @@ export default function Investments() {
         xl
         title={liveDetail ? `Interest Ledger · ${liveDetail.code}` : ''}
         subtitle={liveDetail ? `${liveDetail.frequency === 'MONTHLY' ? 'Monthly' : 'Yearly'} Interest · ${liveDetail.rate}% per ${liveDetail.frequency === 'MONTHLY' ? 'month' : 'year'}` : ''}
-        footer={<>
+        footer={<div className="flex w-full flex-col-reverse gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:justify-end">
           {liveDetail && editable && liveDetail.status === 'ACTIVE' && (
             <>
               <Button variant="ghost" onClick={() => setConfirmDel(liveDetail)} title="Remove this investment"><Trash2 size={15} /> Delete</Button>
-              <Button variant="ghost" onClick={() => openEdit(liveDetail)} title="Edit investor details"><Pencil size={15} /> Edit</Button>
+              <Button variant="ghost" onClick={() => { setDetail(null); openEdit(liveDetail); }} title="Edit investor details"><Pencil size={15} /> Edit</Button>
             </>
           )}
           <Button onClick={() => setDetail(null)}>Close</Button>
-        </>}
+        </div>}
       >
         {liveDetail && (() => {
           const per = interestPerCycle(liveDetail);
@@ -975,18 +975,18 @@ export default function Investments() {
               )}
 
               {/* Context line + actions — same bar as the ledger */}
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                <div className="min-w-0 flex-1 basis-[260px] text-sm text-muted">
+              <div className="mb-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center md:justify-between">
+                <div className="min-w-0 flex-1 text-sm text-muted">
                   Interest payouts since {fmtDate(liveDetail.startDate)} · {cadenceWord} · capital stays until settled
                 </div>
                 {editable && liveDetail.status === 'ACTIVE' && (
-                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
                     {due > 0 && (
-                      <Button onClick={() => openPay(liveDetail)} className="!bg-warning-600 !px-3 !py-1.5 text-xs whitespace-nowrap transition-transform hover:scale-105 hover:!bg-warning-600/90" title={`Pay the interest owed to date (${inr(due)}) — posted to Expenses`}>
+                      <Button onClick={() => openPay(liveDetail)} className="w-full !bg-warning-600 !px-3 !py-2.5 text-xs whitespace-nowrap transition-transform hover:scale-[1.02] hover:!bg-warning-600/90 sm:w-auto" title={`Pay the interest owed to date (${inr(due)}) — posted to Expenses`}>
                         Pay Interest · {inr(due)}
                       </Button>
                     )}
-                    <Button onClick={() => setSettleFor(liveDetail)} className="!bg-emerald-600 !px-3 !py-1.5 text-xs whitespace-nowrap transition-transform hover:scale-105" title={`Return the capital (${inr(liveDetail.principal)}) and close this investment`}>
+                    <Button onClick={() => setSettleFor(liveDetail)} className="w-full !bg-emerald-600 !px-3 !py-2.5 text-xs whitespace-nowrap transition-transform hover:scale-[1.02] sm:w-auto" title={`Return the capital (${inr(liveDetail.principal)}) and close this investment`}>
                       Settle &amp; close · {inr(liveDetail.principal + due)}
                     </Button>
                   </div>
@@ -995,8 +995,8 @@ export default function Investments() {
 
               {/* Interest cycle ledger — one row per cycle */}
               <div className="overflow-hidden rounded-xl border-[0.5px] border-slate-200/80 dark:border-white/[.07]">
-                <div className="max-h-96 overflow-auto">
-                  <table className="w-full min-w-[620px] text-sm">
+                <div className="tablet-scroll max-h-96 overflow-auto">
+                  <table className="w-full min-w-[560px] text-sm">
                     <thead>
                       <tr className="text-left text-[11px] font-bold uppercase tracking-[0.06em] text-white [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-gradient-to-r [&>th]:from-[#022999] [&>th]:via-[#0538cc] [&>th]:to-[#0AA8F8] [&>th]:px-3.5 [&>th]:py-3">
                         <th>{liveDetail.frequency === 'MONTHLY' ? 'Month' : 'Year'}</th>
@@ -1060,8 +1060,8 @@ export default function Investments() {
                   <h4 className="text-[11px] font-bold uppercase tracking-wide text-muted">Payout history</h4>
                   <span className="text-[11.5px] text-muted">posted to Expenses · {INVESTOR_EXPENSE_CATEGORY}</span>
                 </div>
-                <div className="max-h-56 overflow-auto rounded-xl border border-slate-100 dark:border-white/[.06]">
-                  <table className="w-full min-w-[420px] text-sm">
+                <div className="tablet-scroll max-h-56 overflow-auto rounded-xl border border-slate-100 dark:border-white/[.06]">
+                  <table className="w-full min-w-[380px] text-sm">
                     <thead>
                       <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
                         <th>Date</th><th>Amount</th><th>Payment Mode</th><th>Remarks</th>
@@ -1175,7 +1175,7 @@ export default function Investments() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 min-w-0 lg:grid-cols-2">
               <Input
                 label="Date" type="date" value={payDate}
                 min={payLive.startDate} max={todayISO()}
@@ -1480,7 +1480,7 @@ function InvestorCard({ inv, payouts, onOpen, onPay, onEdit, delay = 0 }: {
       )}>
         <button
           onClick={onOpen}
-          className="flex w-full items-center justify-center gap-1.5 py-3 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09]"
+          className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-1.5 py-3 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09]"
         >
           <ScrollText size={15} /> Details
         </button>
@@ -1488,7 +1488,7 @@ function InvestorCard({ inv, payouts, onOpen, onPay, onEdit, delay = 0 }: {
           <button
             onClick={onEdit}
             title="Edit investor details"
-            className="flex w-full items-center justify-center gap-1.5 border-l border-slate-100 py-3 text-[13px] font-semibold text-ink/70 transition-colors hover:bg-slate-50 hover:text-ink dark:border-white/[.06] dark:hover:bg-white/[.04]"
+            className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-1.5 border-l border-slate-100 py-3 text-[13px] font-semibold text-ink/70 transition-colors hover:bg-slate-50 hover:text-ink dark:border-white/[.06] dark:hover:bg-white/[.04]"
           >
             <Pencil size={14} /> Edit
           </button>
@@ -1497,7 +1497,7 @@ function InvestorCard({ inv, payouts, onOpen, onPay, onEdit, delay = 0 }: {
           <button
             onClick={onPay}
             className={cn(
-              'flex w-full items-center justify-center gap-1.5 border-l border-slate-100 py-3 text-[13px] font-semibold transition-colors dark:border-white/[.06]',
+              'flex min-h-11 w-full touch-manipulation items-center justify-center gap-1.5 border-l border-slate-100 py-3 text-[13px] font-semibold transition-colors dark:border-white/[.06]',
               due > 0
                 ? 'bg-success/[.06] text-success hover:bg-success/[.12]'
                 : 'text-success hover:bg-success/[.06]',

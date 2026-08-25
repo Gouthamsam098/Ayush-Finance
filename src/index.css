@@ -349,6 +349,51 @@ button, a, input, select, textarea {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* Login card — animated shimmer frames around AF mark + wordmark */
+.login-logo-shimmer {
+  background: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.14),
+    rgba(10, 168, 248, 0.95),
+    rgba(255, 255, 255, 0.42),
+    rgba(24, 139, 252, 0.8),
+    rgba(255, 255, 255, 0.14)
+  );
+  background-size: 280% 280%;
+  animation: shimmer-border 3.8s ease-in-out infinite;
+  box-shadow: 0 0 20px rgba(10, 168, 248, 0.14);
+}
+.login-logo-divider {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    rgba(10, 168, 248, 0.95),
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  background-size: 100% 220%;
+  animation: shimmer-border 3.2s ease-in-out infinite;
+}
+
+/* Sidebar menu lockup — theme-aware outer glow on light / dark shell */
+.sidebar-brand-logo .login-logo-shimmer-menu {
+  box-shadow:
+    0 2px 10px rgba(2, 41, 153, 0.14),
+    0 0 0 1px rgba(2, 41, 153, 0.06);
+}
+.dark .sidebar-brand-logo .login-logo-shimmer-menu {
+  box-shadow:
+    0 2px 14px rgba(10, 168, 248, 0.2),
+    0 0 0 1px rgba(24, 139, 252, 0.12);
+}
+
+.tablet-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 @keyframes pop-in {
   0%   { opacity: 0; transform: perspective(900px) translateY(28px) rotateX(12deg) scale(.94); }
   100% { opacity: 1; transform: perspective(900px) translateY(0) rotateX(0) scale(1); }

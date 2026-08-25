@@ -42,7 +42,7 @@ export function HeroHeader({ name, dateLabel, kpis, onQuickAction }: HeroHeaderP
             <button
               onClick={openSidebar}
               aria-label="Open menu"
-              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-slate-200 bg-white text-slate-600 lg:hidden dark:border-white/15 dark:bg-white/[.08] dark:text-slate-300"
+              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-slate-200 bg-white text-slate-600 md:hidden dark:border-white/15 dark:bg-white/[.08] dark:text-slate-300"
             >
               <Menu size={18} />
             </button>

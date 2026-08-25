@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useId, useRef } from 'react';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
 /**
@@ -6,6 +6,9 @@ import { X } from 'lucide-react';
  * responds to Escape. Without this, a nested dialog (the Add-collection form
  * inside LedgerDialog) and its parent both had listeners on `document`, so one
  * Escape closed BOTH — losing a half-entered payment and the ledger behind it.
+ *
+ * Stack depth also drives z-index so a child dialog (e.g. Edit from the
+ * investment detail ledger) always paints above its parent.
  */
 const escStack: string[] = [];
 
@@ -18,11 +21,26 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const id = useId();
+  const [stackLayer, setStackLayer] = useState(0);
+
+  // Register stack position before paint so nested dialogs stack above parents.
+  useLayoutEffect(() => {
+    if (!open) {
+      setStackLayer(0);
+      return;
+    }
+    escStack.push(id);
+    setStackLayer(escStack.length);
+    return () => {
+      const i = escStack.lastIndexOf(id);
+      if (i !== -1) escStack.splice(i, 1);
+      setStackLayer(0);
+    };
+  }, [open, id]);
 
   // Escape — only for the topmost dialog (see escStack).
   useEffect(() => {
     if (!open) return;
-    escStack.push(id);
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (escStack[escStack.length - 1] !== id) return; // a child dialog owns it
@@ -32,8 +50,6 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
     document.addEventListener('keydown', onEsc);
     return () => {
       document.removeEventListener('keydown', onEsc);
-      const i = escStack.lastIndexOf(id);
-      if (i !== -1) escStack.splice(i, 1);
     };
   }, [open, onClose, id]);
 
@@ -85,8 +101,13 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
   }, [open, id]);
 
   if (!open) return null;
+  const zIndex = stackLayer > 0 ? 99 + stackLayer : 100;
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 md:p-6" onClick={onClose}>
+    <div
+      className="fixed inset-0 flex items-center justify-center p-3 sm:p-4 md:p-6"
+      style={{ zIndex }}
+      onClick={onClose}
+    >
       <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-md" />
       <div
         ref={panelRef}

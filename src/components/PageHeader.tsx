@@ -11,7 +11,7 @@ export function PageHeader({ title, subtitle, action }: { title: ReactNode; subt
         <button
           onClick={openSidebar}
           aria-label="Open menu"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 lg:hidden dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 md:hidden dark:border-white/10 dark:bg-white/5 dark:text-slate-300"
         >
           <Menu size={18} />
         </button>
