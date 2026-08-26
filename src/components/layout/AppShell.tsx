@@ -8,6 +8,7 @@ import { useData } from '@/mock/DataContext';
 import { todayISO } from '@/lib/format';
 import { withUiModuleAccess } from '@/lib/uiModuleAccess';
 import { cn } from '@/lib/utils';
+import BrandLogo, { BrandMark } from '@/components/BrandLogo';
 import {
   LayoutDashboard, Users, FileText, HandCoins, Wallet, BarChart3, Landmark,
   FolderOpen, Settings, ChevronsLeft, LogOut, Moon, Sun,
@@ -119,28 +120,25 @@ export function AppShell() {
           collapsed ? 'lg:w-[72px]' : 'lg:w-[200px]',
         )}
       >
-        {/* Logo + collapse toggle */}
+        {/* Logo + collapse toggle. Collapsed the rail is only 72px, so the gap
+            and side padding tighten to fit the mark and the toggle side by side
+            (6 + 24 + 4 + 22 + 6 = 62px). The previous 32px mark at gap-2.5
+            overflowed, which is what made the toggle overlap the logo. Keeping
+            them in a ROW (not stacked) holds the header at the same height as
+            when expanded, so the nav below doesn't jump on collapse. */}
         <div className={cn(
           'flex min-h-[58px] items-center gap-2.5 border-b border-slate-200 px-2.5 py-3 dark:border-white/[.07]',
           collapsed && 'justify-center gap-1 px-1.5',
         )}>
-          <div className="h-8 w-8 shrink-0 overflow-hidden rounded-[9px] shadow-sm shadow-[#2e0196]/25 ring-1 ring-black/5 dark:ring-white/15">
-            <img
-              src="/logo-mark.png"
-              alt="Anush Finserv"
-              className="h-full w-full object-cover"
-            />
-          </div>
-          {!collapsed && (
+          {/* Brand: the full lockup when there is room, the monogram alone when
+              collapsed. Both are the official artwork and follow the theme —
+              brand blue on light, white on dark (previously a purple-plated
+              PNG icon that was off-brand in both). */}
+          {collapsed ? (
+            <BrandMark className="h-6 w-6" />
+          ) : (
             <div className="min-w-0 flex-1 overflow-hidden">
-              <div className="leading-none">
-                <img
-                  src="/anush-text.svg"
-                  alt="Anush Finserv"
-                  className="brightness-[0.2] dark:brightness-100"
-                  style={{ height: '28px', width: 'auto', objectFit: 'contain' }}
-                />
-              </div>
+              <BrandLogo className="h-8" />
             </div>
           )}
           <button
@@ -217,7 +215,13 @@ export function AppShell() {
 
         {/* Footer — logged-in user + logout */}
         <div className="border-t border-slate-200 px-[7px] py-2 dark:border-white/[.07]">
-          <div className="flex items-center gap-2 rounded-lg px-[3px] py-[5px]">
+          {/* Collapsed: centre the avatar on the rail so it lines up with the
+              nav icons and the theme/logout buttons, which use this same
+              `justify-center` + horizontal-padding pattern. */}
+          <div className={cn(
+            'flex items-center gap-2 rounded-lg px-[3px] py-[5px]',
+            collapsed && 'justify-center gap-0 px-[7px]',
+          )}>
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[10px] font-semibold text-white" title={displayName}>
               {initials}
             </div>

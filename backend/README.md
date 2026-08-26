@@ -60,7 +60,7 @@ make db-up
 
 # 3. Create the first admin (credentials via env, never hardcoded)
 ADMIN_EMAIL=admin@anushcapitals.com \
-ADMIN_PASSWORD='ChangeMe_Str0ng!' \
+ADMIN_PASSWORD='<choose-a-strong-password-min-12-chars>' \
 ADMIN_FULL_NAME='Admin User' \
 make seed-admin
 
@@ -77,7 +77,7 @@ curl localhost:4000/health
 # Login → returns access_token + refresh_token
 curl -X POST localhost:4000/api/v1/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@anushcapitals.com","password":"ChangeMe_Str0ng!"}'
+  -d '{"email":"admin@anushcapitals.com","password":"<your-admin-password>"}'
 
 # Authenticated request
 curl localhost:4000/api/v1/me -H "Authorization: Bearer <access_token>"

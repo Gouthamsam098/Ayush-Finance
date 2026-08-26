@@ -39,6 +39,13 @@ type Config struct {
 
 	BcryptCost              int
 	AuthRateLimitPerMinute  int
+	// APIRateLimitPerMinute bounds AUTHENTICATED traffic per client IP. It is a
+	// separate, far larger budget than the auth limit: login is a handful of
+	// attempts, but one dashboard render legitimately fires dozens of API calls,
+	// and operators on a shared office IP are counted together. It exists to cap
+	// scraping/enumeration (notably KYC document downloads), not to police
+	// ordinary use. 0 disables it.
+	APIRateLimitPerMinute int
 }
 
 type DatabaseConfig struct {
@@ -96,6 +103,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if cfg.AuthRateLimitPerMinute, err = getEnvInt("AUTH_RATE_LIMIT_PER_MINUTE", 10); err != nil {
+		return nil, err
+	}
+	// 600/min ≈ 10 req/sec sustained per IP. Measured page loads peak in the
+	// low dozens of requests, so this leaves ample headroom for a whole office
+	// behind one NAT address while still bounding a scripted scrape.
+	if cfg.APIRateLimitPerMinute, err = getEnvInt("API_RATE_LIMIT_PER_MINUTE", 600); err != nil {
 		return nil, err
 	}
 

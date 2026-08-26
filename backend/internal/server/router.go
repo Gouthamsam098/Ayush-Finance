@@ -113,6 +113,13 @@ func NewRouter(deps Dependencies) http.Handler {
 
 		// Everything below requires a valid access token.
 		api.Group(func(protected chi.Router) {
+			// Authenticated traffic is throttled too, on its own much larger
+			// budget (API_RATE_LIMIT_PER_MINUTE). Authentication alone did not
+			// bound volume: a single valid token could enumerate customers or
+			// pull every KYC document as fast as the network allowed. Applied
+			// BEFORE Authenticate so that flood traffic is rejected without
+			// spending a token verification on each request.
+			protected.Use(httpx.RateLimit(deps.Config.APIRateLimitPerMinute))
 			protected.Use(httpx.Authenticate(deps.Tokens))
 			// Protected auth routes live under /me; the public /auth mount
 			// (login, refresh) owns the /auth path already.

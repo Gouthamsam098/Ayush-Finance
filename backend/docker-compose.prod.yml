@@ -86,6 +86,7 @@ services:
 
       BCRYPT_COST: ${BCRYPT_COST:-12}
       AUTH_RATE_LIMIT_PER_MINUTE: ${AUTH_RATE_LIMIT_PER_MINUTE:-10}
+      API_RATE_LIMIT_PER_MINUTE: ${API_RATE_LIMIT_PER_MINUTE:-600}
 
       # Bootstrap admin. Set these for the FIRST boot only, then remove them
       # from the env file and rotate the password from inside the app.

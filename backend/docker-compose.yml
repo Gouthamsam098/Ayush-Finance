@@ -56,9 +56,14 @@ services:
       JWT_ISSUER: anush-lms
       BCRYPT_COST: "12"
       AUTH_RATE_LIMIT_PER_MINUTE: "10"
+      API_RATE_LIMIT_PER_MINUTE: "600"
       # Bootstrap admin (change before any real deployment).
       ADMIN_EMAIL: admin@anushcapitals.com
-      ADMIN_PASSWORD: ChangeMe_Str0ng!
+      # Local dev only. NOT a real credential: the live admin password was
+      # rotated out of this file because a secret committed to git is
+      # compromised. Override per-machine via the shell/.env, never by
+      # writing a working password back into this tracked file.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-CHANGE_ME_local_dev_only}
       ADMIN_FULL_NAME: Admin User
     volumes:
       - backend_secrets:/app/secrets
