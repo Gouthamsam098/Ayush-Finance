@@ -834,15 +834,7 @@ export default function Investments() {
         xl
         title={liveDetail ? `Interest Ledger · ${liveDetail.code}` : ''}
         subtitle={liveDetail ? `${liveDetail.frequency === 'MONTHLY' ? 'Monthly' : 'Yearly'} Interest · ${liveDetail.rate}% per ${liveDetail.frequency === 'MONTHLY' ? 'month' : 'year'}` : ''}
-        footer={<>
-          {liveDetail && editable && liveDetail.status === 'ACTIVE' && (
-            <>
-              <Button variant="ghost" onClick={() => setConfirmDel(liveDetail)} title="Remove this investment"><Trash2 size={15} /> Delete</Button>
-              <Button variant="ghost" onClick={() => openEdit(liveDetail)} title="Edit investor details"><Pencil size={15} /> Edit</Button>
-            </>
-          )}
-          <Button onClick={() => setDetail(null)}>Close</Button>
-        </>}
+        footer={<Button onClick={() => setDetail(null)}>Close</Button>}
       >
         {liveDetail && (() => {
           const per = interestPerCycle(liveDetail);

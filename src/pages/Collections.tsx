@@ -226,7 +226,7 @@ export default function Collections() {
               const balance = d.outstandingFor(l); // Principal − Collected, for Daily Collection
               return (
                 <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
-                  <NameTd name={cust?.name ?? '—'} />
+                  <NameTd name={cust?.name ?? '—'} onOpen={() => setLedger(l)} />
                   <Td><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></Td>
                   <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
                   <Td>{fmtDate(l.loanDate)}</Td>
@@ -250,7 +250,7 @@ export default function Collections() {
               const totalDue = d.totalDueForMonthly(l);
               return (
                 <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
-                  <NameTd name={cust?.name ?? '—'} />
+                  <NameTd name={cust?.name ?? '—'} onOpen={() => setLedger(l)} />
                   <Td>{inr(l.principal)}</Td>
                   <Td>{inr(l.dailyAmount ?? 0)}</Td>
                   <Td className="font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</Td>
@@ -273,7 +273,7 @@ export default function Collections() {
               const due = d.totalDueForInterestOnly(l);
               return (
                 <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
-                  <NameTd name={cust?.name ?? '—'} />
+                  <NameTd name={cust?.name ?? '—'} onOpen={() => setLedger(l)} />
                   <Td>{inr(l.principal)}</Td>
                   <Td>{inr(l.dailyAmount ?? 0)}</Td>
                   <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
@@ -305,7 +305,7 @@ export default function Collections() {
               const dueToday = !!nd && nd === today;
               return (
                 <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
-                  <NameTd name={cust?.name ?? '—'} />
+                  <NameTd name={cust?.name ?? '—'} onOpen={() => setLedger(l)} />
                   <Td>
                     {nd ? (
                       <span className="inline-flex items-center gap-2 whitespace-nowrap">
@@ -424,11 +424,22 @@ function Td({ children, className = '' }: { children: ReactNode; className?: str
 }
 
 /** The customer cell of a clickable row — styled as the primary affordance so
- *  it is visibly the thing to click. */
-function NameTd({ name }: { name: string }) {
+ *  it is visibly the thing to click. Uses a real <button> so taps register on
+ *  mobile Safari (clicks on <tr> alone are unreliable on iOS). */
+function NameTd({ name, onOpen }: { name: string; onOpen?: () => void }) {
   return (
     <td className="whitespace-nowrap px-5 py-4">
-      <span className="font-semibold text-primary underline-offset-2 group-hover:underline">{name}</span>
+      {onOpen ? (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+          className="touch-manipulation font-semibold text-primary underline-offset-2 hover:underline active:underline"
+        >
+          {name}
+        </button>
+      ) : (
+        <span className="font-semibold text-primary underline-offset-2 group-hover:underline">{name}</span>
+      )}
     </td>
   );
 }
@@ -461,17 +472,22 @@ function CollectionCard({ loan, d, onView }: { loan: Loan; d: ReturnType<typeof 
   const per = loan.type === 'FLEXIBLE' ? '' : isDailyLoan(loan.type) || loan.type === 'DAILY_INTEREST' ? '/day' : '/mo';
   return (
     <div className="anim-pop overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-card dark:border-white/[.07] dark:bg-surface">
-      {/* Header — customer + type */}
-      <div className="flex items-center gap-3 px-4 pt-4">
+      {/* Header — customer name opens the ledger (same as desktop NameTd) */}
+      <button
+        type="button"
+        onClick={onView}
+        aria-label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${loan.loanNumber}`}
+        className="flex w-full touch-manipulation items-center gap-3 px-4 pt-4 text-left transition-colors hover:bg-primary/[.04] active:bg-primary/[.07]"
+      >
         <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-blue-700 to-blue-500 text-sm font-bold text-white shadow-sm">
           {initials(cust?.name ?? '—')}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] font-semibold text-ink">{cust?.name ?? '—'}</div>
+          <div className="truncate text-[15px] font-semibold text-primary underline-offset-2 active:underline">{cust?.name ?? '—'}</div>
           <div className="mt-0.5 font-mono text-xs text-muted">{loan.loanNumber}</div>
         </div>
         <Badge tone="info">{LOAN_LABELS[loan.type]}</Badge>
-      </div>
+      </button>
 
       {/* Progress — only for loans with a defined term */}
       {hasTerm && (
@@ -511,8 +527,9 @@ function CollectionCard({ loan, d, onView }: { loan: Loan; d: ReturnType<typeof 
 
       {/* CTA — touch-friendly (48px) */}
       <button
+        type="button"
         onClick={onView}
-        className="flex w-full items-center justify-center gap-2 border-t border-slate-100 py-3.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09] dark:border-white/[.06]"
+        className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-2 border-t border-slate-100 py-3.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09] dark:border-white/[.06]"
       >
         <ScrollText size={16} /> View Report <ChevronRight size={15} className="opacity-60" />
       </button>
