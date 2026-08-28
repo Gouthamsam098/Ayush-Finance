@@ -11,7 +11,7 @@ import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader'
 import { usePermissions } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
 import { computeFunds, interestRealised, cashDisbursedFor } from '@/lib/funds';
-import { inr, inrShort, fmtDate, todayISO, addDays, initials, DAILY_TERM } from '@/lib/format';
+import { inr, inrShort, fmtDate, todayISO, addDays, addMonths, initials, DAILY_TERM } from '@/lib/format';
 import { emptyNum, matchNum, numActive, type NumFilter } from '@/lib/customerFilters';
 import { FilterCard, SegGroup, Seg, NumFilterRow, MatchPreview } from '@/components/ui/filter-kit';
 import { StatCard } from '@/components/ui/stat-card';
@@ -318,12 +318,11 @@ export default function Loans() {
       : 0;
     const numDays = term;
 
-    // First due + maturity. Collection starts the DAY AFTER disbursement, so
-    // with `term` instalments the last one falls on start + term × cadence.
-    //  • Daily Collection: 1st = +1 day, last (100th) = start + 100 days.
-    //  • EMI: 1st = +30 days, last (nth) = start + term × 30 days.
-    //  • Flexible: single cycle ends at start + term days.
-    const firstDue = addDays(loanDate, cadenceDays); // daily +1, monthly +30, Flexible +N, EMI +30
+    // First due + maturity. Mirrors DataContext.nextDueFor / loanSchedule:
+    // monthly cadence = same calendar day next month (not +30 days).
+    const firstDue = type === 'FLEXIBLE' ? addDays(loanDate, cadenceDays)
+      : type === 'MONTHLY_INTEREST' || monthlyMode || emi ? addMonths(loanDate, 1, 0)
+      : addDays(loanDate, cadenceDays === 1 ? 1 : cadenceDays);
     const maturity = instalment && term > 0 ? addDays(loanDate, term * cadenceDays)  // daily: +term days
       : emi && term > 0 ? addDays(loanDate, term * 30)                  // EMI: +term months
       : null; // interest-only (incl. Flexible) → open-ended
@@ -501,7 +500,8 @@ export default function Loans() {
       dailyAmount,
       numDays: term,
       nextDueDate: form.type === 'FLEXIBLE' ? addDays(form.loanDate, monthsNum)
-        : instalment || interestOnly || emi ? addDays(form.loanDate, cadenceDays) : undefined,
+        : form.type === 'MONTHLY_INTEREST' || monthlyMode || emi ? addMonths(form.loanDate, 1, 0)
+        : instalment || interestOnly ? addDays(form.loanDate, cadenceDays === 1 ? 1 : cadenceDays) : undefined,
       // Plates are stored uppercase (input uppercases live; trim+uppercase here
       // also normalises pre-existing lowercase records on their next edit).
       vehicleNumber: form.type === 'VEHICLE' ? form.vehicleNumber.trim().toUpperCase() : undefined,

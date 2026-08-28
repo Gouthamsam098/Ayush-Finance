@@ -12,4 +12,6 @@ export const config = {
   useApi: import.meta.env.VITE_USE_API === 'true',
   /** Base path for API calls; the Vite dev server proxies /api -> :4000. */
   apiBaseUrl: (import.meta.env.VITE_API_BASE_URL as string) || '/api/v1',
+  /** Optional public URL for statement links in WhatsApp payment requests. */
+  statementPortalUrl: (import.meta.env.VITE_STATEMENT_PORTAL_URL as string) || '',
 };

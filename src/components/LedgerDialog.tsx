@@ -13,6 +13,8 @@ import { usePermissions } from '@/lib/permissions';
 // pdfReport (jsPDF) is imported dynamically inside generateReport — see there.
 import { buildSchedule } from '@/lib/loanSchedule';
 import { inr, fmtDate, todayISO, initials, isoLocal, addDays, addMonths, DAILY_TERM } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { whatsappHref, paymentRequestMessage, resolveCustomerMobile } from '@/lib/whatsapp';
 import { Plus, Pencil, Phone, FileDown, Share2, LayoutList, Table2, IndianRupee, Banknote, Smartphone, Landmark, ScrollText, Calendar, CheckCircle2, Wallet } from 'lucide-react';
 
 /** Icon per payment mode for the segmented picker. */
@@ -349,6 +351,16 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
         ? Math.min(d.collections.filter((c) => c.loanId === loan.id).length, progressTotal)
         : Math.min(rows.filter((r) => r.status === 'Paid').length, progressTotal);
   const outstanding = d.outstandingFor(loan); // for Monthly Interest this already includes the shortfall (Principal + Total Due)
+  const customerMobile = resolveCustomerMobile(loan, cust);
+  const shareWaHref = useMemo(
+    () => (customerMobile
+      ? whatsappHref(customerMobile, paymentRequestMessage({
+        customerName: cust?.name ?? 'Customer',
+        amountLabel: inr(outstanding),
+      }))
+      : null),
+    [customerMobile, outstanding, cust?.name],
+  );
   const totalDue = Math.max(0, elapsedSteps * instalment - collected); // shortfall vs what should've been collected by today
   const dueDays = rows.filter((r) => r.date <= todayStr && r.status !== 'Paid').length; // elapsed slots not yet fully paid
 
@@ -650,16 +662,15 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     { k: 'Pending', v: inr(pending), sub: 'Principal − collected', hi: true },
   ];
 
-  /** Build the statement PDF, then either save it or open the share sheet.
-   *  Both actions produce the SAME document — only the delivery differs. */
-  const generateReport = async (action: 'download' | 'share' = 'download') => {
+  /** Build the statement PDF and download it. */
+  const generateReport = async () => {
     // jsPDF + jspdf-autotable are ~415 KB and are only needed when the user
     // actually asks for a PDF, so they are fetched on demand instead of being
     // bundled into the initial download.
     //
     // Every download matches the on-screen Statement tab (Payment Schedule),
     // for all loan types — not the operational ledger table.
-    const { buildLedgerReportPDF, downloadPDF, sharePDF, fileNamePart } = await import('@/lib/pdfReport');
+    const { buildLedgerReportPDF, downloadPDF, fileNamePart } = await import('@/lib/pdfReport');
     const loanColls = d.collections.filter((c) => c.loanId === loan.id);
     const lastPay = loanColls.length
       ? loanColls.reduce((a, b) => (b.id > a.id ? b : a))
@@ -741,13 +752,6 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     // searches by borrower; loan number + date keep it unique.
     const who = fileNamePart(cust?.name ?? '');
     const filename = `${who ? `${who}-` : ''}Statement-${loan.loanNumber}-${todayISO()}.pdf`;
-    if (action === 'share') {
-      const result = await sharePDF(doc, filename);
-      toast(result === 'shared' ? 'Statement shared'
-        : result === 'cancelled' ? 'Sharing cancelled'
-          : 'Sharing unavailable — statement downloaded instead');
-      return;
-    }
     downloadPDF(doc, filename);
     toast('Statement downloaded');
   };
@@ -755,8 +759,29 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
   return (
     <Dialog open onClose={onClose} title={`${statementOnly && !isSimple ? 'Loan Statement' : 'Collection Ledger'} · ${loan.loanNumber}`} subtitle={isSimple ? `${LOAN_LABELS[loan.type]} · Payment history` : `${LOAN_LABELS[loan.type]} · ${totalTerm} ${isMonthly ? 'months' : 'days'}`} xl
       footer={<>
-        <Button variant="ghost" onClick={() => generateReport('share')} title="Send the statement to the customer (WhatsApp, email, …)"><Share2 size={15} /> Share</Button>
-        <Button variant="ghost" onClick={() => generateReport('download')} title="Download the statement as a PDF"><FileDown size={15} /> Generate Statement</Button>
+        {shareWaHref ? (
+          <a
+            href={shareWaHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Send payment request via WhatsApp to ${customerMobile}`}
+            className={cn(
+              'inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold tracking-tight',
+              'text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700/80 dark:text-slate-300 dark:hover:bg-white/[.06]',
+            )}
+          >
+            <Share2 size={15} /> Share
+          </a>
+        ) : (
+          <Button
+            variant="ghost"
+            onClick={() => toast('No valid mobile number for this customer', 'error')}
+            title="No mobile on file"
+          >
+            <Share2 size={15} /> Share
+          </Button>
+        )}
+        <Button variant="ghost" onClick={() => generateReport()} title="Download the statement as a PDF"><FileDown size={15} /> Generate Statement</Button>
         <Button onClick={onClose}>Close</Button>
       </>}>
       {/* Customer information */}
@@ -765,7 +790,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-blue-400 to-primary text-sm font-bold text-white">{initials(cust?.name ?? '—')}</div>
           <div>
             <div className="font-display text-base font-bold">{cust?.name ?? '—'}</div>
-            <div className="flex items-center gap-1.5 text-xs text-muted"><Phone size={12} /> {loan.contact || cust?.mobile || '—'}</div>
+            <div className="flex items-center gap-1.5 text-xs text-muted"><Phone size={12} /> {customerMobile || '—'}</div>
           </div>
         </div>
         <div className="text-xs text-muted">Loan date: <span className="font-semibold text-slate-600 dark:text-slate-300">{fmtDate(loan.loanDate)}</span></div>

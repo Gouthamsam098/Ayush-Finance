@@ -4,6 +4,7 @@ import {
   useData, LOAN_LABELS, isDailyLoan, behavesInterestOnly, type Loan,
 } from '@/mock/DataContext';
 import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
+import { whatsappHref } from '@/lib/whatsapp';
 import { usePermissions } from '@/lib/permissions';
 import { useOpenSidebar } from '@/components/layout/AppShell';
 import {
@@ -32,24 +33,6 @@ function telHref(raw: string): string | null {
   const digits = raw.replace(/\D/g, '');
   if (digits.length < 10) return null;
   return `tel:${digits}`;
-}
-
-/**
- * Normalise an Indian mobile to E.164 digits without '+' for WhatsApp (wa.me).
- * Works on phone/tablet (opens WhatsApp app) and desktop (app or WhatsApp Web).
- */
-function whatsappDigits(raw: string): string | null {
-  let digits = raw.replace(/\D/g, '');
-  if (digits.length < 10) return null;
-  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
-  if (digits.length === 10) digits = `91${digits}`;
-  return digits;
-}
-
-function whatsappHref(raw: string, message: string): string | null {
-  const digits = whatsappDigits(raw);
-  if (!digits) return null;
-  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }
 
 /**
