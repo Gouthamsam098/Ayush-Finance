@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useData, LOAN_LABELS, isDailyLoan, isEmiLoan, isInstalmentLoan, isInterestOnly, emiFor, upfrontDeduction, DAILY_COLLECTION_RETAINED_MONTHS, type Loan, type LoanType, type RepaymentMode } from '@/mock/DataContext';
+import { useData, LOAN_LABELS, isDailyLoan, isEmiLoan, isInstalmentLoan, isInterestOnly, behavesInterestOnly, emiFor, upfrontDeduction, DAILY_COLLECTION_RETAINED_MONTHS, type Loan, type LoanType, type RepaymentMode } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
@@ -122,6 +122,14 @@ function validateLoanForm(f: LoanForm): LoanErrors {
   else if (!isIntStr(f.principal)) e.principal = 'Enter a whole rupee amount';
   else if (P < MIN_PRINCIPAL) e.principal = `Minimum ${inr(MIN_PRINCIPAL)}`;
   else if (P > MAX_PRINCIPAL) e.principal = `Cannot exceed ${inrShort(MAX_PRINCIPAL)}`;
+  // Daily Collection splits the principal into exactly DAILY_TERM (100) equal
+  // instalments (daily = principal / 100). Money is stored in whole rupees, so a
+  // principal that does not divide evenly rounds the instalment UP and
+  // over-collects across the term — ₹1,23,456 would repay ₹1,23,500, i.e. ₹44
+  // more than borrowed. Requiring a multiple of ₹100 makes the split exact.
+  // Mirrors the backend rule in domain/loan_input.go — keep the two in step.
+  else if (isDailyLoan(f.type) && P % DAILY_TERM !== 0)
+    e.principal = `Daily Collection principal must be a multiple of ${inr(DAILY_TERM)}`;
 
   // Rate — up to 2 decimals (0.25, 1.5, 12).
   if (!f.rate.trim()) e.rate = 'Interest rate is required';
@@ -230,6 +238,16 @@ export default function Loans() {
     return s === 'urgency' || s === 'amount' || s === 'newest' ? s : 'newest';
   })();
   const initialFilters = (): LoanFilters => ({ ...defaultLoanFilters(), status: initialStatus, sort: initialSort });
+  // ?ledger=<loanNumber> opens that loan's ledger straight away, so the
+  // dashboard's overdue list can link to ONE loan rather than dumping the user
+  // on the full list to find it. Runs when the loans finish loading (API mode
+  // fetches them after mount), and only while the param is present.
+  const ledgerParam = searchParams.get('ledger');
+  useEffect(() => {
+    if (!ledgerParam) return;
+    const match = d.loans.find((l) => l.loanNumber === ledgerParam);
+    if (match) setLedger(match);
+  }, [ledgerParam, d.loans]);
   const [urgency, setUrgency] = useState<Urgency>(initialUrgency);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<LoanFilters>(initialFilters);
@@ -367,6 +385,29 @@ export default function Loans() {
     if (isEmiLoan(l.type) && l.numDays) return addDays(l.loanDate, l.numDays * 30);    // EMI: +term months
     return null;
   };
+
+  /** Scheduled shortfall as of today — the "Overdue" column.
+   *
+   *  Dispatches on the THREE economic behaviours exactly as Dashboard's overdue
+   *  list does, so the Loans column and the Dashboard can never disagree:
+   *    • interest-only (Daily/Monthly Interest, Flexible) → accrued unpaid
+   *      interest, uncapped (these loans run until settled);
+   *    • daily instalment → billable days × daily amount, capped at the term;
+   *    • EMI / monthly    → cycles fallen due × EMI, capped at the tenure.
+   *
+   *  Each helper already subtracts what has been collected and floors at 0, so
+   *  a loan paid ahead reads 0 rather than a negative. Never recompute this
+   *  inline — extend the DataContext helpers instead.
+   *
+   *  Uses behavesInterestOnly (the BEHAVIOUR predicate), not isInterestOnly (the
+   *  TYPE one): a Vehicle/Property loan in MONTHLY_INTEREST mode accrues
+   *  interest cycles rather than EMIs, so measuring it with the EMI formula
+   *  would compare EMI-style expectations against its collections and report a
+   *  wrong arrear. */
+  const overdueAmountOf = (l: Loan): number =>
+    behavesInterestOnly(l) ? d.totalDueForInterestOnly(l)
+      : isDailyLoan(l.type) ? d.totalDueForDaily(l)
+        : d.totalDueForMonthly(l);
 
   /** Signed days until due; null when there is no upcoming due (completed/closed). */
   const dueInDaysOf = (l: Loan): number | null => {
@@ -545,7 +586,10 @@ export default function Loans() {
   const openCreate = () => { setErrors({}); setForm(blank()); };
 
   // Desktop-only table grid. Below lg, rows fall back to a stacked card layout.
-  const GRID = 'lg:grid lg:grid-cols-[1.55fr_1.2fr_1fr_0.95fr_1.2fr_1.05fr_1fr_92px] lg:items-center lg:gap-4';
+  // 9 columns: Borrower, Loan, Principal, Instalment, Collected, Overdue,
+  // Outstanding, End date, Status. Header and rows share this constant, so a
+  // column added here MUST get a matching cell in both or every value shifts.
+  const GRID = 'lg:grid lg:grid-cols-[1.5fr_1.15fr_0.95fr_0.9fr_1.1fr_1.05fr_1.05fr_0.95fr_92px] lg:items-center lg:gap-3.5';
 
   return (
     <div className="flex min-h-full flex-col">
@@ -626,6 +670,7 @@ export default function Loans() {
           <div>Principal</div>
           <div>Instalment</div>
           <div>Collected</div>
+          <div>Overdue</div>
           <div>Outstanding</div>
           <div>End date</div>
           <div className="text-right">Status</div>
@@ -742,6 +787,27 @@ export default function Loans() {
                     <span className="text-[12.5px] font-medium text-muted lg:hidden">Collected</span>
                     <div className="text-[14.5px] font-semibold tabular-nums text-[#15803d] dark:text-emerald-400">{inr(rowCollected)}</div>
                   </div>
+                </div>
+
+                {/* Overdue — the SCHEDULED SHORTFALL as of today: what should
+                    have been collected by now, less what has been. Uses the same
+                    per-loan-type dispatch as the Dashboard's overdue list, so
+                    the two can never disagree:
+                      • interest-only → accrued unpaid interest (uncapped)
+                      • daily         → billable days × daily, capped at term
+                      • EMI/monthly   → cycles fallen due × EMI, capped at tenure
+                    All three already floor at 0. A CLOSED loan shows '—': its
+                    schedule no longer runs, so a residual figure would read as a
+                    live arrear. */}
+                <div className="flex items-center justify-between lg:block">
+                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Overdue</span>
+                  {(() => {
+                    if (closed) return <span className="text-[14.5px] text-muted">—</span>;
+                    const over = overdueAmountOf(l);
+                    return over > 0
+                      ? <span className="text-[14.5px] font-semibold tabular-nums text-red-600 dark:text-red-400">{inr(over)}</span>
+                      : <span className="text-[14.5px] tabular-nums text-muted">—</span>;
+                  })()}
                 </div>
 
                 {/* Outstanding */}

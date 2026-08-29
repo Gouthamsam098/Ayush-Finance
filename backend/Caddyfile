@@ -40,6 +40,12 @@
 			# Preserve the client IP so the backend's rate limiter and access
 			# log attribute requests to the real caller, not the proxy.
 			header_up X-Real-IP {remote_host}
+			# STRIP any inbound X-Forwarded-For before Caddy appends its own.
+			# Without this, a caller can send their own XFF and the backend's
+			# rate limiter keys on the spoofed value — a different bucket per
+			# request, so login brute-force protection is bypassed entirely.
+			# Caddy re-adds a trustworthy XFF after the removal.
+			header_up -X-Forwarded-For
 		}
 	}
 

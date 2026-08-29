@@ -23,6 +23,7 @@ func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 func (h *Handler) LoanRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/", h.record)
+	r.Post("/replace", h.replace)
 	r.Get("/", h.listByLoan)
 	return r
 }
@@ -148,6 +149,56 @@ func (h *Handler) record(w http.ResponseWriter, r *http.Request) {
 
 // maxIdempotencyKeyLen bounds the client-supplied key (a UUID is 36 chars).
 const maxIdempotencyKeyLen = 128
+
+// maxReplaceBatch bounds a single atomic replace. A receipt-day edit rewrites
+// one day's payments; anything far beyond that is a malformed or hostile call.
+const maxReplaceBatch = 200
+
+// replaceRequest swaps a set of the loan's payments for a new set, atomically.
+type replaceRequest struct {
+	ReplaceIDs []int64             `json:"replace_ids"`
+	Payments   []collectionRequest `json:"payments"`
+}
+
+// replace performs the whole swap in ONE transaction (see Service.Replace): the
+// ledger's receipt-day edit cannot leave money destroyed or double-counted if
+// the connection drops part-way, which N separate calls could.
+func (h *Handler) replace(w http.ResponseWriter, r *http.Request) {
+	loanID, ok := pathID(w, r, "loanId", "loan")
+	if !ok {
+		return
+	}
+	var req replaceRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if len(req.Payments) > maxReplaceBatch || len(req.ReplaceIDs) > maxReplaceBatch {
+		httpx.Error(w, r, domain.NewValidation("Too many payments in one request", nil))
+		return
+	}
+	inputs := make([]domain.CollectionInput, 0, len(req.Payments))
+	for _, p := range req.Payments {
+		in, err := p.toInput()
+		if err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+		inputs = append(inputs, in)
+	}
+
+	var postedBy *int64
+	if uid, err := strconv.ParseInt(httpx.UserID(r.Context()), 10, 64); err == nil {
+		postedBy = &uid
+	}
+
+	out, err := h.service.Replace(r.Context(), loanID, req.ReplaceIDs, inputs, postedBy)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.Created(w, projectList(out))
+}
 
 func (h *Handler) listByLoan(w http.ResponseWriter, r *http.Request) {
 	loanID, ok := pathID(w, r, "loanId", "loan")

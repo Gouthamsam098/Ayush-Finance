@@ -69,6 +69,26 @@ export const elapsedDaysSinceLoan = (loanDate: string) => {
  *  rows and nextDue (previously a cycle accrued one day before it was due). */
 export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30) =>
   Math.floor(Math.max(0, elapsedDaysSinceLoan(loanDate) - 1) / cycleDays);
+/** Number of CALENDAR-MONTH cycles fallen due since the loan date: cycle k is
+ *  due on the same day-of-month, k months on (addMonths clamps a 29th/30th/31st
+ *  to the last day of a short month). Counts from the due day, never a day
+ *  early — the same rule monthlyCyclesElapsed follows.
+ *
+ *  Exists because nextDueFor already advances monthly loans with addMonths,
+ *  while accrual counted fixed 30-day blocks. The two drifted apart: a 01-Feb
+ *  loan's second due read 02 Apr instead of 01 Apr, and on ~9% of days the
+ *  ledger showed a cycle due while accrual still said nothing was owed.
+ *
+ *  Used ONLY for monthly-cadence interest and EMI counting. Daily loans and
+ *  Flexible (whose cycle is its own numDays, not a month) keep the day-count
+ *  helper above. */
+export const calendarCyclesElapsed = (loanDate: string) => {
+  const today = todayISO();
+  let k = 0;
+  // Loans run for years, not centuries; the guard just bounds the loop.
+  while (k < 1200 && addMonths(loanDate, k + 1, 0) <= today) k += 1;
+  return k;
+};
 /** Cycle length: Flexible uses its own chosen term, everything else a fixed 30-day cycle. */
 export const cycleDaysFor = (loan: Loan) => (loan.type === 'FLEXIBLE' ? loan.numDays ?? 30 : 30);
 /** Number of instalments to repay a principal at a given instalment amount = ceil(principal ÷ instalment). */
@@ -209,6 +229,11 @@ interface DataShape {
   addCollection: (c: Omit<Collection, 'id' | 'receiptNo'>) => Promise<void> | void;
   updateCollection: (id: number, c: Partial<Collection>) => Promise<void> | void;
   deleteCollection: (id: number) => Promise<void> | void;
+  /** Atomically swap a loan's payments: soft-delete `replaceIds` and insert
+   *  `payments` in ONE server transaction. Used by the ledger's receipt-day
+   *  edit, where doing it as separate delete+add calls could destroy or
+   *  double-count a day's money if the connection dropped part-way. */
+  replaceCollections: (loanId: number, replaceIds: number[], payments: Omit<Collection, 'id' | 'receiptNo'>[]) => Promise<void> | void;
   addExpense: (e: Omit<Expense, 'id'>) => Promise<void> | void;
   updateExpense: (id: number, e: Partial<Expense>) => Promise<void> | void;
   deleteExpense: (id: number) => Promise<void> | void;
@@ -328,7 +353,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           // Monthly Interest & monthly-mode Vehicle/Property: completed cycles.
           const periods = l.type === 'FLEXIBLE' ? monthlyCyclesElapsed(l.loanDate, cadence) + 1
             : cadence === 1 ? Math.max(0, elapsedDaysSinceLoan(l.loanDate) - 1)
-            : monthlyCyclesElapsed(l.loanDate, cadence);
+            : calendarCyclesElapsed(l.loanDate);
           const interestDue = Math.max(0, periods * l.interest - interestPaid);
           outstanding = Math.max(0, l.principal - principalPaid) + interestDue;
         } else outstanding = Math.max(0, l.principal + l.interest - totalPaid);
@@ -363,7 +388,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
      *  (completed 30-day cycles, capped at tenure) × EMI, less what's been collected.
      *  EMI is stored in dailyAmount; tenure (months) in numDays. */
     const totalDueForMonthly = (loan: Loan) => {
-      const cyclesElapsed = monthlyCyclesElapsed(loan.loanDate, 30);
+      const cyclesElapsed = calendarCyclesElapsed(loan.loanDate);
       const billable = Math.min(cyclesElapsed, loan.numDays ?? Infinity);
       const emi = loan.dailyAmount ?? 0;
       return Math.max(0, billable * emi - collectedFor(loan.id));
@@ -381,7 +406,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const cadence = cadenceDaysForLoan(loan);
       if (loan.type === 'FLEXIBLE') return monthlyCyclesElapsed(loan.loanDate, cadence) + 1;
       if (cadence === 1) return Math.max(0, elapsedDaysSinceLoan(loan.loanDate) - 1);
-      return monthlyCyclesElapsed(loan.loanDate, cadence);
+      return calendarCyclesElapsed(loan.loanDate);
     };
     const totalDueForInterestOnly = (loan: Loan) => {
       // Only interest-kind payments cover accrued interest; principal payments settle separately.
@@ -452,7 +477,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // advance payment cannot push the next due past still-unpaid slots.
       const elapsedSlots = isDailyLoan(loan.type)
         ? Math.max(0, elapsedDaysSinceLoan(loan.loanDate) - 1)
-        : monthlyCyclesElapsed(loan.loanDate, 30);
+        : calendarCyclesElapsed(loan.loanDate);
       const paid = Math.min(fundedSlots, elapsedSlots);
       return step === 30
         ? addMonths(loan.loanDate, paid + 1, 0)
@@ -576,6 +601,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
           });
         }
         setCollections((s) => s.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+      },
+      replaceCollections: (loanId, replaceIds, payments) => {
+        if (config.useApi) {
+          return collectionApi.replace(loanId, replaceIds, payments).then((created) => {
+            setCollections((s) => [...created, ...s.filter((c) => !replaceIds.includes(c.id))]);
+            loanApi.list().then(setLoans).catch(() => {});
+          });
+        }
+        // Mock mode has no server transaction, but the swap is a single
+        // synchronous state update, so it is atomic from the UI's point of view.
+        setCollections((s) => {
+          const kept = s.filter((c) => !replaceIds.includes(c.id));
+          const made = payments.map((p, i) => ({ ...p, id: uid() + i, receiptNo: 'RCPT-' + (rcptSeq + i) }));
+          return [...made, ...kept];
+        });
+        setRcptSeq((n) => n + payments.length);
       },
       deleteCollection: (id) => {
         if (config.useApi) {

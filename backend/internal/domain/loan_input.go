@@ -75,6 +75,18 @@ func (in *LoanInput) Validate(now time.Time) error {
 		fields["principal"] = "Cannot exceed ₹10 crore"
 	} else if int64(in.Principal)%100 != 0 {
 		fields["principal"] = "Enter a whole rupee amount"
+	} else if in.Type == LoanDailyCollection && int64(in.Principal)%(int64(dailyCollectTerm)*100) != 0 {
+		// Daily Collection divides the principal into exactly `dailyCollectTerm`
+		// (100) equal instalments: daily = principal / 100. Money columns store
+		// WHOLE RUPEES, so a principal that does not divide evenly rounds the
+		// instalment up and over-collects across the term — e.g. ₹1,23,456 gives
+		// ₹1,234.56/day, stored as ₹1,235, and 100 × ₹1,235 = ₹1,23,500: the
+		// borrower repays ₹44 MORE than they borrowed.
+		//
+		// Requiring a multiple of ₹100 makes the division exact, so the schedule
+		// always sums to precisely the principal. Only this type is affected —
+		// no other product divides the principal this way.
+		fields["principal"] = "Daily Collection principal must be a multiple of ₹100"
 	}
 
 	// Rate — up to 2 decimal places (e.g. 0.25, 1.5, 12).

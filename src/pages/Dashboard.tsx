@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import {
   useData, LOAN_LABELS, isDailyLoan, behavesInterestOnly, type Loan,
 } from '@/mock/DataContext';
@@ -18,7 +19,7 @@ import { computeFunds, interestRealised } from '@/lib/funds';
 import { buildSchedule } from '@/lib/loanSchedule';
 import {
   Wallet, CalendarClock, IndianRupee, TrendingUp, Menu, Landmark, PiggyBank,
-  Phone, Eye, HandCoins, ArrowRight, Search, Receipt, FileDown,
+  Phone, Eye, HandCoins, ArrowRight, Search, Receipt, FileDown, MoreVertical,
 } from 'lucide-react';
 
 /** Whole calendar days between two YYYY-MM-DD dates (a − b). */
@@ -141,6 +142,14 @@ const RISK_PILL: Record<Risk, string> = {
   'Low Risk': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
 };
 const riskFor = (days: number): Risk => (days > 20 ? 'High Risk' : days > 10 ? 'Medium Risk' : 'Low Risk');
+/** Avatar tint per risk band — softer than the pill (it sits behind initials, so
+ *  it must not fight the name for attention) but in the same hue family, so the
+ *  row's severity is legible from the left edge. */
+const AVATAR_TINT: Record<Risk, string> = {
+  'High Risk': 'bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-300',
+  'Medium Risk': 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
+  'Low Risk': 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
+};
 
 export default function Dashboard() {
   const d = useData();
@@ -148,6 +157,10 @@ export default function Dashboard() {
   const openSidebar = useOpenSidebar();
   const { canView } = usePermissions();
   const [overdueQuery, setOverdueQuery] = useState('');
+  // Row whose mobile ⋮ menu is open (phones only — desktop shows the icon row).
+  const [overdueMenu, setOverdueMenu] = useState<number | null>(null);
+  // Screen coords for the portalled menu (see the trigger's onClick).
+  const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
   const [cashRange, setCashRange] = useState<Range>('month');
   const [perfRange, setPerfRange] = useState<Range>('6m');
   // Period filter — day defaults to today; month to current calendar month;
@@ -343,8 +356,13 @@ export default function Dashboard() {
       onClick: () => navigate('/investments'), actionLabel: `Investor capital ${inr(investorCapital)} — view investors` },
     // Available to lend: capital − lent out + net profit (interest − expenses).
     { icon: PiggyBank, tint: 'bg-teal-50 dark:bg-teal-500/15', iconColor: 'text-teal-600 dark:text-teal-400', label: 'Available Funds', value: inr(funds.available),
+      // Breakdown uses the SAME terms computeFunds adds up (capital + collected
+      // − disbursed − expenses). The old hint restated it as
+      // `capital − outstanding + profit`, which matched only while collections
+      // ≤ disbursals: `outstanding` floors at 0, so once a book is repaid past
+      // its disbursals the hint under-reported the very figure above it.
       hint: investorCapital > 0
-        ? `${inr(investorCapital)} − ${inr(funds.outstanding)} lent ${funds.netProfit >= 0 ? '+' : '−'} ${inr(Math.abs(funds.netProfit))} profit`
+        ? `${inr(investorCapital)} capital + ${inr(funds.collected)} collected − ${inr(funds.disbursed)} lent${funds.expenses > 0 ? ` − ${inr(funds.expenses)} expenses` : ''}`
         : 'No investor capital',
       trend: null,
       onClick: () => navigate('/investments'), actionLabel: `Available funds ${inr(funds.available)} — view investors` },
@@ -438,6 +456,10 @@ export default function Dashboard() {
         // arrears began, rather than only how large they are.
         dueSince: nd,
         type: LOAN_LABELS[l.type],
+        // Total still owed on the loan — the arrears figure alone does not say
+        // how big the exposure is (a 3,500 EMI arrear on a 94,000 balance reads
+        // very differently from one on a 7,000 balance).
+        outstanding: d.outstandingFor(l),
         loan: l, // carried so the notice can itemise the unpaid instalments
         mobile: (l.contact || cust?.mobile || '').trim(),
       };
@@ -550,11 +572,24 @@ export default function Dashboard() {
         </div>
 
         {/* SECTION 3 — Operations (table 70% + gauge 30%) */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
-          {/* Overdue Loans table — fixed height, internal scroll, searchable */}
-          <div className="flex flex-col rounded-2xl border-[0.5px] border-slate-200/80 bg-white p-6 shadow-[0_1px_3px_rgba(17,24,39,.04)] dark:border-white/[.08] dark:bg-surface">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h3 className="text-[15px] font-bold tracking-tight text-ink">Overdue Loans</h3>
+        {/* items-start: grid stretches children to equal height by default, so
+            this row forced the Overdue card to match the (taller) Efficiency
+            gauge beside it — the empty space under a short list was stretch,
+            not padding. Each card now sizes to its own content. */}
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+          {/* Overdue Loans — grows to fit its rows, scrolls only past ~6.
+              Padding and hover match ChartCard so the dashboard reads as one
+              system rather than this card being visibly different. */}
+          <div className="flex flex-col rounded-2xl border-[0.5px] border-slate-200/80 bg-white p-4 shadow-[0_1px_3px_rgba(17,24,39,.04)] transition-all duration-200 hover:shadow-[0_8px_28px_-14px_rgba(17,24,39,.18)] dark:border-white/[.08] dark:bg-surface">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-[15px] font-bold tracking-tight text-ink">
+                Overdue Loans
+                {overdueView.length > 0 && (
+                  <span className="ml-2 inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 align-middle text-[11px] font-bold text-red-600 dark:bg-red-500/15 dark:text-red-400">
+                    {overdueView.length}
+                  </span>
+                )}
+              </h3>
               <div className="flex items-center gap-2.5">
                 <div className="flex w-52 items-center gap-2 rounded-xl border-[0.5px] border-slate-200/80 bg-white px-3 py-1.5 focus-within:border-indigo-400 dark:border-white/[.08] dark:bg-surface">
                   <Search size={15} className="shrink-0 text-slate-400" />
@@ -565,24 +600,57 @@ export default function Dashboard() {
             </div>
 
             {overdueView.length === 0 ? (
-              <div className="grid h-[340px] place-items-center text-center">
+              // A clean book is good news, so this state is compact and calm —
+              // it no longer reserves 340px of blank card to say "nothing here".
+              <div className="grid place-items-center py-12 text-center">
                 <div>
-                  <div className="mx-auto mb-2 grid h-11 w-11 place-items-center rounded-full bg-emerald-50 text-emerald-500 dark:bg-emerald-500/15"><HandCoins size={20} /></div>
-                  <p className="text-[13.5px] font-medium text-ink">No overdue loans 🎉</p>
-                  <p className="text-[12px] text-muted">Every active loan is on schedule.</p>
+                  <div className="mx-auto mb-2.5 grid h-12 w-12 place-items-center rounded-full bg-emerald-50 text-emerald-500 ring-1 ring-emerald-100 dark:bg-emerald-500/15 dark:ring-emerald-500/20"><HandCoins size={22} /></div>
+                  <p className="text-[13.5px] font-semibold text-ink">No overdue loans</p>
+                  <p className="mt-0.5 text-[12px] text-muted">Every active loan is on schedule.</p>
                 </div>
               </div>
             ) : (
-              <div className="h-[340px] overflow-auto rounded-xl border-[0.5px] border-slate-100 dark:border-white/[.05]">
-                <table className="w-full min-w-[640px] text-sm">
-                  <thead className="sticky top-0 z-10 bg-white dark:bg-surface">
-                    <tr className="border-b border-slate-100 text-left text-[12px] font-medium uppercase tracking-wide text-muted dark:border-white/[.06]">
-                      <th className="px-3 py-2.5">Customer</th><th className="px-3 py-2.5">Loan ID</th><th className="px-3 py-2.5 text-right">Due Amount</th><th className="px-3 py-2.5">Days Overdue</th><th className="px-3 py-2.5">Status</th><th className="px-3 py-2.5 text-right">Actions</th>
+              // max-h, not a fixed h: with one or two overdue loans a fixed
+              // 340px reserved the full box and left a large empty void under
+              // the rows — the "so much gap" this card was showing. It now
+              // grows to its content and only scrolls past ~6 rows.
+              // Borderless: the card already frames this content, and a third
+              // nested box (card > container > table) read as clutter.
+              <div className="overscroll-contain sm:max-h-[340px] sm:overflow-auto">
+                {/* This card is 7/10 of the content width (~700px at 1280), so a
+                    760px min-width guaranteed a horizontal scrollbar on every
+                    screen. Four columns instead of six fixes that at the source:
+                    the loan id joins the customer cell (they identify the same
+                    thing) and the risk pill joins the days count (risk IS a band
+                    of days, so two columns said one thing twice). */}
+                <table className="w-full table-fixed text-sm sm:min-w-[700px]">
+                  <colgroup>
+                    <col className="w-[38%] sm:w-[26%]" />{/* Customer + loan id */}
+                    <col className="hidden sm:table-column sm:w-[17%]" />{/* Loan type + since when */}
+                    <col className="w-[26%] sm:w-[15%]" />{/* Arrears */}
+                    <col className="hidden md:table-column md:w-[15%]" />{/* Outstanding */}
+                    <col className="w-[18%] sm:w-[13%]" />{/* Overdue: days + risk */}
+                    <col className="w-[18%] sm:w-[14%]" />{/* Actions */}
+                  </colgroup>
+                  {/* Sticky header needs its own opaque background AND a hairline
+                      shadow, or scrolled rows appear to bleed through it. */}
+                  <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_rgba(17,24,39,.06)] dark:bg-surface dark:shadow-[0_1px_0_rgba(255,255,255,.08)]">
+                    {/* Header alignment MUST mirror the body cells below:
+                        money and Days Overdue right, Status centred, Actions
+                        right. Previously Due Amount/Actions were right-aligned
+                        in the header only, so nothing lined up. */}
+                    <tr className="border-b-2 border-slate-200 bg-gradient-to-b from-slate-50 to-slate-100/60 text-[10.5px] font-bold uppercase tracking-[0.09em] text-slate-600 dark:border-white/[.10] dark:from-white/[.05] dark:to-white/[.02] dark:text-slate-300">
+                      <th className="rounded-l-lg px-3 py-2 text-left font-bold">Customer</th>
+                      <th className="hidden px-3 py-2 text-left font-bold sm:table-cell">Loan</th>
+                      <th className="px-3 py-2 text-right font-bold">Arrears</th>
+                      <th className="hidden px-3 py-2 text-right font-bold md:table-cell">Outstanding</th>
+                      <th className="px-3 py-2 text-right font-bold">Overdue</th>
+                      <th className="rounded-r-lg px-3 py-2 text-right font-bold">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {overdueFiltered.length === 0 ? (
-                      <tr><td colSpan={6} className="py-16 text-center text-[13px] text-muted">No loans match "{overdueQuery}".</td></tr>
+                      <tr><td colSpan={6} className="py-16 text-center text-[13px] text-muted">No loans match &quot;{overdueQuery}&quot;.</td></tr>
                     ) : overdueFiltered.map((r) => {
                       const risk = riskFor(r.days);
                       const callHref = r.mobile ? telHref(r.mobile) : null;
@@ -593,72 +661,109 @@ export default function Dashboard() {
                         }))
                         : null;
                       return (
-                        <tr key={r.id} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-slate-50/60 dark:border-white/[.04] dark:hover:bg-white/[.02]">
-                          <td className="px-3 py-3">
+                        <tr key={r.id} className="border-b border-slate-100/70 transition-colors last:border-0 hover:bg-slate-50 dark:border-white/[.04] dark:hover:bg-white/[.03]">
+                          {/* Customer + loan id stacked: they identify the same
+                              record, so one cell reads as one thing. min-w-0 +
+                              truncate keeps a long name from widening the table. */}
+                          <td className="px-3 py-2.5">
+                            {/* Avatar tinted by risk: the row's severity reads
+                                from the left edge before any number is parsed. */}
                             <div className="flex items-center gap-2.5">
-                              <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-500 dark:bg-white/[.06] dark:text-slate-300">{r.customer.split(' ').map((x) => x[0]).slice(0, 2).join('')}</span>
-                              <span className="font-medium text-ink">{r.customer}</span>
+                              <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-[11px] font-bold ${AVATAR_TINT[risk]}`}>{r.customer.split(' ').map((x) => x[0]).slice(0, 2).join('')}</span>
+                              <div className="min-w-0 leading-tight">
+                                <div className="truncate font-semibold text-ink" title={r.customer}>{r.customer}</div>
+                                <div className="truncate font-mono text-[11px] text-muted">{r.loanNo}</div>
+                              </div>
                             </div>
                           </td>
-                          <td className="px-3 py-3 font-mono text-[12.5px] text-muted">{r.loanNo}</td>
-                          <td className="px-3 py-3 text-right font-semibold tabular-nums text-ink">{inr(r.due)}</td>
-                          <td className="px-3 py-3 font-semibold tabular-nums text-red-500">{r.days} days</td>
-                          <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-[11.5px] font-bold ${RISK_PILL[risk]}`}>{risk}</span></td>
-                          <td className="px-3 py-3">
-                            <div className="flex items-center justify-end gap-1.5">
-                              <button onClick={() => navigate('/loans')} title="View" className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-500/15"><Eye size={15} /></button>
-                              <button onClick={() => navigate('/collections')} title="Collect" className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-white" style={{ background: C.primary }}>Collect</button>
-                              {callHref ? (
-                                <a
-                                  href={callHref}
-                                  title={`Call ${r.mobile}`}
-                                  aria-label={`Call ${r.customer} at ${r.mobile}`}
-                                  className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-500/15"
-                                >
-                                  <Phone size={15} />
-                                </a>
-                              ) : (
-                                <button
-                                  type="button"
-                                  disabled
-                                  title="No mobile on file"
-                                  className="grid h-8 w-8 place-items-center rounded-lg text-muted/40 cursor-not-allowed"
-                                >
-                                  <Phone size={15} />
-                                </button>
-                              )}
-                              {/* Overdue NOTICE — a one-page PDF listing the
-                                  unpaid instalments, handed to the share sheet
-                                  so it can be sent as a WhatsApp document. */}
+                          {/* Loan type + when the arrears began. Both were already
+                              computed for the WhatsApp/PDF notice but never shown,
+                              so the table had a wide empty gap where a collector
+                              needs context: WHICH product, and overdue SINCE when. */}
+                          <td className="hidden px-3 py-2.5 sm:table-cell">
+                            <div className="min-w-0 leading-tight">
+                              <div className="truncate text-[12.5px] text-ink" title={r.type}>{r.type}</div>
+                              <div className="truncate text-[11px] text-muted">since {fmtDate(r.dueSince)}</div>
+                            </div>
+                          </td>
+                          {/* Arrears — what is overdue right now (red: it is the
+                              number being chased). */}
+                          <td className="px-3 py-2.5 text-right font-bold tabular-nums text-red-600 dark:text-red-400">{inr(r.due)}</td>
+                          {/* Outstanding — total still owed. Gives the arrears
+                              figure scale: a 3,500 arrear on 94,000 outstanding is
+                              a different conversation from one on 7,000. */}
+                          <td className="hidden px-3 py-2.5 text-right tabular-nums text-muted md:table-cell">{inr(r.outstanding)}</td>
+                          {/* Days overdue + its risk band. Risk is DERIVED from the
+                              day count (riskFor), so showing them apart stated one
+                              fact in two columns. The pill keeps the colour cue. */}
+                          <td className="px-3 py-2.5 text-right">
+                            <div className="font-semibold tabular-nums text-red-600 dark:text-red-400">{r.days}d</div>
+                            <span className={`mt-0.5 inline-flex rounded-full px-1.5 py-px text-[10px] font-bold ${RISK_PILL[risk]}`}>{risk.replace(' Risk', '')}</span>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {/* ONE kebab at every size. Four inline icons need
+                                ~120px and the actions column never exceeds ~99px
+                                — not even on a laptop — so the row was cramped
+                                everywhere, and the icons were unlabelled. A menu
+                                keeps every action reachable, named, and gives a
+                                comfortable touch target on tablets. */}
+                            <div
+                              className="relative flex justify-end"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape' && overdueMenu === r.id) {
+                                  e.stopPropagation();
+                                  setOverdueMenu(null);
+                                  (e.currentTarget.querySelector('button') as HTMLElement | null)?.focus();
+                                }
+                              }}
+                            >
                               <button
-                                type="button"
-                                onClick={() => sendOverdueNotice(r)}
-                                title="Send overdue notice (PDF)"
-                                aria-label={`Send an overdue notice to ${r.customer}`}
-                                className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/15"
+                                onClick={(e) => {
+                                  if (overdueMenu === r.id) { setOverdueMenu(null); return; }
+                                  // Measure the trigger so the portal can sit under
+                                  // it. Flips upward when the menu would run past
+                                  // the viewport bottom (last row of a long list).
+                                  const b = e.currentTarget.getBoundingClientRect();
+                                  const MENU_H = 200;
+                                  const below = window.innerHeight - b.bottom;
+                                  setMenuPos({
+                                    top: below < MENU_H ? b.top - MENU_H - 4 : b.bottom + 4,
+                                    right: window.innerWidth - b.right,
+                                  });
+                                  setOverdueMenu(r.id);
+                                }}
+                                title="Actions"
+                                aria-label={`Actions for ${r.customer}`}
+                                aria-haspopup="menu"
+                                aria-expanded={overdueMenu === r.id}
+                                className="grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.08]"
                               >
-                                <FileDown size={15} />
+                                <MoreVertical size={16} />
                               </button>
-                              {waHref ? (
-                                <a
-                                  href={waHref}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  title={`WhatsApp ${r.mobile}`}
-                                  aria-label={`WhatsApp ${r.customer} at ${r.mobile}`}
-                                  className="grid h-8 w-8 place-items-center rounded-lg text-[#25D366] hover:bg-[#25D366]/15 dark:hover:bg-[#25D366]/20"
-                                >
-                                  <WhatsAppIcon size={15} />
-                                </a>
-                              ) : (
-                                <button
-                                  type="button"
-                                  disabled
-                                  title="No mobile on file"
-                                  className="grid h-8 w-8 place-items-center rounded-lg text-muted/40 cursor-not-allowed"
-                                >
-                                  <WhatsAppIcon size={15} />
-                                </button>
+                              {overdueMenu === r.id && createPortal(
+                                <>
+                                  {/* Tap-away dismissal (a phone has no Escape key). */}
+                                  <div className="fixed inset-0 z-[290]" onClick={() => setOverdueMenu(null)} aria-hidden />
+                                  <div role="menu" aria-label={`Actions for ${r.customer}`} style={{ top: menuPos.top, right: menuPos.right }} className="fixed z-[300] w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900">
+                                    <button role="menuitem" onClick={() => { setOverdueMenu(null); navigate(`/loans?ledger=${encodeURIComponent(r.loanNo)}`); }} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-ink hover:bg-slate-50 dark:hover:bg-white/[.06]">
+                                      <Eye size={15} className="shrink-0 text-muted" /> Open ledger
+                                    </button>
+                                    {callHref && (
+                                      <a role="menuitem" href={callHref} onClick={() => setOverdueMenu(null)} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-ink hover:bg-slate-50 dark:hover:bg-white/[.06]">
+                                        <Phone size={15} className="shrink-0 text-emerald-600" /> Call {r.mobile}
+                                      </a>
+                                    )}
+                                    <button role="menuitem" onClick={() => { setOverdueMenu(null); sendOverdueNotice(r); }} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-ink hover:bg-slate-50 dark:hover:bg-white/[.06]">
+                                      <FileDown size={15} className="shrink-0 text-rose-600" /> Send notice (PDF)
+                                    </button>
+                                    {waHref && (
+                                      <a role="menuitem" href={waHref} target="_blank" rel="noopener noreferrer" onClick={() => setOverdueMenu(null)} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-ink hover:bg-slate-50 dark:hover:bg-white/[.06]">
+                                        <WhatsAppIcon size={15} /> WhatsApp
+                                      </a>
+                                    )}
+                                  </div>
+                                </>,
+                                document.body,
                               )}
                             </div>
                           </td>
@@ -669,9 +774,13 @@ export default function Dashboard() {
                 </table>
               </div>
             )}
-            <div className="mt-4 text-center">
-              <button onClick={() => navigate('/loans')} className="inline-flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: C.primary }}>View all overdue loans <ArrowRight size={14} /></button>
-            </div>
+            {/* Only when the list is scrollable — otherwise it repeats the
+                header's "View all" for no reason. */}
+            {overdueView.length > 6 && (
+              <div className="mt-3 border-t border-slate-100 pt-3 text-center dark:border-white/[.06]">
+                <button onClick={() => navigate('/loans')} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold transition-opacity hover:opacity-80" style={{ color: C.primary }}>View all {overdueView.length} overdue loans <ArrowRight size={14} /></button>
+              </div>
+            )}
           </div>
 
           {/* Collection Efficiency gauge */}

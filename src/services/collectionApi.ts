@@ -120,6 +120,21 @@ export const collectionApi = {
     ));
   },
 
+  /** Atomically swap `replaceIds` for `payments` on one loan.
+   *
+   *  The ledger's receipt-day edit rewrites a whole day's payments. Doing that
+   *  as separate delete + record calls has no atomicity: a dropped connection
+   *  part-way either destroys that day's money or leaves it double-counted.
+   *  The server does the whole swap in ONE transaction, so the ledger can never
+   *  be observed mid-edit. */
+  async replace(loanId: number, replaceIds: number[], payments: Partial<Collection>[]): Promise<Collection[]> {
+    const rows = await api.post<CollectionWire[]>(
+      `/loans/${loanId}/collections/replace`,
+      { replace_ids: replaceIds, payments: payments.map(toWire) },
+    );
+    return rows.map(toCollection);
+  },
+
   async update(id: number, c: Partial<Collection>): Promise<Collection> {
     return toCollection(await api.patch<CollectionWire>(`/collections/${id}`, toWire(c)));
   },
