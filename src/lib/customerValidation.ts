@@ -198,11 +198,14 @@ export function validateCustomerForm(
     else if (!PAN_HOLDER_TYPES.includes(p[3])) e.pan = 'PAN has an invalid holder-type character';
   }
 
-  // At least one KYC identifier, unless one is already on file (edit mode).
-  if (!present(form.aadhaar) && !present(form.pan) && !opts.hasKyc) {
-    e.aadhaar = 'provide an Aadhaar or PAN number';
-    e.pan = 'provide an Aadhaar or PAN number';
-  }
+  // KYC identifiers are OPTIONAL — a customer can be saved with neither an
+  // Aadhaar nor a PAN, and they can be captured later. Mirrors the backend
+  // (domain/customer.go), which is the authority.
+  //
+  // Note what did NOT change: the format checks above still run in full on any
+  // value that IS entered (Aadhaar 12 digits + Verhoeff checksum; PAN
+  // AAAAA9999A with a valid holder-type character). Optional means "may be
+  // blank", never "accepted unvalidated".
 
   // Drop keys with no error so callers can check emptiness easily.
   for (const k of Object.keys(e)) if (!e[k]) delete e[k];

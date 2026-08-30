@@ -44,8 +44,9 @@ const LOAN_TYPE_OPTIONS: { value: LoanTypeOption; label: string }[] = (
   Object.entries(LOAN_TYPE_LABELS) as [LoanType, string][]
 ).map(([value, label]) => ({ value, label }));
 
-/** Document tiles. Aadhaar + PAN are always required; Vehicle adds License + RC,
- *  Property adds a Property document. PHOTO + OTHER are always shown but OPTIONAL. */
+/** Document tiles. Aadhaar + PAN are shown for every loan type; Vehicle adds
+ *  License + RC, Property adds a Property document. ALL uploads are optional —
+ *  the tiles indicate what to collect, but none blocks saving a customer. */
 const DOC_TILES: { type: DocumentType; label: string; icon: React.ReactNode; color: SectionColor }[] = [
   { type: 'AADHAAR', label: 'Aadhaar Card', icon: <FileText size={18} />, color: 'blue' },
   { type: 'PAN', label: 'PAN Card', icon: <CreditCard size={18} />, color: 'amber' },
@@ -263,12 +264,14 @@ export default function Customers() {
     const hasKyc = !!editId && (!!form.hasAadhaar || !!form.hasPan);
     const found = validateCustomerForm(payload, { hasKyc });
 
-    // Documents are mandatory. On create, every required doc for the loan type
-    // must be attached. On edit, documents may already exist server-side, so we
-    // only require any tile the user has newly opened but left empty is skipped.
-    // Only the REQUIRED docs block save; PHOTO + OTHER are optional.
-    const required = requiredDocsForLoan(loanType);
-    const missingDocs = editId ? [] : required.filter((t) => !pendingDocs[t]);
+    // Documents are OPTIONAL — no upload blocks saving a customer. The tiles
+    // still show which documents are EXPECTED for the chosen loan type (see
+    // requiredDocsForLoan), so the operator knows what to collect, but a
+    // customer can be created now and their paperwork attached later.
+    //
+    // Deliberately kept as an empty list rather than deleting the check, so the
+    // error plumbing below stays intact if the rule is ever reinstated.
+    const missingDocs: DocumentType[] = [];
 
     if (Object.keys(found).length > 0 || missingDocs.length > 0) {
       setErrors(found);
@@ -891,7 +894,7 @@ export default function Customers() {
 
               {kycKind === 'AADHAAR' ? (
                 <Input
-                  label="Aadhaar Number *"
+                  label="Aadhaar Number"
                   placeholder="XXXX XXXX XXXX"
                   value={form.aadhaar ?? ''}
                   onChange={(e) => set('aadhaar', e.target.value.replace(/\D/g, '').slice(0, 12))}
@@ -899,7 +902,7 @@ export default function Customers() {
                 />
               ) : (
                 <Input
-                  label="PAN Number *"
+                  label="PAN Number"
                   placeholder="ABCDE1234F"
                   value={form.pan ?? ''}
                   onChange={(e) => set('pan', e.target.value.toUpperCase().slice(0, 10))}

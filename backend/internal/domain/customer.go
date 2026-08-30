@@ -124,12 +124,15 @@ func (in *CustomerInput) Validate(now time.Time, mode ValidationMode) error {
 	add("aadhaar_number", validateAadhaar(in.AadhaarNumber))
 	add("pan_number", validatePAN(in.PANNumber))
 
-	// Cross-field: on create, at least one KYC identifier is required. On
-	// update the stored KYC is kept when omitted, so this rule is skipped.
-	if mode == ModeCreate && !nonEmpty(in.AadhaarNumber) && !nonEmpty(in.PANNumber) {
-		add("aadhaar_number", "provide an Aadhaar or PAN number")
-		add("pan_number", "provide an Aadhaar or PAN number")
-	}
+	// KYC identifiers are OPTIONAL — a customer can be created with neither an
+	// Aadhaar nor a PAN number, and they can be filled in later.
+	//
+	// This is a deliberate business decision, not a relaxation of the rules that
+	// matter: the FORMAT checks above still apply in full whenever a value IS
+	// supplied (Aadhaar must be 12 digits passing the Verhoeff checksum; PAN
+	// must match AAAAA9999A with a valid holder-type character), and the unique
+	// partial indexes still reject a duplicate Aadhaar or PAN. What changed is
+	// only whether providing one is required up front.
 	if nonEmpty(in.AltMobile) && *in.AltMobile == in.Mobile {
 		add("alt_mobile", "alternate mobile must differ from the primary mobile")
 	}
