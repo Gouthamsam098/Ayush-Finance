@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { StatCard } from '@/components/ui/stat-card';
 import { useToast } from '@/components/ui/toast';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
+import { DatePicker } from '@/components/ui/date-picker';
 import { usePermissions } from '@/lib/permissions';
 import { inr, inrShort, fmtDate, todayISO, initials } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -794,9 +795,14 @@ export default function Investments() {
                 ]}
               />
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Input label="Start date *" type="date" max={todayISO()} value={form.startDate} onChange={(e) => set('startDate', e.target.value)} error={errors.startDate} />
-              <Input label="Notes" placeholder="Optional" value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+            {/* Stack on tablet/iPad: native date inputs refuse to shrink and overlap Notes. */}
+            <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="min-w-0">
+                <DatePicker label="Start date *" value={form.startDate} onChange={(e) => set('startDate', e.target.value)} error={errors.startDate} />
+              </div>
+              <div className="min-w-0">
+                <Input label="Notes" placeholder="Optional" value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+              </div>
             </div>
 
             {/* Live preview — the rate is PER CYCLE, so spell out what that means */}
@@ -1167,13 +1173,17 @@ export default function Investments() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Input
-                label="Date" type="date" value={payDate}
-                min={payLive.startDate} max={todayISO()}
-                onChange={(e) => setPayDate(e.target.value)}
-              />
-              <Input label="Remarks" placeholder="Optional note" value={payRemarks} onChange={(e) => setPayRemarks(e.target.value)} />
+            <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="min-w-0">
+                <DatePicker
+                  label="Date"
+                  value={payDate}
+                  onChange={(e) => setPayDate(e.target.value)}
+                />
+              </div>
+              <div className="min-w-0">
+                <Input label="Remarks" placeholder="Optional note" value={payRemarks} onChange={(e) => setPayRemarks(e.target.value)} />
+              </div>
             </div>
           </div>
         )}
