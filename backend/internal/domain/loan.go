@@ -293,6 +293,44 @@ func MonthlyCyclesElapsed(loanDate, now time.Time, cycleDays int) int {
 	return days / cycleDays
 }
 
+// CalendarCyclesElapsed returns the number of CALENDAR-MONTH cycles fallen due:
+// cycle k is due on the same day-of-month, k months on, clamped to the last day
+// of a shorter month (31 Jan + 1 month -> 28/29 Feb). Counts from the due day,
+// never a day early — the same rule MonthlyCyclesElapsed follows.
+//
+// Mirrors the frontend calendarCyclesElapsed exactly. It exists because due
+// DATES were already advanced by calendar month while accrual counted fixed
+// 30-day blocks, so the two drifted apart: a 01-Feb loan's second cycle fell due
+// on 02 Apr by one measure and 01 Apr by the other, and on ~9% of days a cycle
+// showed as due while accrual still said nothing was owed.
+//
+// Used for monthly-cadence interest and EMI counting only. Daily loans and
+// FLEXIBLE (whose cycle is its own day count, not a month) keep the day-based
+// helper above.
+func CalendarCyclesElapsed(loanDate, now time.Time) int {
+	start := truncateToDay(loanDate)
+	today := truncateToDay(now)
+	k := 0
+	// Loans run for years, not centuries; the guard just bounds the loop.
+	for k < 1200 && !addMonthsClamped(start, k+1).After(today) {
+		k++
+	}
+	return k
+}
+
+// addMonthsClamped adds n months, clamping the day to the target month's last
+// day instead of Go's default overflow into the following month (time.AddDate
+// turns 31 Jan + 1 month into 03 Mar). Mirrors the frontend addMonths.
+func addMonthsClamped(t time.Time, n int) time.Time {
+	y, m, d := t.Date()
+	target := time.Date(y, m+time.Month(n), 1, 0, 0, 0, 0, t.Location())
+	last := target.AddDate(0, 1, -1).Day() // last day of the target month
+	if d > last {
+		d = last
+	}
+	return time.Date(target.Year(), target.Month(), d, 0, 0, 0, 0, t.Location())
+}
+
 // TotalDueForDaily is the scheduled shortfall for a DAILY_COLLECTION loan.
 // Collection starts the DAY AFTER disbursement, so the expected instalment
 // count by `now` is (elapsed − 1), capped at the term. × dailyAmount − collected.
@@ -317,7 +355,9 @@ func (l *Loan) TotalDueForDaily(collected Paise, now time.Time) Paise {
 // instalment is DailyAmount (per-month for monthly loans); falls back to
 // Interest for legacy rows without an instalment amount.
 func (l *Loan) TotalDueForMonthly(collected Paise, now time.Time) Paise {
-	cycles := MonthlyCyclesElapsed(l.LoanDate, now, l.cycleDays())
+	// Calendar months, matching NextDue (which advances with AddDate month steps)
+	// and the frontend's calendarCyclesElapsed.
+	cycles := CalendarCyclesElapsed(l.LoanDate, now)
 	if l.NumDays != nil && cycles > *l.NumDays {
 		cycles = *l.NumDays
 	}
@@ -351,8 +391,10 @@ func (l *Loan) AccruedInterest(now time.Time) Paise {
 			periods = 0
 		}
 	default:
-		// Monthly Interest: completed 30-day cycles; interest falls due at cycle end.
-		periods = MonthlyCyclesElapsed(l.LoanDate, now, cadence)
+		// Monthly Interest (and monthly-mode Vehicle/Property): completed CALENDAR
+		// months; interest falls due on the same day-of-month each month, matching
+		// NextDue and the frontend's calendarCyclesElapsed.
+		periods = CalendarCyclesElapsed(l.LoanDate, now)
 	}
 	perPeriod := l.Interest
 	if l.DailyAmount != nil {

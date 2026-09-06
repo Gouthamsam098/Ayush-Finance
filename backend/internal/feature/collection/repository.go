@@ -300,6 +300,23 @@ func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// SoftDeleteTx is SoftDelete inside a caller's transaction, so a delete can
+// commit atomically with the writes that replace it. Scoped by loan_id as well
+// as id: a batch replace must never touch a record belonging to another loan,
+// even if a stale/forged id is supplied.
+func (r *Repository) SoftDeleteTx(ctx context.Context, tx pgx.Tx, loanID, id int64) error {
+	tag, err := tx.Exec(ctx,
+		`UPDATE collections SET deleted_at = now(), updated_at = now()
+		 WHERE id = $1 AND loan_id = $2 AND deleted_at IS NULL`, id, loanID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.NewNotFound("collection")
+	}
+	return nil
+}
+
 // ── scanning + helpers ──
 
 type rowScanner interface{ Scan(dest ...any) error }

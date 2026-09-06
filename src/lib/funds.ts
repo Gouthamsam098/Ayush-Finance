@@ -6,18 +6,19 @@
  * a loan can never disagree.
  *
  *     available = investor capital
- *               − outstanding        (cash currently out with borrowers)
- *               + net profit         (interest earned − all expenses)
+ *               + collected          (all cash received from borrowers)
+ *               − disbursed          (all cash handed to borrowers)
+ *               − expenses           (everything the business spent)
  *
- * Every rupee is counted once: `outstanding` falls as borrowers repay, which
- * returns the PRINCIPAL to the pot, while `net profit` adds the interest those
- * repayments earned and subtracts everything the business spent (including the
- * investor-interest payouts the Investments page posts to Expenses).
+ * Strict CASH BASIS: every rupee is counted when it moves, once. Repayments
+ * return principal AND deliver interest through the same `collected` term, so
+ * profit needs no separate addition — see the long note on computeFunds for the
+ * two bugs the older `capital − outstanding + netProfit` form caused.
  *
- * Anchoring on capital − outstanding (rather than summing lifetime collections
- * and disbursals) keeps the figure bounded and self-correcting: it cannot drift
- * upward from historical volume, so it degrades sanely if the data is ever
- * inconsistent.
+ * Anything displaying this figure must break it down using THESE terms.
+ * Restating it as `capital − outstanding + netProfit` looks equivalent but
+ * diverges as soon as collections exceed disbursals, because `outstanding`
+ * floors at 0 and cannot express the surplus.
  */
 
 import { behavesInterestOnly, type Collection, type Expense, type Loan } from '@/mock/DataContext';
@@ -130,6 +131,13 @@ export interface FundsBreakdown {
   available: number;
   /** Raw (unfloored) figure — negative means the business is overdrawn. */
   rawAvailable: number;
+  /** Total cash received from borrowers — the `collected` term of `available`. */
+  collected: number;
+  /** Total cash handed to borrowers — the `disbursed` term of `available`.
+   *  Exposed so the UI can SHOW the same terms the figure is built from,
+   *  rather than restating it with a different formula that diverges once
+   *  collections exceed disbursals (see the Available Funds hint). */
+  disbursed: number;
   /** The lending guard is ALWAYS on: a loan can only be funded from available
    *  funds, so ₹0 available means no lending. Kept as a field (rather than
    *  removed) so existing call sites keep compiling. */
@@ -194,6 +202,8 @@ export function computeFunds(
     netProfit,
     rawAvailable,
     available: Math.max(0, rawAvailable),
+    collected,
+    disbursed,
     // ALWAYS enforced. This used to be `capital > 0`, which switched the guard
     // OFF when no investor existed — so a loan could be created against ₹0 of
     // funds. Lending capacity is available funds, full stop.

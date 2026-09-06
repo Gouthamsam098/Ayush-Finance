@@ -331,12 +331,38 @@ func TestAddressLengthBounds(t *testing.T) {
 	}
 }
 
-func TestKYCRequiredAtLeastOne(t *testing.T) {
+// KYC identifiers are OPTIONAL: a customer may be created with neither an
+// Aadhaar nor a PAN, so they can be captured later. Only the presence rule was
+// relaxed — see TestKYCFormatStillEnforcedWhenProvided for the half that must
+// never regress.
+func TestKYCIsOptional(t *testing.T) {
 	in := baseValidInput()
 	in.AadhaarNumber = nil
 	in.PANNumber = nil
-	if msg := fieldError(t, in, "pan_number"); msg == "" {
-		t.Error("expected KYC-required error when both Aadhaar and PAN are absent")
+	if err := in.Validate(testNow, ModeCreate); err != nil {
+		t.Errorf("customer with no KYC should be valid, got %v", err)
+	}
+}
+
+// Making KYC optional must NOT weaken the format rules. A supplied identifier is
+// still fully validated — a bad Aadhaar checksum or malformed PAN is rejected
+// exactly as before. This is the guard against "optional" quietly becoming
+// "unvalidated".
+func TestKYCFormatStillEnforcedWhenProvided(t *testing.T) {
+	bad := "123456789012" // starts with 1 and fails Verhoeff
+	in := baseValidInput()
+	in.AadhaarNumber = &bad
+	in.PANNumber = nil
+	if msg := fieldError(t, in, "aadhaar_number"); msg == "" {
+		t.Error("an invalid Aadhaar must still be rejected when supplied")
+	}
+
+	badPAN := "ABCD1234EF" // wrong shape
+	in2 := baseValidInput()
+	in2.AadhaarNumber = nil
+	in2.PANNumber = &badPAN
+	if msg := fieldError(t, in2, "pan_number"); msg == "" {
+		t.Error("an invalid PAN must still be rejected when supplied")
 	}
 }
 

@@ -204,6 +204,105 @@ func (s *Service) Record(ctx context.Context, in domain.CollectionInput, postedB
 	return c, nil
 }
 
+// Replace atomically swaps a set of a loan's payments for a new set: it soft-
+// deletes `replaceIDs` and inserts `inputs`, all inside ONE transaction.
+//
+// It exists because the ledger's receipt-day edit rewrites a whole day's
+// payments. Doing that as N separate HTTP calls has no atomicity: a dropped
+// connection between the deletes and the inserts either destroys the day's
+// money or leaves it double-counted. Here the loan row is locked once and the
+// whole swap commits or rolls back as a unit — the ledger can never be observed
+// mid-edit.
+//
+// Every input is validated against the loan; a failure anywhere aborts the lot.
+func (s *Service) Replace(
+	ctx context.Context, loanID int64, replaceIDs []int64,
+	inputs []domain.CollectionInput, postedBy *int64,
+) ([]*domain.Collection, error) {
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock FIRST — the reads and the status sync below must not race another
+	// payment on the same loan.
+	if err := LockLoanForUpdate(ctx, tx, loanID); err != nil {
+		return nil, err
+	}
+	l, err := s.loans.FindByID(ctx, loanID)
+	if err != nil {
+		return nil, err
+	}
+	if l.Status != domain.StatusActive {
+		return nil, domain.NewConflict("Cannot edit payments on a closed loan")
+	}
+
+	// Retire the originals first WITHIN the transaction, so the validation below
+	// sees the schedule as it will actually be once they are gone. Nothing is
+	// visible to anyone else until commit, so ordering here is safe.
+	for _, id := range replaceIDs {
+		if err := s.repo.SoftDeleteTx(ctx, tx, loanID, id); err != nil {
+			return nil, err
+		}
+	}
+
+	out := make([]*domain.Collection, 0, len(inputs))
+	for _, in := range inputs {
+		in.LoanID = loanID
+		collected, err := s.repo.SumByLoanTx(ctx, tx, loanID)
+		if err != nil {
+			return nil, err
+		}
+		if err := in.Validate(l, collected, s.now()); err != nil {
+			return nil, err
+		}
+		c, _, err := s.repo.CreateTx(ctx, tx, in, postedBy, "")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+
+	// Status sync inside the same transaction, exactly as Record does.
+	after, err := s.repo.SumByLoanTx(ctx, tx, loanID)
+	if err != nil {
+		return nil, err
+	}
+	if l.IsFullyPaid(after, s.now()) && l.Status == domain.StatusActive {
+		if _, err := s.loans.SetStatusTx(ctx, tx, loanID, domain.StatusClosed); err != nil {
+			return nil, err
+		}
+	}
+
+	// One audit row per written payment, committed with the money itself.
+	if s.audits != nil {
+		for _, c := range out {
+			if err := s.audits.RecordTx(ctx, tx, audit.Entry{
+				EntityType: audit.EntityCollection,
+				EntityID:   c.ID,
+				Action:     audit.ActionPost,
+				After: map[string]any{
+					"receipt_no": c.ReceiptNo,
+					"loan_id":    c.LoanID,
+					"amount":     c.Amount.Rupees(),
+					"date":       c.Date.Format("2006-01-02"),
+					"mode":       string(c.Mode),
+					"kind":       string(c.Kind),
+					"replaced":   replaceIDs,
+				},
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListByLoan returns the payment ledger for a loan (validates the loan exists).
 func (s *Service) ListByLoan(ctx context.Context, loanID int64) ([]*domain.Collection, error) {
 	if _, err := s.loans.FindByID(ctx, loanID); err != nil {

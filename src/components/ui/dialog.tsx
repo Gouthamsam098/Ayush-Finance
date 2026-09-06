@@ -100,7 +100,7 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
         // holds the confirm action — could sit under the browser chrome.
         // min-w-0 + calc width: iPad Air / tablet split-view must not let
         // native date controls blow past the panel and misalign Remarks, etc.
-        className={`relative flex max-h-[90dvh] w-full min-w-0 flex-col overflow-hidden rounded-card border border-slate-200/70 dark:border-white/[.08] bg-white dark:bg-surface shadow-[0_24px_70px_-20px_rgba(0,0,0,.35)] dark:shadow-[0_24px_70px_-20px_rgba(0,0,0,.7)] animate-rise ${xl ? 'max-w-[min(72rem,calc(100vw-1.5rem))]' : wide ? 'max-w-[min(48rem,calc(100vw-1.5rem))]' : 'max-w-[min(32rem,calc(100vw-1.5rem))]'}`}
+        className={`relative flex max-h-[90dvh] w-full min-w-0 flex-col overflow-hidden rounded-card border border-slate-200/70 dark:border-white/[.08] bg-white dark:bg-surface shadow-[0_24px_70px_-20px_rgba(0,0,0,.35)] dark:shadow-[0_24px_70px_-20px_rgba(0,0,0,.7)] animate-rise ${xl ? 'max-w-[min(84rem,calc(100vw-1.5rem))]' : wide ? 'max-w-[min(48rem,calc(100vw-1.5rem))]' : 'max-w-[min(32rem,calc(100vw-1.5rem))]'}`}
       >
         <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/[.06] px-4 py-4 sm:px-6">
           <div className="min-w-0 pr-3">

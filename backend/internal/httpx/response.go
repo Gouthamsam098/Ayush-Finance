@@ -6,20 +6,27 @@ package httpx
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/anush-capitals/lms-backend/internal/domain"
 	"github.com/anush-capitals/lms-backend/internal/logger"
 )
 
+// maxJSONBodyBytes caps every JSON request body. Generous relative to real
+// payloads (the biggest is a 200-item collection replace batch, well under
+// 100 KB) but small enough that a hostile body cannot exhaust memory.
+// Multipart document uploads are bounded separately in the document handler.
+const maxJSONBodyBytes = 1 << 20 // 1 MiB
+
 // envelope is the single response shape for the whole API:
 //
 //	{ "success": true,  "data": {...} }
 //	{ "success": false, "error": { "code", "message", "fields" } }
 type envelope struct {
-	Success bool           `json:"success"`
-	Data    any            `json:"data,omitempty"`
-	Error   *errorPayload  `json:"error,omitempty"`
+	Success bool            `json:"success"`
+	Data    any             `json:"data,omitempty"`
+	Error   *errorPayload   `json:"error,omitempty"`
 	Meta    *PaginationMeta `json:"meta,omitempty"`
 }
 
@@ -90,7 +97,20 @@ func DecodeJSON(r *http.Request, dst any) error {
 	if r.Body == nil {
 		return domain.NewValidation("request body is required", nil)
 	}
-	dec := json.NewDecoder(r.Body)
+	// Bound the body BEFORE decoding. Without this every JSON endpoint —
+	// including unauthenticated /auth/login — would read an unbounded request
+	// into memory, so a single large POST could exhaust the container's RAM
+	// with no credentials and no way for the rate limiter to help.
+	//
+	// io.LimitReader (rather than http.MaxBytesReader) keeps this function's
+	// signature unchanged, so all 13 existing call sites are untouched. The
+	// decoder sees a truncated body and fails as malformed, which is the
+	// correct outcome for an oversized payload.
+	//
+	// The cap is far above any legitimate request: the largest is the 200-item
+	// collection `replace` batch, well under 100 KB. Document uploads do NOT
+	// pass through here — they use their own multipart limit.
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxJSONBodyBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, http.ErrBodyReadAfterClose) {

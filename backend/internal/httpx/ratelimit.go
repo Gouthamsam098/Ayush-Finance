@@ -101,18 +101,31 @@ func (l *limiter) reap() {
 // clientIP resolves the caller's address, preferring the reverse proxy's
 // X-Forwarded-For (leftmost = original client) and falling back to the socket.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// "client, proxy1, proxy2" — take the first entry.
-		for i := 0; i < len(xff); i++ {
-			if xff[i] == ',' {
-				return trimSpace(xff[:i])
-			}
-		}
-		return trimSpace(xff)
-	}
+	// X-Real-IP FIRST. The reverse proxy sets this from the socket address it
+	// actually accepted, so a caller cannot forge it — Caddy overwrites any
+	// inbound value (`header_up X-Real-IP {remote_host}`).
+	//
+	// X-Forwarded-For is deliberately NOT preferred. It is a client-supplied
+	// header and the proxy appends to it rather than replacing it, so trusting
+	// its leftmost entry let an attacker send a different value per request:
+	// every login attempt landed in a fresh rate-limit bucket and brute-force
+	// protection was bypassed completely. (Caddy now also strips the inbound
+	// header — see the Caddyfile — so this is defence in depth: the limiter
+	// stays sound even if the proxy config drifts or the backend is reached
+	// directly.)
 	if xr := r.Header.Get("X-Real-IP"); xr != "" {
 		return trimSpace(xr)
 	}
+	// NO X-Forwarded-For fallback. If the trusted proxy header is absent, the
+	// request did not come through our proxy, so every forwarding header on it
+	// is attacker-controlled. Honouring XFF here would reopen the bypass for
+	// anyone who can reach the backend directly — which is precisely the
+	// failure this guard exists to prevent, and cannot be ruled out from inside
+	// the process (a firewall gap, a port-forward, a future ingress change).
+	//
+	// Falling through to RemoteAddr is always safe: it is the real TCP peer.
+	// Behind the proxy that is the proxy's own address, which is correct —
+	// X-Real-IP above already handled the genuine client.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

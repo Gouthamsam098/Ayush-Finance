@@ -108,7 +108,6 @@ export function StatementView({ loan }: { loan: Loan }) {
           <Field k="Mobile" v={loan.contact || cust?.mobile || '—'} />
           <Field k="Frequency" v={`${freq} instalments`} />
           <Field k="Total Tenure" v={tenureLabel} />
-          <Field k="Rate" v={`${loan.rate}%`} />
           <Field k="Loan Amount" v={inr(loan.principal)} />
           <Field k={interestOnly ? 'Interest / period' : emi ? 'EMI' : 'Instalment'} v={inr(instalment)} />
         </div>
@@ -184,7 +183,7 @@ export function StatementView({ loan }: { loan: Loan }) {
 
         <p className="text-[11px] leading-relaxed text-muted">
           {emi
-            ? `Full principal disbursed. Each EMI includes principal + interest; total interest ${inr(loan.interest)} (${loan.rate}% overall) spread evenly across ${loan.numDays ?? schedule.length} months.`
+            ? `Full principal disbursed. Each EMI includes principal + interest; total interest ${inr(loan.interest)} spread evenly across ${loan.numDays ?? schedule.length} months.`
             : interestOnly
               ? `Interest of ${inr(instalment)} falls due each period; principal stays outstanding until settle & close. Schedule shows periods due so far plus the next due.`
               : `Interest of ${inr(loan.interest)} was deducted upfront at disbursement; each instalment repays principal.`}

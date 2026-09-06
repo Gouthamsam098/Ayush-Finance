@@ -143,17 +143,25 @@ func TestVehicleMonthlyInterestMode(t *testing.T) {
 	if !loan.BehavesInterestOnly() || loan.BehavesEMI() {
 		t.Fatal("monthly-mode Vehicle must behave interest-only, not EMI")
 	}
-	// Day 31 = 1 cycle → ₹10,000 interest due; principal stays → outstanding 510000.
-	if got := loan.Outstanding(Collected{}, day(2026, 1, 31)); got != RupeesToPaise(510000) {
+	// CALENDAR-MONTH cycles: cycle k falls due on the same day-of-month, k months
+	// on. A 01-Jan loan's first cycle is due 01 Feb — NOT day 31 (31 Jan), which
+	// the old fixed 30-day count used. Accrual now matches NextDue, which has
+	// always advanced by calendar month.
+	// 31 Jan: still inside cycle 1 → nothing accrued → outstanding = principal.
+	if got := loan.Outstanding(Collected{}, day(2026, 1, 31)); got != principal {
+		t.Errorf("before first due: got %s, want %s", got, principal)
+	}
+	// 01 Feb = cycle 1 due → ₹10,000 interest; principal stays → 510000.
+	if got := loan.Outstanding(Collected{}, day(2026, 2, 1)); got != RupeesToPaise(510000) {
 		t.Errorf("month 1 outstanding: got %s, want 510000", got)
 	}
-	// Day 61 = 2 cycles → ₹20,000 → outstanding 520000.
-	if got := loan.Outstanding(Collected{}, day(2026, 3, 2)); got != RupeesToPaise(520000) {
+	// 01 Mar = cycle 2 due → ₹20,000 → outstanding 520000.
+	if got := loan.Outstanding(Collected{}, day(2026, 3, 1)); got != RupeesToPaise(520000) {
 		t.Errorf("month 2 outstanding: got %s, want 520000", got)
 	}
 	// Settle: 2 cycles interest (₹20,000) + full principal → outstanding 0.
 	full := Collected{Interest: RupeesToPaise(20000), Principal: principal}
-	if got := loan.Outstanding(full, day(2026, 3, 2)); got != 0 {
+	if got := loan.Outstanding(full, day(2026, 3, 1)); got != 0 {
 		t.Errorf("settled: got %s, want 0", got)
 	}
 }
@@ -455,5 +463,38 @@ func TestFlexibleUsesOwnCycle(t *testing.T) {
 	cycles := MonthlyCyclesElapsed(loan.LoanDate, day(2026, 1, 30), loan.cycleDays())
 	if cycles != 1 {
 		t.Fatalf("expected 1 elapsed cycle for 15-day flexible loan at day 30, got %d", cycles)
+	}
+}
+
+// TestCalendarCyclesElapsed pins the calendar-month cadence, including the
+// month-end clamping that a fixed 30-day count got wrong. Cycle k is due on the
+// same day-of-month k months on; a 29th/30th/31st clamps to the last day of a
+// shorter month rather than spilling into the next one.
+func TestCalendarCyclesElapsed(t *testing.T) {
+	cases := []struct {
+		name     string
+		loanDate time.Time
+		now      time.Time
+		want     int
+	}{
+		// Same-day boundary: a cycle counts from its due day, never a day early.
+		{"day before first due", day(2026, 2, 1), day(2026, 2, 28), 0},
+		{"on first due", day(2026, 2, 1), day(2026, 3, 1), 1},
+		{"day after first due", day(2026, 2, 1), day(2026, 3, 2), 1},
+		{"second cycle", day(2026, 2, 1), day(2026, 4, 1), 2},
+		// The bug this replaced: 30-day steps drifted to 03 Mar / 02 Apr.
+		{"no drift at six months", day(2026, 2, 1), day(2026, 8, 1), 6},
+		// Month-end clamping: 31 Jan + 1 month = 28 Feb (2026 is not a leap year).
+		{"31 Jan clamps to 28 Feb", day(2026, 1, 31), day(2026, 2, 28), 1},
+		{"31 Jan, 27 Feb is early", day(2026, 1, 31), day(2026, 2, 27), 0},
+		// 29 Jan in a leap year keeps the 29th.
+		{"29 Jan 2028 -> 29 Feb", day(2028, 1, 29), day(2028, 2, 29), 1},
+		// Loan date itself accrues nothing.
+		{"loan date", day(2026, 5, 10), day(2026, 5, 10), 0},
+	}
+	for _, c := range cases {
+		if got := CalendarCyclesElapsed(c.loanDate, c.now); got != c.want {
+			t.Errorf("%s: got %d cycles, want %d", c.name, got, c.want)
+		}
 	}
 }

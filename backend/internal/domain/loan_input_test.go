@@ -152,3 +152,58 @@ func TestValidateAcceptsGoodInput(t *testing.T) {
 		t.Errorf("expected valid, got %v", err)
 	}
 }
+
+// A Daily Collection schedule must sum to EXACTLY the principal. Money columns
+// store whole rupees, so a principal that does not divide into 100 equal
+// instalments rounds the daily amount up and over-collects across the term —
+// real money taken from the borrower. The validator now rejects those inputs;
+// this test proves both halves of that contract.
+func TestDailyCollectionPrincipalMustDivideEvenly(t *testing.T) {
+	now := day(2026, 8, 23)
+	newInput := func(principal int64) LoanInput {
+		return LoanInput{
+			Type:       LoanDailyCollection,
+			CustomerID: 1,
+			Principal:  RupeesToPaise(float64(principal)),
+			Rate:       5,
+			LoanDate:   day(2026, 8, 23),
+		}
+	}
+
+	// Rejected: these are exactly the principals that over-collected.
+	for _, p := range []int64{123456, 100050, 99999, 250075, 1001} {
+		in := newInput(p)
+		err := in.Validate(now)
+		if err == nil {
+			t.Errorf("principal ₹%d: expected rejection (would over-collect), got nil", p)
+		}
+	}
+
+	// Accepted: multiples of ₹100 divide exactly.
+	for _, p := range []int64{100000, 123400, 250000, 100} {
+		in := newInput(p)
+		if err := in.Validate(now); err != nil {
+			t.Errorf("principal ₹%d: expected acceptance, got %v", p, err)
+		}
+	}
+
+	// The invariant itself: for every ACCEPTED principal, 100 instalments must
+	// sum to the principal exactly — no rupee gained or lost.
+	for p := int64(100); p <= 200000; p += 100 {
+		in := newInput(p)
+		if err := in.Validate(now); err != nil {
+			continue // rejected inputs cannot reach a schedule
+		}
+		d := in.Derive()
+		if d.DailyAmount == nil || d.NumDays == nil {
+			t.Fatalf("principal ₹%d: derive produced no schedule", p)
+		}
+		// Round-trip through the whole-rupee DB representation.
+		stored := PaiseFromDBRupees(d.DailyAmount.DBRupees())
+		total := stored.MulInt(int64(*d.NumDays))
+		if int64(total) != int64(in.Principal) {
+			t.Fatalf("principal ₹%d: schedule collects %d paise, want %d (diff %+d)",
+				p, int64(total), int64(in.Principal), int64(total)-int64(in.Principal))
+		}
+	}
+}
