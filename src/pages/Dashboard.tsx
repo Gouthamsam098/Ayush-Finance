@@ -157,6 +157,7 @@ export default function Dashboard() {
   const openSidebar = useOpenSidebar();
   const { canView } = usePermissions();
   const [overdueQuery, setOverdueQuery] = useState('');
+  const [overdueFilterRisk, setOverdueFilterRisk] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   // Row whose mobile ⋮ menu is open (phones only — desktop shows the icon row).
   const [overdueMenu, setOverdueMenu] = useState<number | null>(null);
   // Screen coords for the portalled menu (see the trigger's onClick).
@@ -512,6 +513,12 @@ export default function Dashboard() {
   const overdueFiltered = oq
     ? overdueView.filter((r) => r.customer.toLowerCase().includes(oq) || r.loanNo.toLowerCase().includes(oq) || riskFor(r.days).toLowerCase().includes(oq) || (r.type ?? '').toLowerCase().includes(oq))
     : overdueView;
+const overdueRiskFiltered = overdueFilterRisk === 'all'
+    ? overdueFiltered
+    : overdueFiltered.filter((r) => {
+        const riskLabel = riskFor(r.days).toLowerCase();
+        return riskLabel === `${overdueFilterRisk} risk`;
+      });
 
   return (
     <div className="min-h-full bg-[#F8FAFC] dark:bg-transparent">
@@ -595,7 +602,29 @@ export default function Dashboard() {
                   <Search size={15} className="shrink-0 text-slate-400" />
                   <input value={overdueQuery} onChange={(e) => setOverdueQuery(e.target.value)} placeholder="Search customer, loan…" className="w-full bg-transparent text-[13px] text-ink outline-none placeholder:text-muted" />
                 </div>
-                <button onClick={() => navigate('/loans')} className="hidden text-[13px] font-semibold sm:inline" style={{ color: C.primary }}>View all</button>
+<div className="flex items-center gap-2">
+                  <select
+                    value={overdueFilterRisk}
+                    onChange={(e) => setOverdueFilterRisk(e.target.value as 'all' | 'high' | 'medium' | 'low')}
+                    className="rounded-xl border-[0.5px] border-slate-200/80 bg-white px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-muted dark-border-white/[.08] dark:bg-surface dark:text-ink dark:placeholder:text-muted min-w-[120px]"
+                  >
+                    <option value="all">All</option>
+                    <option value="high">High Risk</option>
+                    <option value="medium">Medium Risk</option>
+                    <option value="low">Low Risk</option>
+                  </select>
+                  <button onClick={() => navigate('/loans')} className="hidden text-[13px] font-semibold sm:inline" style={{ color: C.primary }}>View all</button>
+                  {overdueView.length > 0 ? (
+                    <a
+                      href={`tel:${overdueView[0]?.mobile.replace(/\D/g, '')}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-xl border-[0.5px] border-emerald-400 bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-600 dark:border-emerald-500/15 dark:bg-emerald-500/15 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-white/[.08]"
+                    >
+                      <Phone size={15} className="shrink-0" /> Call
+                    </a>
+                  ) : null}
+                </div>
               </div>
             </div>
 
@@ -649,9 +678,9 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {overdueFiltered.length === 0 ? (
+                    {overdueRiskFiltered.length === 0 ? (
                       <tr><td colSpan={6} className="py-16 text-center text-[13px] text-muted">No loans match &quot;{overdueQuery}&quot;.</td></tr>
-                    ) : overdueFiltered.map((r) => {
+                    ) : overdueRiskFiltered.map((r) => {
                       const risk = riskFor(r.days);
                       const callHref = r.mobile ? telHref(r.mobile) : null;
                       const waHref = r.mobile
@@ -748,11 +777,6 @@ export default function Dashboard() {
                                     <button role="menuitem" onClick={() => { setOverdueMenu(null); navigate(`/loans?ledger=${encodeURIComponent(r.loanNo)}`); }} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-ink hover:bg-slate-50 dark:hover:bg-white/[.06]">
                                       <Eye size={15} className="shrink-0 text-muted" /> Open ledger
                                     </button>
-                                    {callHref && (
-                                      <a role="menuitem" href={callHref} onClick={() => setOverdueMenu(null)} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-ink hover:bg-slate-50 dark:hover:bg-white/[.06]">
-                                        <Phone size={15} className="shrink-0 text-emerald-600" /> Call {r.mobile}
-                                      </a>
-                                    )}
                                     <button role="menuitem" onClick={() => { setOverdueMenu(null); sendOverdueNotice(r); }} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-ink hover:bg-slate-50 dark:hover:bg-white/[.06]">
                                       <FileDown size={15} className="shrink-0 text-rose-600" /> Send notice (PDF)
                                     </button>
@@ -761,11 +785,19 @@ export default function Dashboard() {
                                         <WhatsAppIcon size={15} /> WhatsApp
                                       </a>
                                     )}
-                                  </div>
-                                </>,
-                                document.body,
-                              )}
-                            </div>
+</div>
+                              </>,
+                              document.body,
+                            )}
+                            <a
+                              href={`tel:${callHref?.replace(/\D/g, '')}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-xl border-[0.5px] border-emerald-400 bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-600 dark:border-emerald-500/15 dark:bg-emerald-500/15 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-white/[.08]"
+                            >
+                              <Phone size={15} className="shrink-0" /> Call
+                            </a>
+                          </div>
                           </td>
                         </tr>
                       );

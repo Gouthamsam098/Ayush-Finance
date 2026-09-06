@@ -3,7 +3,7 @@ import type { Loan } from '@/mock/DataContext';
 import {
   LOAN_LABELS, isDailyLoan, behavesEmi, behavesInterestOnly, upfrontDeduction, useData,
 } from '@/mock/DataContext';
-import { inr, fmtDate, todayISO } from '@/lib/format';
+import { inr, fmtDate, addDays, todayISO } from '@/lib/format';
 import { buildSchedule } from '@/lib/loanSchedule';
 import { FileText, Wallet, Percent, CalendarDays, ArrowDownToLine } from 'lucide-react';
 
@@ -105,6 +105,7 @@ export function StatementView({ loan }: { loan: Loan }) {
           <Field k="Loan Type" v={LOAN_LABELS[loan.type]} />
           <Field k="Loan Reference" v={loan.loanNumber} />
           <Field k="Loan Start Date" v={fmtDate(loan.loanDate)} />
+          <Field k="End Date" v={loan.numDays ? fmtDate(addDays(loan.loanDate, loan.numDays)) : 'Open-ended'} />
           <Field k="Mobile" v={loan.contact || cust?.mobile || '—'} />
           <Field k="Frequency" v={`${freq} instalments`} />
           <Field k="Total Tenure" v={tenureLabel} />
