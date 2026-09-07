@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { computeFunds, interestRealised, cashDisbursedFor } from '@/lib/funds';
 import { inr, inrShort, fmtDate, todayISO, addDays, addMonths, initials, DAILY_TERM } from '@/lib/format';
 import { emptyNum, matchNum, numActive, type NumFilter } from '@/lib/customerFilters';
+import { PAGE_SIZE_OPTIONS, pageNumbers } from '@/lib/pagination';
 import { FilterCard, SegGroup, Seg, NumFilterRow, MatchPreview } from '@/components/ui/filter-kit';
 import { StatCard } from '@/components/ui/stat-card';
 import { config } from '@/lib/config';
@@ -194,20 +195,6 @@ const defaultLoanFilters = (): LoanFilters => ({
   status: '', types: [], outstanding: emptyNum(), principal: emptyNum(), sort: 'newest',
 });
 
-const PAGE_SIZE_OPTIONS = [6, 10, 25, 50];
-
-/** Page-number list with ellipses for the pagination footer. */
-function loanPageNumbers(current: number, total: number): (number | '…')[] {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-  const out: (number | '…')[] = [1];
-  const start = Math.max(2, current - 1);
-  const end = Math.min(total - 1, current + 1);
-  if (start > 2) out.push('…');
-  for (let p = start; p <= end; p++) out.push(p);
-  if (end < total - 1) out.push('…');
-  out.push(total);
-  return out;
-}
 /** How many drawer dimensions are constraining the list (sort excluded). */
 const countLoanFilters = (f: LoanFilters) =>
   (f.status ? 1 : 0) + (f.types.length ? 1 : 0) + (numActive(f.outstanding) ? 1 : 0) + (numActive(f.principal) ? 1 : 0);
@@ -893,7 +880,7 @@ export default function Loans() {
               >
                 <ChevronLeft size={16} />
               </button>
-              {loanPageNumbers(currentPage, totalPages).map((p, idx) =>
+              {pageNumbers(currentPage, totalPages).map((p, idx) =>
                 p === '…' ? (
                   <span key={`e${idx}`} className="px-1 text-muted">…</span>
                 ) : (

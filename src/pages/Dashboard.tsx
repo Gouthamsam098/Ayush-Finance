@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -17,6 +17,9 @@ import {
 } from '@/components/dashboard/PeriodFilter';
 import { computeFunds, interestRealised } from '@/lib/funds';
 import { buildSchedule } from '@/lib/loanSchedule';
+import { riskFor, RISK_PILL, AVATAR_TINT } from '@/lib/risk';
+import { WhatsAppIcon } from '@/components/ui/whatsapp-icon';
+import { OverdueLoansDialog, type OverdueLoanRow } from '@/components/dashboard/OverdueLoansDialog';
 import {
   Wallet, CalendarClock, IndianRupee, TrendingUp, Menu, Landmark, PiggyBank,
   Phone, Eye, HandCoins, ArrowRight, Search, Receipt, FileDown, MoreVertical,
@@ -106,15 +109,6 @@ function unpaidRowsFor(
   return out;
 }
 
-/** Official-style WhatsApp glyph (Lucide has no brand icons). */
-function WhatsAppIcon({ size = 15 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M20.52 3.48A11.86 11.86 0 0012.01 0C5.4 0 .04 5.36.04 11.96c0 2.11.55 4.17 1.6 5.99L0 24l6.2-1.62a11.94 11.94 0 005.8 1.48h.01c6.6 0 11.96-5.36 11.96-11.96 0-3.19-1.24-6.19-3.45-8.42zM12.01 21.8h-.01a9.9 9.9 0 01-4.99-1.36l-.36-.21-3.68.91.98-3.59-.23-.37a9.86 9.86 0 01-1.51-4.95c0-5.45 4.44-9.88 9.9-9.88 2.64 0 5.12 1.03 6.99 2.9a9.82 9.82 0 012.9 6.98c0 5.45-4.44 9.87-9.89 9.87zm5.43-7.4c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.16-.17.2-.35.22-.65.08-.3-.15-1.26-.46-2.4-1.48-.89-.79-1.48-1.76-1.65-2.06-.17-.3-.02-.46.13-.61.14-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.08-.15-.67-1.61-.92-2.2-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.48s1.07 2.87 1.21 3.07c.15.2 2.1 3.2 5.08 4.49.7.31 1.26.49 1.69.63.71.23 1.36.19 1.87.12.57-.08 1.76-.72 2.01-1.41.25-.7.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35z" />
-    </svg>
-  );
-}
-
 /** Last N months as {key:'YYYY-MM', label, endISO}, oldest first. */
 function lastMonths(n: number): { key: string; label: string; endISO: string }[] {
   const out: { key: string; label: string; endISO: string }[] = [];
@@ -135,29 +129,22 @@ function trendOf(current: number, prev: number): KpiTrend | null {
   return { value: `${Math.abs(pct)}%`, positive: pct > 0 };
 }
 
-type Risk = 'High Risk' | 'Medium Risk' | 'Low Risk';
-const RISK_PILL: Record<Risk, string> = {
-  'High Risk': 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300',
-  'Medium Risk': 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-  'Low Risk': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
-};
-const riskFor = (days: number): Risk => (days > 20 ? 'High Risk' : days > 10 ? 'Medium Risk' : 'Low Risk');
-/** Avatar tint per risk band — softer than the pill (it sits behind initials, so
- *  it must not fight the name for attention) but in the same hue family, so the
- *  row's severity is legible from the left edge. */
-const AVATAR_TINT: Record<Risk, string> = {
-  'High Risk': 'bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-300',
-  'Medium Risk': 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
-  'Low Risk': 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
-};
-
 export default function Dashboard() {
   const d = useData();
   const navigate = useNavigate();
   const openSidebar = useOpenSidebar();
   const { canView } = usePermissions();
   const [overdueQuery, setOverdueQuery] = useState('');
-  const [overdueFilterRisk, setOverdueFilterRisk] = useState<'all' | 'high' | 'medium' | 'low'>('all');
+  // The search field is collapsed to its icon until asked for. The card header
+  // has to fit a title, a count, the field and "View all" inside 7/10 of the
+  // content width; a permanently-open 208px input left the header wrapping onto
+  // two lines on a laptop. Collapsed, the row breathes and the field is one
+  // click away.
+  const [overdueSearchOpen, setOverdueSearchOpen] = useState(false);
+  const overdueSearchRef = useRef<HTMLInputElement>(null);
+  // Full-list dialog — the card shows only the 6 worst, so this is the only
+  // place loans 7+ are reachable from the dashboard.
+  const [overdueAllOpen, setOverdueAllOpen] = useState(false);
   // Row whose mobile ⋮ menu is open (phones only — desktop shows the icon row).
   const [overdueMenu, setOverdueMenu] = useState<number | null>(null);
   // Screen coords for the portalled menu (see the trigger's onClick).
@@ -442,9 +429,12 @@ export default function Dashboard() {
   }, [cashRange, thisMonth, d.collections, d.expenses, profitByCollectionId]);
 
   // ── Section 3 — Overdue loans (real, ranked by days overdue) ──
-  const overdueRows = useMemo(() => active
+  // The FULL list. The card renders only the worst 6 (`overdueRows` below) so
+  // the dashboard stays scannable; the "View all" dialog renders this one, and
+  // is the only place loans 7+ can be reached from here.
+  const overdueAll = useMemo(() => active
     .filter(isOverdue)
-    .map((l) => {
+    .map((l): OverdueLoanRow & { loan: Loan } => {
       const nd = d.nextDueFor(l)!;
       const cust = d.customers.find((c) => c.id === l.customerId);
       return {
@@ -457,6 +447,9 @@ export default function Dashboard() {
         // arrears began, rather than only how large they are.
         dueSince: nd,
         type: LOAN_LABELS[l.type],
+        // Raw type as well as the label, so the dialog's type filter matches on
+        // the enum rather than re-parsing display text.
+        typeKey: l.type,
         // Total still owed on the loan — the arrears figure alone does not say
         // how big the exposure is (a 3,500 EMI arrear on a 94,000 balance reads
         // very differently from one on a 7,000 balance).
@@ -465,10 +458,12 @@ export default function Dashboard() {
         mobile: (l.contact || cust?.mobile || '').trim(),
       };
     })
-    .sort((a, b) => b.days - a.days)
-    .slice(0, 6),
+    .sort((a, b) => b.days - a.days),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [active, d, today]);
+
+  /** The card's preview — the 6 worst. Unchanged from what it always showed. */
+  const overdueRows = useMemo(() => overdueAll.slice(0, 6), [overdueAll]);
 
   /** Build the overdue notice PDF and hand it to the OS share sheet, so it can
    *  be sent to the customer on WhatsApp as a document. jsPDF is ~415 KB, so it
@@ -509,16 +504,13 @@ export default function Dashboard() {
   const efficiencyView = efficiency;
 
   // Search filter for the Overdue Loans list (customer / loan id / risk / type).
+  // Risk is still MATCHED here — typing "high" narrows to the high-risk rows —
+  // so dropping the risk dropdown from the header did not remove the ability to
+  // filter by risk, it just stopped spending header width on it.
   const oq = overdueQuery.trim().toLowerCase();
   const overdueFiltered = oq
     ? overdueView.filter((r) => r.customer.toLowerCase().includes(oq) || r.loanNo.toLowerCase().includes(oq) || riskFor(r.days).toLowerCase().includes(oq) || (r.type ?? '').toLowerCase().includes(oq))
     : overdueView;
-const overdueRiskFiltered = overdueFilterRisk === 'all'
-    ? overdueFiltered
-    : overdueFiltered.filter((r) => {
-        const riskLabel = riskFor(r.days).toLowerCase();
-        return riskLabel === `${overdueFilterRisk} risk`;
-      });
 
   return (
     <div className="min-h-full bg-[#F8FAFC] dark:bg-transparent">
@@ -589,42 +581,93 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
               system rather than this card being visibly different. */}
           <div className="flex flex-col rounded-2xl border-[0.5px] border-slate-200/80 bg-white p-4 shadow-[0_1px_3px_rgba(17,24,39,.04)] transition-all duration-200 hover:shadow-[0_8px_28px_-14px_rgba(17,24,39,.18)] dark:border-white/[.08] dark:bg-surface">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              {/* The badge counts the WHOLE book, not the 6 rows below it.
+                  Previously it read `overdueView.length`, which is capped at 6,
+                  so a portfolio with 43 overdue loans showed "6" here while the
+                  KPI tile above showed 43 — two numbers for one fact. */}
               <h3 className="text-[15px] font-bold tracking-tight text-ink">
                 Overdue Loans
-                {overdueView.length > 0 && (
+                {overdueAll.length > 0 && (
                   <span className="ml-2 inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 align-middle text-[11px] font-bold text-red-600 dark:bg-red-500/15 dark:text-red-400">
-                    {overdueView.length}
+                    {overdueAll.length}
                   </span>
                 )}
               </h3>
-              <div className="flex items-center gap-2.5">
-                <div className="flex w-52 items-center gap-2 rounded-xl border-[0.5px] border-slate-200/80 bg-white px-3 py-1.5 focus-within:border-indigo-400 dark:border-white/[.08] dark:bg-surface">
-                  <Search size={15} className="shrink-0 text-slate-400" />
-                  <input value={overdueQuery} onChange={(e) => setOverdueQuery(e.target.value)} placeholder="Search customer, loan…" className="w-full bg-transparent text-[13px] text-ink outline-none placeholder:text-muted" />
-                </div>
-<div className="flex items-center gap-2">
-                  <select
-                    value={overdueFilterRisk}
-                    onChange={(e) => setOverdueFilterRisk(e.target.value as 'all' | 'high' | 'medium' | 'low')}
-                    className="rounded-xl border-[0.5px] border-slate-200/80 bg-white px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-muted dark-border-white/[.08] dark:bg-surface dark:text-ink dark:placeholder:text-muted min-w-[120px]"
+              {/* Search / View all. Two things this header deliberately does
+                  NOT carry: a "Call" button (it could only ever dial whichever
+                  loan sorted first — a row action masquerading as a bulk one),
+                  and a risk dropdown (risk is derivable by typing "high" into
+                  the search, and the dropdown cost ~130px of a header that has
+                  to fit inside 7/10 of the content width). */}
+              <div className="flex items-center gap-2">
+                {/* Expanding search: an icon until clicked, then a 208px field.
+                    One element throughout — the width transitions rather than
+                    the input mounting — so focus is never lost mid-animation
+                    and the header never reflows in a jump. */}
+                <div
+                  className={`flex h-9 items-center overflow-hidden rounded-xl border-[0.5px] transition-all duration-200 ${
+                    overdueSearchOpen
+                      ? 'w-52 gap-2 border-slate-200/80 bg-white px-3 focus-within:border-indigo-400 dark:border-white/[.08] dark:bg-surface'
+                      : 'w-9 border-transparent bg-transparent'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => { setOverdueSearchOpen(true); requestAnimationFrame(() => overdueSearchRef.current?.focus()); }}
+                    // Once open the glyph is decoration, not a control, and
+                    // must be inert: a click on it would blur the input, whose
+                    // onBlur collapses the field, which then races the refocus
+                    // above. Disabled also drops it from the tab order.
+                    disabled={overdueSearchOpen}
+                    aria-label="Search overdue loans"
+                    aria-expanded={overdueSearchOpen}
+                    title="Search"
+                    className={`grid shrink-0 place-items-center text-muted transition-colors ${
+                      overdueSearchOpen
+                        ? 'h-9 w-4 cursor-default text-slate-400'
+                        : 'h-full w-full rounded-xl hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.08]'
+                    }`}
                   >
-                    <option value="all">All</option>
-                    <option value="high">High Risk</option>
-                    <option value="medium">Medium Risk</option>
-                    <option value="low">Low Risk</option>
-                  </select>
-                  <button onClick={() => navigate('/loans')} className="hidden text-[13px] font-semibold sm:inline" style={{ color: C.primary }}>View all</button>
-                  {overdueView.length > 0 ? (
-                    <a
-                      href={`tel:${overdueView[0]?.mobile.replace(/\D/g, '')}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-xl border-[0.5px] border-emerald-400 bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-600 dark:border-emerald-500/15 dark:bg-emerald-500/15 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-white/[.08]"
-                    >
-                      <Phone size={15} className="shrink-0" /> Call
-                    </a>
-                  ) : null}
+                    <Search size={15} />
+                  </button>
+                  {/* flex-1 in a w-9 box that the button already fills leaves
+                      the input at 0px when collapsed — no extra state needed to
+                      hide it, and overflow-hidden clips the caret. */}
+                  <input
+                    ref={overdueSearchRef}
+                    value={overdueQuery}
+                    onChange={(e) => setOverdueQuery(e.target.value)}
+                    // Collapse only when it is empty: closing on a live query
+                    // would silently un-filter the table behind the user.
+                    onBlur={() => { if (!overdueQuery.trim()) setOverdueSearchOpen(false); }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Escape') return;
+                      // Stop the card's Escape here — otherwise it would also
+                      // reach any dialog above and close that too.
+                      e.stopPropagation();
+                      setOverdueQuery('');
+                      setOverdueSearchOpen(false);
+                    }}
+                    placeholder="Search customer, loan…"
+                    tabIndex={overdueSearchOpen ? 0 : -1}
+                    aria-hidden={!overdueSearchOpen}
+                    className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-muted"
+                  />
                 </div>
+                {/* Opens the full paginated list. The card is a top-6 triage
+                    preview, so this is how the rest of the book is reached —
+                    the Loans page is still one click away from the sidebar, and
+                    from each row's "Open ledger". */}
+                {overdueAll.length > 0 && (
+                  <button
+                    onClick={() => setOverdueAllOpen(true)}
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-2 text-[13px] font-semibold transition-opacity hover:opacity-80"
+                    style={{ color: C.primary }}
+                  >
+                    View all {overdueAll.length > 6 && <span className="tabular-nums">({overdueAll.length})</span>}
+                    <ArrowRight size={14} className="shrink-0" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -645,21 +688,29 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
               // grows to its content and only scrolls past ~6 rows.
               // Borderless: the card already frames this content, and a third
               // nested box (card > container > table) read as clutter.
-              <div className="overscroll-contain sm:max-h-[340px] sm:overflow-auto">
-                {/* This card is 7/10 of the content width (~700px at 1280), so a
-                    760px min-width guaranteed a horizontal scrollbar on every
-                    screen. Four columns instead of six fixes that at the source:
-                    the loan id joins the customer cell (they identify the same
-                    thing) and the risk pill joins the days count (risk IS a band
-                    of days, so two columns said one thing twice). */}
-                <table className="w-full table-fixed text-sm sm:min-w-[700px]">
+              <div className="overflow-x-auto overscroll-contain sm:max-h-[340px] sm:overflow-auto">
+                {/* Column count is kept low so this card (7/10 of the content
+                    width, ~700px at 1280) needs as little horizontal scroll as
+                    possible: the loan id lives in the customer cell (they
+                    identify the same record) and the risk pill lives with the
+                    day count (risk IS a band of days, so two columns said one
+                    thing twice).
+
+                    The min-w still matters: table-fixed will happily squeeze a
+                    column below its content, and at 14% the Actions column
+                    (~98px) could not hold the kebab AND the Call button
+                    (~114px) — that cell overflowed its track and pushed every
+                    column left of it out of line with the sticky header. The
+                    widths below give Actions room; the min-w + the scrolling
+                    parent stop a narrow viewport from taking it away again. */}
+                <table className="w-full min-w-[620px] table-fixed text-sm sm:min-w-[820px]">
                   <colgroup>
-                    <col className="w-[38%] sm:w-[26%]" />{/* Customer + loan id */}
-                    <col className="hidden sm:table-column sm:w-[17%]" />{/* Loan type + since when */}
-                    <col className="w-[26%] sm:w-[15%]" />{/* Arrears */}
+                    <col className="w-[34%] sm:w-[22%]" />{/* Customer + loan id */}
+                    <col className="hidden sm:table-column sm:w-[15%]" />{/* Loan type + since when */}
+                    <col className="w-[26%] sm:w-[16%]" />{/* Overdue amount */}
                     <col className="hidden md:table-column md:w-[15%]" />{/* Outstanding */}
-                    <col className="w-[18%] sm:w-[13%]" />{/* Overdue: days + risk */}
-                    <col className="w-[18%] sm:w-[14%]" />{/* Actions */}
+                    <col className="w-[18%] sm:w-[14%]" />{/* Overdue period: days + risk */}
+                    <col className="w-[22%] sm:w-[18%]" />{/* Actions */}
                   </colgroup>
                   {/* Sticky header needs its own opaque background AND a hairline
                       shadow, or scrolled rows appear to bleed through it. */}
@@ -669,18 +720,18 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
                         right. Previously Due Amount/Actions were right-aligned
                         in the header only, so nothing lined up. */}
                     <tr className="border-b-2 border-slate-200 bg-gradient-to-b from-slate-50 to-slate-100/60 text-[10.5px] font-bold uppercase tracking-[0.09em] text-slate-600 dark:border-white/[.10] dark:from-white/[.05] dark:to-white/[.02] dark:text-slate-300">
-                      <th className="rounded-l-lg px-3 py-2 text-left font-bold">Customer</th>
-                      <th className="hidden px-3 py-2 text-left font-bold sm:table-cell">Loan</th>
-                      <th className="px-3 py-2 text-right font-bold">Arrears</th>
-                      <th className="hidden px-3 py-2 text-right font-bold md:table-cell">Outstanding</th>
-                      <th className="px-3 py-2 text-right font-bold">Overdue</th>
-                      <th className="rounded-r-lg px-3 py-2 text-right font-bold">Actions</th>
+                      <th className="whitespace-nowrap rounded-l-lg px-3 py-2 text-left font-bold">Customer</th>
+                      <th className="hidden whitespace-nowrap px-3 py-2 text-left font-bold sm:table-cell">Loan</th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right font-bold">Overdue Amount</th>
+                      <th className="hidden whitespace-nowrap px-3 py-2 text-right font-bold md:table-cell">Outstanding</th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right font-bold">Overdue Period</th>
+                      <th className="whitespace-nowrap rounded-r-lg px-3 py-2 text-right font-bold">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {overdueRiskFiltered.length === 0 ? (
+                    {overdueFiltered.length === 0 ? (
                       <tr><td colSpan={6} className="py-16 text-center text-[13px] text-muted">No loans match &quot;{overdueQuery}&quot;.</td></tr>
-                    ) : overdueRiskFiltered.map((r) => {
+                    ) : overdueFiltered.map((r) => {
                       const risk = riskFor(r.days);
                       const callHref = r.mobile ? telHref(r.mobile) : null;
                       const waHref = r.mobile
@@ -715,16 +766,17 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
                               <div className="truncate text-[11px] text-muted">since {fmtDate(r.dueSince)}</div>
                             </div>
                           </td>
-                          {/* Arrears — what is overdue right now (red: it is the
-                              number being chased). */}
+                          {/* Overdue Amount — what is overdue right now (red: it
+                              is the number being chased). */}
                           <td className="px-3 py-2.5 text-right font-bold tabular-nums text-red-600 dark:text-red-400">{inr(r.due)}</td>
-                          {/* Outstanding — total still owed. Gives the arrears
-                              figure scale: a 3,500 arrear on 94,000 outstanding is
-                              a different conversation from one on 7,000. */}
+                          {/* Outstanding — total still owed. Gives the overdue
+                              amount scale: 3,500 overdue on a 94,000 balance is a
+                              different conversation from one on 7,000. */}
                           <td className="hidden px-3 py-2.5 text-right tabular-nums text-muted md:table-cell">{inr(r.outstanding)}</td>
-                          {/* Days overdue + its risk band. Risk is DERIVED from the
-                              day count (riskFor), so showing them apart stated one
-                              fact in two columns. The pill keeps the colour cue. */}
+                          {/* Overdue Period — days overdue + its risk band. Risk
+                              is DERIVED from the day count (riskFor), so showing
+                              them apart stated one fact in two columns. The pill
+                              keeps the colour cue. */}
                           <td className="px-3 py-2.5 text-right">
                             <div className="font-semibold tabular-nums text-red-600 dark:text-red-400">{r.days}d</div>
                             <span className={`mt-0.5 inline-flex rounded-full px-1.5 py-px text-[10px] font-bold ${RISK_PILL[risk]}`}>{risk.replace(' Risk', '')}</span>
@@ -737,7 +789,7 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
                                 keeps every action reachable, named, and gives a
                                 comfortable touch target on tablets. */}
                             <div
-                              className="relative flex justify-end"
+                              className="flex items-center justify-end gap-1.5"
                               onKeyDown={(e) => {
                                 if (e.key === 'Escape' && overdueMenu === r.id) {
                                   e.stopPropagation();
@@ -765,7 +817,7 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
                                 aria-label={`Actions for ${r.customer}`}
                                 aria-haspopup="menu"
                                 aria-expanded={overdueMenu === r.id}
-                                className="grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.08]"
+                                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.08]"
                               >
                                 <MoreVertical size={16} />
                               </button>
@@ -785,19 +837,27 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
                                         <WhatsAppIcon size={15} /> WhatsApp
                                       </a>
                                     )}
-</div>
-                              </>,
-                              document.body,
-                            )}
-                            <a
-                              href={`tel:${callHref?.replace(/\D/g, '')}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-xl border-[0.5px] border-emerald-400 bg-emerald-50 px-3 py-1.5 text-[12px] font-semibold text-emerald-600 dark:border-emerald-500/15 dark:bg-emerald-500/15 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-white/[.08]"
-                            >
-                              <Phone size={15} className="shrink-0" /> Call
-                            </a>
-                          </div>
+                                  </div>
+                                </>,
+                                document.body,
+                              )}
+                              {/* telHref already yields `tel:<digits>` — the old
+                                  re-prefix produced href="tel:undefined" for a
+                                  customer with no mobile on file. Same height as
+                                  the kebab so the pair sits on one baseline; the
+                                  label drops below sm where the column is
+                                  narrowest and the icon alone is unambiguous. */}
+                              {callHref && (
+                                <a
+                                  href={callHref}
+                                  aria-label={`Call ${r.customer}`}
+                                  className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border-[0.5px] border-emerald-400 bg-emerald-50 px-2.5 text-[12px] font-semibold text-emerald-600 transition-colors hover:bg-emerald-100 dark:border-emerald-500/15 dark:bg-emerald-500/15 dark:text-emerald-400 dark:hover:bg-white/[.08]"
+                                >
+                                  <Phone size={15} className="shrink-0" />
+                                  <span className="hidden sm:inline">Call</span>
+                                </a>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -806,11 +866,20 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
                 </table>
               </div>
             )}
-            {/* Only when the list is scrollable — otherwise it repeats the
-                header's "View all" for no reason. */}
-            {overdueView.length > 6 && (
+            {/* Says plainly that the card is a preview, and how much is hidden.
+                (The old footer here was gated on `overdueView.length > 6`,
+                which could never be true — the list was already sliced to 6 —
+                so this line never rendered.) */}
+            {overdueAll.length > overdueView.length && (
               <div className="mt-3 border-t border-slate-100 pt-3 text-center dark:border-white/[.06]">
-                <button onClick={() => navigate('/loans')} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold transition-opacity hover:opacity-80" style={{ color: C.primary }}>View all {overdueView.length} overdue loans <ArrowRight size={14} /></button>
+                <button
+                  onClick={() => setOverdueAllOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold transition-opacity hover:opacity-80"
+                  style={{ color: C.primary }}
+                >
+                  Showing the {overdueView.length} most overdue · View all {overdueAll.length}
+                  <ArrowRight size={14} />
+                </button>
               </div>
             )}
           </div>
@@ -834,6 +903,31 @@ const overdueRiskFiltered = overdueFilterRisk === 'all'
 
         <p className="pb-2 text-center text-[12px] text-muted">All amounts are in INR</p>
       </div>
+
+      {/* Full overdue book — searchable, filterable by loan type, paginated.
+          Purely a view over `overdueAll`: the row actions below are the SAME
+          handlers the card uses, so nothing here can diverge from it. */}
+      <OverdueLoansDialog
+        open={overdueAllOpen}
+        onClose={() => setOverdueAllOpen(false)}
+        rows={overdueAll}
+        // Close first: navigating with the modal still mounted would drop the
+        // user onto /loans underneath an overlay they cannot see past.
+        onOpenLedger={(r) => { setOverdueAllOpen(false); navigate(`/loans?ledger=${encodeURIComponent(r.loanNo)}`); }}
+        // The dialog is handed the narrow row type, so re-attach the full record
+        // (it carries `loan`, which the notice needs to itemise instalments).
+        onSendNotice={(r) => {
+          const full = overdueAll.find((x) => x.id === r.id);
+          if (full) return sendOverdueNotice(full);
+        }}
+        telHrefFor={(r) => (r.mobile ? telHref(r.mobile) : null)}
+        waHrefFor={(r) => (r.mobile
+          ? whatsappHref(r.mobile, overdueWhatsAppMessage({
+            customer: r.customer, loanNo: r.loanNo, type: r.type,
+            due: r.due, days: r.days, dueSince: fmtDate(r.dueSince),
+          }))
+          : null)}
+      />
     </div>
   );
 }
