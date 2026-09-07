@@ -229,7 +229,15 @@ func (h *Handler) feed(w http.ResponseWriter, r *http.Request) {
 			page = 1
 		}
 		if limit <= 0 {
-			limit = 100
+			limit = defaultFeedLimit
+		}
+		// Clamp HERE, before offset and total_pages are derived. The service
+		// clamps too, but it can't reach back into the meta: computing
+		// total_pages from an unclamped limit told the client "1 page" while
+		// only maxFeedLimit rows came back, so a paging client stopped early
+		// and silently lost every row past the cap.
+		if limit > maxFeedLimit {
+			limit = maxFeedLimit
 		}
 		offset := (page - 1) * limit
 		items, total, err := h.service.FeedRange(r.Context(), from, to, limit, offset)

@@ -121,10 +121,22 @@ export interface InvestmentTotalsWire {
 }
 
 export const investmentApi = {
-  /** Every investment (both statuses) — the page filters client-side. */
+  /** Every investment (both statuses) — the page filters client-side.
+   *
+   *  Pages through the server rather than taking one capped page: a single
+   *  ?limit=N request silently drops everything past N, and investor capital
+   *  feeds the Available Funds KPI, so a short read understates the book. */
   async list(): Promise<InvestmentWithDerived[]> {
-    const res: ListResult<InvestmentWire> = await api.getList<InvestmentWire>('/investments?limit=500');
-    return res.data.map(toInvestment);
+    const out: InvestmentWithDerived[] = [];
+    let page = 1;
+    for (;;) {
+      const res: ListResult<InvestmentWire> =
+        await api.getList<InvestmentWire>(`/investments?page=${page}&limit=200`);
+      out.push(...res.data.map(toInvestment));
+      if (page >= (res.meta?.total_pages ?? 1) || res.data.length === 0) break;
+      page += 1;
+    }
+    return out;
   },
 
   async get(id: number): Promise<InvestmentWithDerived> {

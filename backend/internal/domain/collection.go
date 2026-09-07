@@ -75,6 +75,23 @@ type Collected struct {
 // don't distinguish interest from principal.
 func (c Collected) Total() Paise { return c.Interest.Add(c.Principal) }
 
+// Less returns the tally with one payment of `amount` removed from `kind`'s
+// bucket. Used when EDITING a payment: the stored sum still holds the row's old
+// amount, so validating a new amount against it would count that payment twice.
+// Never returns a negative bucket.
+func (c Collected) Less(kind CollectionKind, amount Paise) Collected {
+	if kind == KindPrincipal {
+		if c.Principal = c.Principal.Sub(amount); c.Principal < 0 {
+			c.Principal = 0
+		}
+		return c
+	}
+	if c.Interest = c.Interest.Sub(amount); c.Interest < 0 {
+		c.Interest = 0
+	}
+	return c
+}
+
 // CollectionInput is the validated create/update payload. LoanID comes from the
 // URL, not the body. Amount is Paise. Date is the calendar day the payment was
 // received.
@@ -151,6 +168,27 @@ func (in *CollectionInput) Validate(loan *Loan, collected Collected, now time.Ti
 
 	if in.Remarks != nil && len([]rune(*in.Remarks)) > maxCollectionRemarksLen {
 		fields["remarks"] = "Max 300 characters"
+	}
+
+	// Hard ceiling for FIXED-DEBT loans only (Daily Collection: interest is
+	// deducted upfront, so `principal` is the whole repayable pool). Paying
+	// beyond it is not "early settlement" — it is money the borrower does not
+	// owe, and it is how a re-keyed collection session pushed two loans to 101
+	// payments on a 100-day term.
+	//
+	// Deliberately NOT applied to interest-only or EMI loans: their debt grows
+	// with time (accruing interest), so there is no fixed ceiling to test and a
+	// cap would reject legitimate ongoing interest. Advance/early settlement
+	// WITHIN the ceiling stays allowed — the existing soft UI warning still
+	// covers that case, per this function's contract above.
+	if loan != nil && in.Amount > 0 && loan.Type.IsInstalmentLoan() {
+		if room := loan.Principal.Sub(collected.Total()); in.Amount > room {
+			if room <= 0 {
+				fields["amount"] = "This loan is already fully repaid"
+			} else {
+				fields["amount"] = "Amount exceeds the outstanding balance of " + room.String()
+			}
+		}
 	}
 
 	// Target slot (if supplied) must lie on the loan's timeline: never before

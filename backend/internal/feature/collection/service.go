@@ -364,6 +364,12 @@ func (s *Service) Update(ctx context.Context, id int64, in domain.CollectionInpu
 	if err != nil {
 		return nil, err
 	}
+	// Exclude the row being edited: the sum above still contains its OLD amount,
+	// so validating the new amount against it double-counts this payment. Left
+	// in, a no-op re-save of a payment on a fully-repaid loan is rejected as an
+	// overpayment. Validation must see the loan as it will be once this row is
+	// replaced.
+	collected = collected.Less(existing.Kind, existing.Amount)
 	if err := in.Validate(l, collected, s.now()); err != nil {
 		return nil, err
 	}

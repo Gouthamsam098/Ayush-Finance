@@ -7,6 +7,8 @@ import {
 import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { whatsappHref } from '@/lib/whatsapp';
 import { usePermissions } from '@/lib/permissions';
+import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { useOpenSidebar } from '@/components/layout/AppShell';
 import {
   ChartCard, KpiCard, LoanPerformanceChart, CashFlowChart, EfficiencyGauge, RangeToggle, C,
@@ -18,7 +20,7 @@ import {
 import { computeFunds, interestRealised } from '@/lib/funds';
 import { buildSchedule } from '@/lib/loanSchedule';
 import {
-  Wallet, CalendarClock, IndianRupee, TrendingUp, Menu, Landmark, PiggyBank,
+  Wallet, IndianRupee, TrendingUp, Menu, Landmark, PiggyBank, Banknote, Percent,
   Phone, Eye, HandCoins, ArrowRight, Search, Receipt, FileDown, MoreVertical,
 } from 'lucide-react';
 
@@ -158,17 +160,29 @@ export default function Dashboard() {
   const { canView } = usePermissions();
   const [overdueQuery, setOverdueQuery] = useState('');
   // Row whose mobile ⋮ menu is open (phones only — desktop shows the icon row).
+  // Which KPI breakdown popup is open. The Profit card deep-links to the
+  // Investments page; Investments and Available Funds explain themselves
+  // right here, because both are derived figures a reader cannot verify
+  // from the card alone.
+  const [fundsDialog, setFundsDialog] = useState<null | 'investments' | 'available'>(null);
   const [overdueMenu, setOverdueMenu] = useState<number | null>(null);
   // Screen coords for the portalled menu (see the trigger's onClick).
   const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
-  const [cashRange, setCashRange] = useState<Range>('month');
-  const [perfRange, setPerfRange] = useState<Range>('6m');
+  // Charts open on the same 1-year window as the KPIs, so every figure on
+  // the screen describes one period (see periodMode default below).
+  const [cashRange, setCashRange] = useState<Range>('1y');
+  const [perfRange, setPerfRange] = useState<Range>('1y');
   // Period filter — day defaults to today; month to current calendar month;
   // 'range' scopes the KPIs to a quick-range preset AND drives both chart
   // toggles to the same window, so the whole dashboard describes one period.
-  const [periodMode, setPeriodMode] = useState<PeriodMode>('day');
+  // Default to the 1-YEAR range, not today. A single day shows ₹0 on every
+  // money card whenever nothing was collected that morning, which reads as
+  // "the business earned nothing" rather than "no cash in yet today". The year
+  // view answers the question the dashboard is actually for — how is the book
+  // doing — and the date filter is still there for a specific day or month.
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('range');
   const [periodDate, setPeriodDate] = useState(todayISO);
-  const [periodRange, setPeriodRange] = useState<PeriodRangeKey>('month');
+  const [periodRange, setPeriodRange] = useState<PeriodRangeKey>('1y');
 
   const active = d.loans.filter((l) => l.status === 'ACTIVE');
   const today = todayISO();
@@ -243,9 +257,6 @@ export default function Dashboard() {
     [d.loans, d.collections, d.expenses],
   );
   const investorCapital = funds.capital;
-  // Cash currently out with borrowers, capped at the capital raised so the
-  // "lent out" hint never exceeds the capital it describes.
-  const deployedCapital = Math.min(totalOutstanding, investorCapital);
 
   // Selected period (day or month) — drives Collections / Profit / Expenses KPIs.
   const periodColl = periodMode === 'day'
@@ -253,6 +264,7 @@ export default function Dashboard() {
     : periodMode === 'range'
       ? d.collections.filter((c) => inRange(c.date)).reduce((s, c) => s + c.amount, 0)
       : collInMonth(periodKey);
+
   const periodExp = periodMode === 'day'
     ? d.expenses.filter((e) => e.date === periodDate).reduce((s, e) => s + e.amount, 0)
     : periodMode === 'range'
@@ -260,8 +272,6 @@ export default function Dashboard() {
       : expInMonth(periodKey);
 
   const totalCollected = d.collections.reduce((s, c) => s + c.amount, 0); // all-time collections
-  const dueTodayLoans = active.filter((l) => d.nextDueFor(l) === today);
-  const dueToday = dueTodayLoans.reduce((s, l) => s + dueFor(l), 0);
 
   // Collection efficiency = collected ÷ (collected + still-due) this month.
   // NULL when there's no collection activity at all — showing "100%" with zero
@@ -320,6 +330,103 @@ export default function Dashboard() {
     return map;
   }, [d.collections, loanById]);
 
+  // ── Cards the lender actually reads the book by ────────────────────────────
+  // The old strip mixed capital, cash position and period takings, so nothing
+  // answered "what did I lend, what is late, what came back, what did I earn".
+  // These four do, and they split cash from earnings instead of blending them.
+
+  /** Actual Principal — face value of every ACTIVE loan: what is on the books. */
+  /** Total handed to borrowers — CASH, across every loan ever made.
+   *
+   *  Deliberately the same definition `computeFunds` uses for `disbursed`, so
+   *  the card and the Available Funds popup row show one identical number.
+   *  Three different figures were previously called "lent": active-only face
+   *  principal here, all-loans cash in the popup, and cash-still-out in the
+   *  Investments popup. Same word, three values, nothing on screen explaining
+   *  the difference — which made the dashboard impossible to reconcile by eye.
+   *
+   *  CASH not face principal: Daily Collection keeps its interest upfront, so
+   *  face principal counts money that never left the bank.
+   *  ALL loans not just active: a closed loan's repayments sit in `collected`,
+   *  so omitting its disbursal would credit the return without debiting the
+   *  outlay. */
+  const actualPrincipal = funds.disbursed;
+
+  /** Interest taken UPFRONT at disbursal, across all loans ever made.
+   *
+   *  Daily Collection deducts its interest before handing the money over: a
+   *  ₹10,00,000 loan pays out ₹9,70,000 while the borrower still owes the full
+   *  ₹10,00,000. That ₹30,000 never left the bank, which is the whole reason
+   *  "disbursed" is lower than "principal" — the single most-questioned gap on
+   *  this dashboard. Spanning ALL loans (not just active) because `disbursed`
+   *  in computeFunds does too, so the two figures describe the same set. */
+  const upfrontDeducted = d.loans.reduce(
+    (s, l) => s + Math.max(0, l.principal - (l.disbursed ?? l.principal)),
+    0,
+  );
+
+  /** Overdue — arrears across active loans (the shortfall owed by today), and
+   *  how many borrowers it spans. Same helper the Overdue Loans table uses, so
+   *  the card and the list below it can never disagree. */
+  /** Arrears split by WHAT is actually late — the two are different debts, not
+   *  a presentational slice of one number:
+   *
+   *  • Collection overdue (Daily Collection, EMI-mode Vehicle/Property):
+   *    interest was deducted upfront, so a missed instalment is unrecovered
+   *    PRINCIPAL — cash the lender is out of pocket.
+   *  • Interest overdue (Daily/Monthly Interest, Flexible, monthly-mode
+   *    Vehicle/Property): principal is not due until settlement, so what is
+   *    late is accrued INTEREST — unearned revenue, not lost capital.
+   *
+   *  Mixing them hides which problem the book has. The predicate is the same
+   *  behavesInterestOnly() the ledger, profit and dueFor() already branch on,
+   *  so the two cards always sum to the Overdue total above. */
+  const collectionOverdue = active
+    .filter((l) => !behavesInterestOnly(l))
+    .reduce((s, l) => s + Math.max(0, dueFor(l)), 0);
+
+  /** Collection Receivable — PRINCIPAL still owed across EVERY active loan.
+   *  Paired with Interest Overdue, the two split Total Outstanding cleanly:
+   *
+   *      Collection Receivable + Interest Overdue = Total Outstanding
+   *
+   *  Principal behaves differently by loan type, so the sum dispatches:
+   *   • Daily Collection — interest was taken upfront, so instalments repay
+   *     principal and it SHRINKS with every payment → principal − collected.
+   *   • Interest-only — principal is settled in one lump at the end, so
+   *     periodic payments never reduce it → principal, in full.
+   *
+   *  An earlier version counted collection-type loans only. That left the
+   *  interest-only loans' ₹70.2 L of principal on no card at all — nearly half
+   *  the book invisible — and the two cards then failed to reconcile against
+   *  Total Outstanding. */
+  const collectionReceivable = active.reduce(
+    (s, l) => s + Math.max(0, behavesInterestOnly(l) ? l.principal : d.outstandingFor(l)),
+    0,
+  );
+  const collectionReceivableCount = active.length;
+  const interestOverdue = active
+    .filter((l) => behavesInterestOnly(l))
+    .reduce((s, l) => s + Math.max(0, dueFor(l)), 0);
+  const interestOverdueCount = active.filter((l) => behavesInterestOnly(l) && isOverdue(l)).length;
+
+  /** Interest Collected — the earnings half of the money received, on the SAME
+   *  recognition rules as the Profit KPI (interestRealised → per-collection),
+   *  so the two can never drift. Bucketed by receipt date, like every other
+   *  period figure. */
+  const collectionsInPeriod = periodMode === 'day'
+    ? d.collections.filter((c) => c.date === periodDate)
+    : periodMode === 'range'
+      ? d.collections.filter((c) => inRange(c.date))
+      : d.collections.filter((c) => c.date.slice(0, 7) === periodKey);
+  const interestCollected = collectionsInPeriod
+    .reduce((s, c) => s + (profitByCollectionId.get(c.id) ?? 0), 0);
+
+  /** Actual Collection — cash received MINUS the interest portion, i.e. the
+   *  principal actually recovered. Interest is shown in its own card, so adding
+   *  it here would count the same rupee twice on one screen. */
+  const actualCollection = Math.max(0, periodColl - interestCollected);
+
   const profitInMonth = (key: string) =>
     d.collections.reduce((s, c) => (c.date.slice(0, 7) === key ? s + (profitByCollectionId.get(c.id) ?? 0) : s), 0);
   // Range profit = sum of each in-range receipt's realised profit — the SAME
@@ -352,8 +459,12 @@ export default function Dashboard() {
   const kpis = [
     // Investor capital leads: it is the funding the whole book sits on.
     { icon: Landmark, tint: 'bg-violet-50 dark:bg-violet-500/15', iconColor: 'text-violet-600 dark:text-violet-400', label: 'Investments', value: inr(investorCapital),
-      hint: investorCapital > 0 ? `${inr(deployedCapital)} lent out` : 'No investor capital', trend: null as KpiTrend | null,
-      onClick: () => navigate('/investments'), actionLabel: `Investor capital ${inr(investorCapital)} — view investors` },
+      // Shows the SAME figure as the Borrower Lent card — the plain total lent
+      // to customers, nothing derived. It previously showed cash-still-deployed
+      // (disbursed − collected), which is a different, smaller number and made
+      // the two cards look contradictory for no benefit to the reader.
+      hint: investorCapital > 0 ? `${inr(actualPrincipal)} given to borrowers` : 'No investor capital', trend: null as KpiTrend | null,
+      onClick: () => setFundsDialog('investments'), actionLabel: `Investor capital ${inr(investorCapital)} — see the breakdown` },
     // Available to lend: capital − lent out + net profit (interest − expenses).
     { icon: PiggyBank, tint: 'bg-teal-50 dark:bg-teal-500/15', iconColor: 'text-teal-600 dark:text-teal-400', label: 'Available Funds', value: inr(funds.available),
       // Breakdown uses the SAME terms computeFunds adds up (capital + collected
@@ -365,21 +476,47 @@ export default function Dashboard() {
         ? `${inr(investorCapital)} capital + ${inr(funds.collected)} collected − ${inr(funds.disbursed)} lent${funds.expenses > 0 ? ` − ${inr(funds.expenses)} expenses` : ''}`
         : 'No investor capital',
       trend: null,
-      onClick: () => navigate('/investments'), actionLabel: `Available funds ${inr(funds.available)} — view investors` },
+      onClick: () => setFundsDialog('available'), actionLabel: `Available funds ${inr(funds.available)} — see how it is calculated` },
+    // BORROWER LENT — face value of the active book: what borrowers OWE.
+    // Distinct from the Investments card's "lent out", which is cash still
+    // deployed; this one does not shrink as borrowers repay.
+    { icon: Banknote, tint: 'bg-blue-50 dark:bg-blue-500/15', iconColor: 'text-blue-600 dark:text-blue-400', label: 'Given to Borrowers', value: inr(actualPrincipal),
+      hint: 'Cash handed over, all loans to date', trend: null,
+      onClick: () => navigate('/loans?status=ACTIVE'), actionLabel: `Given to borrowers ${inr(actualPrincipal)} — view loans` },
     { icon: Wallet, tint: 'bg-indigo-50 dark:bg-indigo-500/15', iconColor: 'text-indigo-600 dark:text-indigo-400', label: 'Total Outstanding', value: inr(totalOutstanding),
-      hint: 'Across active loans', trend: null,
+      hint: 'Principal + accrued interest', trend: null,
       onClick: () => navigate('/loans?status=ACTIVE'), actionLabel: `Total outstanding ${inr(totalOutstanding)} — view active loans` },
-    // Links to the Loans page's 'today' bucket — the SAME strictly-today set
-    // this card counts, so the list matches the figure exactly.
-    { icon: CalendarClock, tint: 'bg-amber-50 dark:bg-amber-500/15', iconColor: 'text-amber-600 dark:text-amber-400', label: 'Due Today', value: inr(dueToday), hint: `${dueTodayLoans.length} loan${dueTodayLoans.length === 1 ? '' : 's'}`, trend: null,
-      onClick: () => navigate('/loans?status=ACTIVE&urgency=today'), actionLabel: `Due today ${inr(dueToday)} — view the ${dueTodayLoans.length} loan${dueTodayLoans.length === 1 ? '' : 's'} due today` },
-    { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Collections', value: inr(periodColl), hint: periodMode === 'day' ? periodLabel : `${periodLabel} · all-time ${inr(totalCollected)}`, trend: null,
-      onClick: () => navigate('/reports?tab=collections'), actionLabel: `Collections ${inr(periodColl)} — view the collections report` },
+    // COLLECTION RECEIVABLE — every rupee of principal still to be collected on
+    // collection-type loans, arrears included. Sits immediately before the
+    // overdue card because it is the whole of which that is the late part.
+    { icon: HandCoins, tint: 'bg-cyan-50 dark:bg-cyan-500/15', iconColor: 'text-cyan-600 dark:text-cyan-400', label: 'Collection Receivable', value: inr(collectionReceivable),
+      hint: `${collectionReceivableCount} loan${collectionReceivableCount === 1 ? '' : 's'} · incl. ${inr(collectionOverdue)} overdue`,
+      trend: null,
+      onClick: () => navigate('/collections'), actionLabel: `Collection receivable ${inr(collectionReceivable)} — view collections` },
+    // Collection Overdue was a card here. Removed: it is a SUBSET of Collection
+    // Receivable above (which states the overdue portion in its own hint), so
+    // showing both invited adding them together and double-counting the arrears.
+    // INTEREST OVERDUE — accrued interest unpaid on interest-only loans. The
+    // principal is not late here, so it reads amber, not red: unearned revenue
+    // rather than lost capital.
+    { icon: Percent, tint: 'bg-orange-50 dark:bg-orange-500/15', iconColor: 'text-orange-600 dark:text-orange-400', label: 'Interest Overdue', value: inr(interestOverdue),
+      hint: `${interestOverdueCount} loan${interestOverdueCount === 1 ? '' : 's'} · interest unpaid`, trend: null,
+      onClick: () => navigate('/loans?status=ACTIVE&urgency=overdue'), actionLabel: `Interest overdue ${inr(interestOverdue)} — view loans in arrears` },
+    // PRINCIPAL RECOVERED — cash in, MINUS its interest portion. Interest has
+    // its own card, so counting it here too would show the same rupee twice.
+    { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Principal Recovered', value: inr(actualCollection),
+      hint: `${periodLabel} · ${inr(periodColl)} received in total`, trend: null,
+      onClick: () => navigate('/reports?tab=collections'), actionLabel: `Principal recovered ${inr(actualCollection)} — view the collections report` },
+    // INTEREST EARNED — the earnings half of the same cash, on the SAME
+    // recognition rules as Profit, so the two can never disagree.
+    { icon: Percent, tint: 'bg-amber-50 dark:bg-amber-500/15', iconColor: 'text-amber-600 dark:text-amber-400', label: 'Interest Earned', value: inr(interestCollected),
+      hint: `${periodLabel} · before expenses`, trend: null,
+      onClick: () => navigate('/reports?tab=collections'), actionLabel: `Interest earned ${inr(interestCollected)} — view the collections report` },
     // NET profit — interest earned in the period LESS the expenses paid in it.
     // Can be negative in a month with heavy costs; shown as-is (never clamped),
     // because hiding a loss would misreport the business.
     { icon: TrendingUp, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Profit', value: inr(netPeriodProfit),
-      hint: `${inr(periodProfit)} interest − ${inr(periodExp)} expenses`,
+      hint: `${inr(interestCollected)} interest earned − ${inr(periodExp)} expenses`,
       trend: periodIsDefault ? trendOf(monthInterest - monthExp, lastInterest - lastExp) : null,
       // Opens the Business Profit breakdown (which loans earned it, what it was
       // spent on) rather than a generic report.
@@ -464,8 +601,12 @@ export default function Dashboard() {
         mobile: (l.contact || cust?.mobile || '').trim(),
       };
     })
-    .sort((a, b) => b.days - a.days)
-    .slice(0, 6),
+    .sort((a, b) => b.days - a.days),
+    // NO .slice() here. It used to cap at 6, but the panel badge counts THIS
+    // array — so a book with 38 loans in arrears reported "6", hiding 32 of
+    // them (the worst 227 days late) from whoever works the list. The cap is
+    // now applied at RENDER time only, with a "show all" toggle, so the count
+    // is always the truth and every loan is reachable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [active, d, today]);
 
@@ -512,6 +653,14 @@ export default function Dashboard() {
   const overdueFiltered = oq
     ? overdueView.filter((r) => r.customer.toLowerCase().includes(oq) || r.loanNo.toLowerCase().includes(oq) || riskFor(r.days).toLowerCase().includes(oq) || (r.type ?? '').toLowerCase().includes(oq))
     : overdueView;
+  // Draw 6 by default; the rest are one click away. Applied HERE, not in the
+  // useMemo, so overdueFiltered.length stays the honest count for the badge.
+  // EVERY overdue loan renders — no cap, no toggle. The panel is the place
+  // arrears get worked from, so the list scrolls inside its own container
+  // (sm:max-h-[340px] overflow-auto) rather than making the user click to
+  // reveal the rest. A hardcoded .slice(0, 6) used to sit in the useMemo,
+  // which both hid 32 loans and made the badge report "6" instead of 38.
+  const overdueVisible = overdueFiltered;
 
   return (
     <div className="min-h-full bg-[#F8FAFC] dark:bg-transparent">
@@ -545,7 +694,10 @@ export default function Dashboard() {
         {/* SECTION 1 — Portfolio Summary (5 KPI cards) */}
         {/* 7 cards in ONE row from xl up. Tighter gap at that breakpoint so
             seven cards fit without the values wrapping. */}
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7 xl:gap-3">
+        {/* 10 cards in a clean 5 x 2 at xl. Seven-across truncated the rupee
+            figures, so the strip steps 2 → 3 → 5; each breakpoint divides the
+            count evenly, which keeps the rows balanced rather than ragged. */}
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5 xl:gap-3">
           {kpisView.map((k) => <KpiCard key={k.label} {...k} />)}
         </div>
 
@@ -595,7 +747,10 @@ export default function Dashboard() {
                   <Search size={15} className="shrink-0 text-slate-400" />
                   <input value={overdueQuery} onChange={(e) => setOverdueQuery(e.target.value)} placeholder="Search customer, loan…" className="w-full bg-transparent text-[13px] text-ink outline-none placeholder:text-muted" />
                 </div>
-                <button onClick={() => navigate('/loans')} className="hidden text-[13px] font-semibold sm:inline" style={{ color: C.primary }}>View all</button>
+                {/* Lands on the OVERDUE set, not the whole book — this sits in
+                    the Overdue Loans header, so "View all" must mean all
+                    overdue. It previously navigated to /loans unfiltered. */}
+                <button onClick={() => navigate('/loans?status=ACTIVE&urgency=overdue')} className="hidden text-[13px] font-semibold sm:inline" style={{ color: C.primary }}>View all</button>
               </div>
             </div>
 
@@ -616,7 +771,7 @@ export default function Dashboard() {
               // grows to its content and only scrolls past ~6 rows.
               // Borderless: the card already frames this content, and a third
               // nested box (card > container > table) read as clutter.
-              <div className="overscroll-contain sm:max-h-[340px] sm:overflow-auto">
+              <div className="overscroll-contain max-h-[420px] overflow-auto sm:max-h-[340px]">
                 {/* This card is 7/10 of the content width (~700px at 1280), so a
                     760px min-width guaranteed a horizontal scrollbar on every
                     screen. Four columns instead of six fixes that at the source:
@@ -651,7 +806,7 @@ export default function Dashboard() {
                   <tbody>
                     {overdueFiltered.length === 0 ? (
                       <tr><td colSpan={6} className="py-16 text-center text-[13px] text-muted">No loans match &quot;{overdueQuery}&quot;.</td></tr>
-                    ) : overdueFiltered.map((r) => {
+                    ) : overdueVisible.map((r) => {
                       const risk = riskFor(r.days);
                       const callHref = r.mobile ? telHref(r.mobile) : null;
                       const waHref = r.mobile
@@ -774,11 +929,14 @@ export default function Dashboard() {
                 </table>
               </div>
             )}
-            {/* Only when the list is scrollable — otherwise it repeats the
-                header's "View all" for no reason. */}
-            {overdueView.length > 6 && (
+            {/* Expand in place first, then offer the full Loans page. The
+                previous version only linked away, which meant the 32 loans
+                beyond the cap were never visible on the dashboard at all. */}
+            {overdueFiltered.length > 6 && (
               <div className="mt-3 border-t border-slate-100 pt-3 text-center dark:border-white/[.06]">
-                <button onClick={() => navigate('/loans')} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold transition-opacity hover:opacity-80" style={{ color: C.primary }}>View all {overdueView.length} overdue loans <ArrowRight size={14} /></button>
+                <button onClick={() => navigate('/loans?status=ACTIVE&urgency=overdue')} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold transition-opacity hover:opacity-80" style={{ color: C.primary }}>
+                  View all {overdueFiltered.length} overdue loans <ArrowRight size={14} />
+                </button>
               </div>
             )}
           </div>
@@ -802,6 +960,153 @@ export default function Dashboard() {
 
         <p className="pb-2 text-center text-[12px] text-muted">All amounts are in INR</p>
       </div>
+
+      {/* ── Investments breakdown — where the raised capital physically sits ──
+          Investments is a RECORDED figure (what investors handed over), not a
+          derived one, so the useful thing to show is not how it was computed
+          but where every rupee of it has gone. The three rows are mutually
+          exclusive and sum back to the capital, which is what makes the card
+          auditable at a glance. */}
+      <Dialog
+        wide
+        open={fundsDialog === 'investments'}
+        onClose={() => setFundsDialog(null)}
+        title="Investor Capital"
+        subtitle="What was raised, and where every rupee of it is now"
+        footer={<Button onClick={() => setFundsDialog(null)}>Close</Button>}
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border-[0.5px] border-violet-200 bg-violet-50 px-4 py-3.5 dark:border-violet-500/25 dark:bg-violet-500/[.07]">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-violet-700 dark:text-violet-300">Total raised</div>
+            <div className="font-display text-2xl font-bold tabular-nums text-ink">{inr(funds.capital)}</div>
+            <div className="mt-0.5 text-[12px] text-muted">Across all active investments</div>
+          </div>
+
+          <div>
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted">Where it is now</div>
+            <div className="overflow-hidden rounded-xl border-[0.5px] border-slate-200 dark:border-white/[.07]">
+              {[
+                { label: 'Cash in hand', note: 'In the bank, ready to lend',
+                  value: funds.available, tone: 'text-teal-600 dark:text-teal-400' },
+                { label: 'With borrowers', note: 'Given to borrowers, minus what they have repaid',
+                  value: Math.max(0, funds.disbursed - funds.collected), tone: 'text-indigo-600 dark:text-indigo-400' },
+                { label: 'Spent on expenses', note: 'Running costs and investor payouts',
+                  value: funds.expenses, tone: 'text-rose-600 dark:text-rose-400' },
+              ].map((r) => (
+                <div key={r.label} className="flex items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 last:border-0 dark:border-white/[.06]">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-medium text-ink">{r.label}</div>
+                    <div className="text-[11.5px] text-muted">{r.note}</div>
+                  </div>
+                  <div className={`shrink-0 font-display text-[15px] font-bold tabular-nums ${r.tone}`}>{inr(r.value)}</div>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-3 bg-slate-50 px-3.5 py-2.5 dark:bg-white/[.03]">
+                <div className="text-[13px] font-semibold text-ink">= Total raised</div>
+                <div className="font-display text-[15px] font-bold tabular-nums text-violet-600 dark:text-violet-400">
+                  {inr(funds.available + Math.max(0, funds.disbursed - funds.collected) + funds.expenses)}
+                </div>
+              </div>
+            </div>
+            <p className="mt-2 text-[11.5px] leading-relaxed text-muted">
+              Every rupee raised is in one of these three places. Profit earned
+              ({inr(funds.netProfit)}) is already inside them — mostly in cash in hand.
+            </p>
+          </div>
+        </div>
+      </Dialog>
+
+      {/* ── Available Funds breakdown — the arithmetic, shown as arithmetic ───
+          This one IS derived, and its formula surprises people (interest is
+          inside `collected`; upfront deduction is inside `disbursed`), so the
+          dialog lays the four terms out in the order they are applied rather
+          than restating the result. */}
+      <Dialog
+        wide
+        open={fundsDialog === 'available'}
+        onClose={() => setFundsDialog(null)}
+        title="Available Funds"
+        subtitle="Cash you can lend right now, and how it is calculated"
+        footer={<Button onClick={() => setFundsDialog(null)}>Close</Button>}
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border-[0.5px] border-teal-200 bg-teal-50 px-4 py-3.5 dark:border-teal-500/25 dark:bg-teal-500/[.07]">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-300">Cash available to lend</div>
+            <div className="font-display text-2xl font-bold tabular-nums text-ink">{inr(funds.available)}</div>
+            <div className="mt-0.5 text-[12px] text-muted">
+              {funds.rawAvailable < 0 ? 'Overdrawn — shown as ₹0 above' : 'Ready to deploy into new loans'}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted">How it adds up</div>
+            <div className="overflow-hidden rounded-xl border-[0.5px] border-slate-200 dark:border-white/[.07]">
+              {[
+                { sign: '', label: 'Investment', note: 'Capital put in by investors',
+                  value: funds.capital, tone: 'text-violet-600 dark:text-violet-400' },
+                { sign: '−', label: 'Given to borrowers', note: 'Same figure as the dashboard card',
+                  value: funds.disbursed, tone: 'text-indigo-600 dark:text-indigo-400' },
+                // Its OWN row, not a footnote on the row above. This is real
+                // money the business kept at disbursal, and burying it in a
+                // subtitle made the gap against the Borrower Lent card look
+                // like an error. Shown as retained cash, NOT folded into
+                // profit — profit recognition is left exactly as it was, so no
+                // figure is deducted or credited twice.
+                ...(upfrontDeducted > 0 ? [{
+                  sign: '', label: 'of which deducted upfront',
+                  note: 'Interest kept from daily collection loans — you never paid this out',
+                  value: upfrontDeducted, tone: 'text-amber-600 dark:text-amber-400',
+                  inset: true,
+                }] : []),
+                // ONE definition of "repaid": ALL cash received, principal and
+                // interest together. Splitting it (principal here, interest on
+                // the Profit row) gave the word two values across the two
+                // popups — ₹26.6 L here vs ₹31.9 L in the Investments popup —
+                // so neither could be reconciled against the other.
+                { sign: '+', label: 'Total repaid by borrowers', note: 'All cash received back — principal and interest together',
+                  value: funds.collected, tone: 'text-emerald-600 dark:text-emerald-400' },
+                // Split the row above so both figures the dashboard shows are
+                // visible here: principal ties to the Principal Recovered card,
+                // interest to the Interest Earned card. Display-only (sign '')
+                // because both are already inside the total above.
+                { sign: '', label: 'of which principal', note: 'Matches the Principal Recovered card',
+                  value: Math.max(0, funds.collected - funds.interestEarned),
+                  tone: 'text-emerald-600 dark:text-emerald-400', inset: true },
+                // Interest is INSIDE the row above, so this row is display-only
+                // (sign '') — adding it again would double-count the earnings.
+                { sign: '', label: 'of which interest', note: 'Matches the Interest Earned card',
+                  value: funds.interestEarned, tone: 'text-amber-600 dark:text-amber-400', inset: true },
+                { sign: '−', label: 'Expenses', note: 'Running costs and investor payouts',
+                  value: funds.expenses, tone: 'text-rose-600 dark:text-rose-400' },
+              ].map((r) => (
+                <div key={r.label} className={`flex items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 last:border-0 dark:border-white/[.06] ${'inset' in r && r.inset ? 'bg-slate-50/70 dark:bg-white/[.02]' : ''}`}>
+                  <div className={`flex min-w-0 items-start gap-2.5 ${'inset' in r && r.inset ? 'pl-5' : ''}`}>
+                    <span className={`mt-px w-3 shrink-0 text-center font-display text-[15px] font-bold ${r.sign === '+' ? 'text-emerald-500' : r.sign === '−' ? 'text-rose-500' : 'text-transparent'}`}>{r.sign || '+'}</span>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium text-ink">{r.label}</div>
+                      <div className="text-[11.5px] text-muted">{r.note}</div>
+                    </div>
+                  </div>
+                  <div className={`shrink-0 font-display text-[15px] font-bold tabular-nums ${r.tone}`}>{inr(r.value)}</div>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-3 bg-slate-50 px-3.5 py-2.5 dark:bg-white/[.03]">
+                <div className="text-[13px] font-semibold text-ink">= Available Funds</div>
+                <div className="font-display text-[15px] font-bold tabular-nums text-teal-600 dark:text-teal-400">{inr(funds.available)}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* One note only. The rows above now carry their own explanation,
+              so this keeps just the fact that genuinely surprises people. */}
+          <p className="rounded-xl border-[0.5px] border-slate-200 bg-slate-50 px-3.5 py-3 text-[11.5px] leading-relaxed text-muted dark:border-white/[.06] dark:bg-white/[.02]">
+            <span className="font-medium text-ink">Profit is already inside this figure.</span>{' '}
+            Interest arrived as cash, so it is counted in the rows above — never add it on top.
+            Expenses are subtracted once, here; they also reduce the Profit card, but the two are
+            separate views of the same spend and are never added together.
+          </p>
+        </div>
+      </Dialog>
     </div>
   );
 }
