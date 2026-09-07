@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useData, LOAN_LABELS, type Customer } from '@/mock/DataContext';
+import { cashDisbursedFor } from '@/lib/funds';
 import { Badge } from '@/components/ui/badge';
 import { Dialog } from '@/components/ui/dialog';
 import { Drawer } from '@/components/ui/drawer';
@@ -632,6 +633,7 @@ export default function Customers() {
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Mobile</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">City</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Loans</th>
+                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Given</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Outstanding</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">KYC</th>
                   <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Status</th>
@@ -643,6 +645,10 @@ export default function Customers() {
                   const cLoans = loansOf(c.id);
                   const activeLoans = cLoans.filter((l) => l.status === 'ACTIVE');
                   const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
+                  // Cash this customer actually received. cashDisbursedFor()
+                  // covers every loan type — only Daily Collection deducts
+                  // upfront, so for the rest this equals their full principal.
+                  const given = cLoans.reduce((s, l) => s + cashDisbursedFor(l), 0);
                   const hasOverdue = customerIsOverdue(cLoans);
                   const kyc = kycOf(c);
                   const activeLoan = cLoans.some((l) => l.status === 'ACTIVE');
@@ -687,6 +693,9 @@ export default function Customers() {
                             0 loans
                           </span>
                         )}
+                      </td>
+                      <td className="px-5 py-4 text-[15px] font-semibold tabular-nums text-ink">
+                        {inr(given)}
                       </td>
                       <td className={`px-5 py-4 text-[15px] font-bold tabular-nums ${outstanding > 0 && hasOverdue ? 'text-red-600 dark:text-red-400' : 'text-ink'}`}>
                         {inr(outstanding)}

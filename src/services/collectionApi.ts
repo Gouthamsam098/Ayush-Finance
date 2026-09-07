@@ -51,6 +51,8 @@ function toCollection(w: CollectionWire): Collection {
     kind: w.kind,
     remarks: w.remarks,
     targetDate: w.target_due_date ? w.target_due_date.slice(0, 10) : undefined,
+    // Entry day (server clock), not the receipt day — see Collection.recordedOn.
+    recordedOn: w.created_at ? w.created_at.slice(0, 10) : undefined,
   };
 }
 
@@ -80,9 +82,25 @@ export const collectionApi = {
     return (rows ?? []).map(toCollection);
   },
 
+  /** Fetch EVERY payment, with no cap — the authoritative set for anything
+   *  that SUMS money (dashboard KPIs, profit, charts).
+   *
+   *  list() above caps at 500 rows and returns them as a bare array with no
+   *  total, so a book with more payments than that is silently truncated and
+   *  every derived total reads low. Callers that need completeness must use
+   *  this; list() stays for the single-day feed, which is bounded by the day. */
+  async fetchAll(): Promise<Collection[]> {
+    return this.fetchAllInRange();
+  },
+
   /** Fetch EVERY payment within a date range, paging through the server's
    *  paginated feed (from/to/page → envelope with meta). Complete + authoritative
-   *  for exports; the legacy list() caps at 500 and can't range. */
+   *  for exports; the legacy list() caps at 500 and can't range.
+   *
+   *  NOTE: limit stays at 200 deliberately — the server clamps limit to 500
+   *  (collection service maxFeedLimit) but computes total_pages from the
+   *  REQUESTED limit, so asking for more than 500 yields a meta that claims
+   *  one page while returning 500 rows. Paging under the clamp keeps meta honest. */
   async fetchAllInRange(f: CollectionReportFilters = {}): Promise<Collection[]> {
     const out: Collection[] = [];
     let page = 1;

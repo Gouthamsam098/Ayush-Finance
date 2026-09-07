@@ -116,10 +116,27 @@ export const api = {
     return (await request<T>(path)).data as T;
   },
 
-  /** GET a paginated list, returning both items and pagination meta. */
+  /** GET a paginated list, returning both items and pagination meta.
+   *
+   *  Loudly flags a SHORT READ — a response that carries only the first page
+   *  of a multi-page result. Silent truncation is the failure mode that made
+   *  the dashboard understate collections by 68% for weeks: a capped ?limit=N
+   *  returns a perfectly valid-looking array, so every derived total reads low
+   *  with no error anywhere. Callers that need the whole set must page
+   *  (fetchAll/fetchAllInRange); this warning is how we find the ones that
+   *  forgot, instead of discovering it in a money report. */
   async getList<T>(path: string): Promise<ListResult<T>> {
     const env = await request<T[]>(path);
-    return { data: env.data ?? [], meta: env.meta as PaginationMeta };
+    const data = env.data ?? [];
+    const meta = env.meta as PaginationMeta;
+    if (import.meta.env.DEV && meta && (meta.total_pages ?? 1) > 1 && !/[?&]page=/.test(path)) {
+      console.warn(
+        `[api] SHORT READ: ${path} returned ${data.length} of ${meta.total} rows ` +
+        `(page 1 of ${meta.total_pages}). Any total derived from this is INCOMPLETE — ` +
+        `use a paginated fetchAll() instead.`,
+      );
+    }
+    return { data, meta };
   },
 
   async post<T>(path: string, body: unknown, opts?: { auth?: boolean; headers?: Record<string, string> }): Promise<T> {

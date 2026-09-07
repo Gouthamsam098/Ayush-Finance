@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 /** Smoothly counts an integer up to `target` (easeOutCubic). */
 function useCountUp(target: number, duration = 800) {
@@ -28,32 +28,55 @@ function palette(pct: number) {
 }
 
 export function CollectionProgress({
-  paid, total, compact = false, showRemaining = false, unit = 'Days',
-}: { paid: number; total: number; compact?: boolean; showRemaining?: boolean; unit?: 'Days' | 'Months' }) {
+  paid, total, compact = false, showRemaining = false, unit = 'Days', settled,
+}: {
+  paid: number; total: number; compact?: boolean; showRemaining?: boolean;
+  unit?: 'Days' | 'Months';
+  /** Whether the loan is actually paid off. For Daily Collection the bar tracks
+   *  schedule days ELAPSED (see COLLECTION_LEDGER_BASELINE §7), so a term that
+   *  has run its length reads 100% even with arrears outstanding — claiming
+   *  "fully collected" there is simply false. Pass the real settlement state to
+   *  separate "term finished" from "money received". Omitted → the bar keeps its
+   *  previous behaviour and infers completion from the percentage. */
+  settled?: boolean;
+}) {
   const clamped = Math.max(0, Math.min(paid, total));
   const pct = total > 0 ? Math.round((clamped / total) * 100) : 0;
   const shownPaid = useCountUp(clamped);
   const c = palette(pct);
   const remaining = Math.max(0, total - clamped);
-  const done = pct >= 100;
+  const barFull = pct >= 100;
+  // "Done" means the MONEY is in, not that the calendar ran out.
+  const done = settled ?? barFull;
+  // Term elapsed but still owing — the case that used to read "fully collected".
+  const termEndedUnpaid = barFull && settled === false;
 
   return (
     <div className={compact ? 'w-40' : 'w-full'}>
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className={`font-display text-xs font-bold ${c.text}`}>{shownPaid} / {total} {unit}</span>
-        {done && (
+        {done ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
             <CheckCircle2 size={11} /> Completed
           </span>
-        )}
+        ) : termEndedUnpaid ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">
+            <AlertTriangle size={11} /> Term ended
+          </span>
+        ) : null}
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
         <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.8, ease: 'easeOut' }}
           className={`h-full rounded-full bg-gradient-to-r ${c.bar}`} />
       </div>
       {showRemaining && (
-        <div className={`mt-1 text-[11px] ${done ? 'font-semibold text-emerald-600' : 'text-muted'}`}>
-          {done ? 'Loan fully collected 🎉' : `${remaining} ${unit} Remaining`}
+        <div className={`mt-1 text-[11px] ${
+          done ? 'font-semibold text-emerald-600'
+          : termEndedUnpaid ? 'font-semibold text-amber-600 dark:text-amber-400'
+          : 'text-muted'}`}>
+          {done ? 'Loan fully collected 🎉'
+            : termEndedUnpaid ? `All ${total} ${unit.toLowerCase()} elapsed · balance outstanding`
+            : `${remaining} ${unit} Remaining`}
         </div>
       )}
     </div>

@@ -79,3 +79,8 @@ Anush-*.pdf
 # Unrelated vendored project (was committed as a broken gitlink with no
 # .gitmodules entry, which breaks a fresh `git clone`).
 orbit/
+
+# Local MCP server config and Playwright run artifacts (screenshots, snapshots,
+# console logs). Machine-specific: never part of the app.
+.mcp.json
+.playwright-mcp/

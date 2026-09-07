@@ -4,6 +4,7 @@ import {
   useData, LOAN_LABELS, EXPENSE_CATEGORIES, behavesInterestOnly, type LoanType,
   type Customer, type Loan, type Collection, type Expense,
 } from '@/mock/DataContext';
+import { cashDisbursedFor } from '@/lib/funds';
 import { StatCard } from '@/components/ui/stat-card';
 import { Button } from '@/components/ui/button';
 import { Drawer } from '@/components/ui/drawer';
@@ -101,13 +102,26 @@ function buildReport(tab: ReportKey, data: Dataset, f: BuildArgs): BuiltReport {
     if (f.loanType !== 'ALL') rows = rows.filter((l) => l.type === f.loanType);
     if (q) rows = rows.filter((l) => l.loanNumber.toLowerCase().includes(q) || custName(l.customerId).toLowerCase().includes(q));
     const principal = rows.reduce((s, l) => s + l.principal, 0);
+    // Deduction = interest kept at disbursal; Given = cash the borrower
+    // actually received. Only Daily Collection deducts upfront, so for every
+    // other type deduction is ₹0 and Given equals Principal — the columns are
+    // safe across all loan types rather than daily-only.
+    const dedFor = (l: Loan) => Math.max(0, l.principal - cashDisbursedFor(l));
+    const deduction = rows.reduce((s, l) => s + dedFor(l), 0);
+    const given = rows.reduce((s, l) => s + cashDisbursedFor(l), 0);
     return {
-      head: ['Loan #', 'Customer', 'Loan Type', 'Principal', 'Interest', 'Loan Date', 'Status'],
-      body: rows.map((l) => [l.loanNumber, custName(l.customerId), LOAN_LABELS[l.type], inr(l.principal), inr(l.interest), fmtDate(l.loanDate), l.status]),
-      rightAlignCols: [3, 4],
+      head: ['Loan #', 'Customer', 'Loan Type', 'Given to Borrower', 'Principal', 'Deduction', 'Interest', 'Loan Date', 'Status'],
+      body: rows.map((l) => [
+        l.loanNumber, custName(l.customerId), LOAN_LABELS[l.type],
+        inr(cashDisbursedFor(l)), inr(l.principal), inr(dedFor(l)),
+        inr(l.interest), fmtDate(l.loanDate), l.status,
+      ]),
+      rightAlignCols: [3, 4, 5, 6],
       kpis: [
         { label: 'Loans', value: String(rows.length) },
         { label: 'Total Principal', value: inr(principal) },
+        { label: 'Total Deduction', value: inr(deduction) },
+        { label: 'Given to Borrowers', value: inr(given) },
         { label: 'Active', value: String(rows.filter((l) => l.status === 'ACTIVE').length) },
         { label: 'Closed', value: String(rows.filter((l) => l.status === 'CLOSED').length) },
       ],

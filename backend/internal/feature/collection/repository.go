@@ -373,6 +373,15 @@ func translateWriteError(err error) error {
 		return domain.NewValidation("Amount must be greater than 0", map[string]string{"amount": "Too small"})
 	case strings.Contains(msg, "collections_mode_valid"):
 		return domain.NewValidation("Invalid payment mode", map[string]string{"mode": "Unknown mode"})
+	case strings.Contains(msg, "is already funded"):
+		// The 0006 trigger: this write would fund a schedule slot beyond its
+		// instalment — the signature of a collection sheet entered twice.
+		// Without this case it surfaced as a raw 500 "internal error", which
+		// told the operator nothing and logged a real guard as a crash.
+		return domain.NewValidation(
+			"This instalment is already paid — recording it again would duplicate the collection",
+			map[string]string{"amount": "Day already funded; check this is not a repeat entry"},
+		)
 	}
 	return err
 }

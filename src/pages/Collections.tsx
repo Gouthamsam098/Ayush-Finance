@@ -1,22 +1,14 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, behavesInterestOnly, type PayMode, type LoanType, type Loan } from '@/mock/DataContext';
+import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, behavesInterestOnly, type LoanType, type Loan } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
-import { DatePicker } from '@/components/ui/date-picker';
-import { Dialog } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { useToast } from '@/components/ui/toast';
-import { ApiError } from '@/lib/api';
 import { StatCard } from '@/components/ui/stat-card';
-import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
-import { usePermissions } from '@/lib/permissions';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { LedgerDialog } from '@/components/LedgerDialog';
 import { CollectionProgress } from '@/components/CollectionProgress';
-import { inr, inrShort, fmtDate, todayISO, isoLocal, addDays, initials, DAILY_TERM } from '@/lib/format';
-import { Plus, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins, ChevronRight } from 'lucide-react';
+import { inr, inrShort, fmtDate, todayISO, isoLocal, initials, DAILY_TERM } from '@/lib/format';
+import { Search, X, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins, ChevronRight } from 'lucide-react';
 
-const MODES: PayMode[] = ['CASH', 'UPI', 'BANK', 'CHEQUE'];
 
 /** Days denominator for the progress bar: daily loans use their term, Flexible uses its chosen days, everything else a 30-day cycle. */
 const totalDaysFor = (l: Loan) => {
@@ -38,32 +30,39 @@ const paidDaysFor = (l: Loan, pool: number) => {
   return per > 0 ? Math.min(Math.floor(pool / per), totalDaysFor(l)) : 0;
 };
 
-interface CForm { id?: number; customerId: string; loanId: string; amount: string; date: string; mode: PayMode; remarks: string; }
-const blank = (): CForm => ({ customerId: '', loanId: '', amount: '', date: todayISO(), mode: 'CASH', remarks: '' });
 
 export default function Collections() {
   const d = useData();
-  const toast = useToast();
-  const { canEdit } = usePermissions();
-  const [form, setForm] = useState<CForm | null>(null);
-  // In-flight flag for the save round-trip: disables the button (and blocks a
-  // re-entrant call) so one click can never become two payments.
-  const [saving, setSaving] = useState(false);
   const [typeFilter, setTypeFilter] = useState<LoanType | 'ALL'>('ALL');
+  const [search, setSearch] = useState('');
   const [ledger, setLedger] = useState<Loan | null>(null);
-  const [lastMode, setLastMode] = useState<PayMode>('CASH'); // remembered across entries
 
-  const custLoans = useMemo(
-    () => d.loans.filter((l) => (!form?.customerId || l.customerId === Number(form.customerId)) && l.status === 'ACTIVE'),
-    [d.loans, form?.customerId]
-  );
+
 
   // Collections is a loan-centric tracker: one row per active loan, of any type, with its live progress.
   // Individual payments are added/edited/deleted inside that loan's Ledger.
-  const loansToShow = useMemo(
-    () => d.loans.filter((l) => l.status === 'ACTIVE' && (typeFilter === 'ALL' || l.type === typeFilter)),
-    [d.loans, typeFilter]
-  );
+  // Search is how a collector reaches ONE loan to record against. It replaces
+  // the old header "Add Collection" dialog, whose loan dropdown listed every
+  // active loan — labelled by type and number only, with no borrower name — so
+  // the wrong row was one mis-click away and the entry carried no context.
+  // Finding the loan here and paying inside its ledger shows the schedule,
+  // what is due, and what was already collected before any money is written.
+  const loansToShow = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return d.loans.filter((l) => {
+      if (l.status !== 'ACTIVE') return false;
+      if (typeFilter !== 'ALL' && l.type !== typeFilter) return false;
+      if (!q) return true;
+      const who = d.customers.find((c) => c.id === l.customerId);
+      return (
+        l.loanNumber.toLowerCase().includes(q)
+        || (who?.name ?? '').toLowerCase().includes(q)
+        || (who?.mobile ?? '').includes(q)
+        || (who?.code ?? '').toLowerCase().includes(q)
+        || LOAN_LABELS[l.type].toLowerCase().includes(q)
+      );
+    });
+  }, [d.loans, d.customers, typeFilter, search]);
 
   const counts = useMemo(() => {
     const activeLoans = d.loans.filter((l) => l.status === 'ACTIVE');
@@ -90,71 +89,11 @@ export default function Collections() {
     };
   }, [d]);
 
-  const set = (k: keyof CForm, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
-  const selectedLoan = form?.loanId ? d.loans.find((l) => l.id === Number(form.loanId)) : undefined;
-  const overpay = !!selectedLoan && Number(form?.amount) > d.outstandingFor(selectedLoan);
 
-  /** Smart prefill: on picking a loan, default the amount to its due instalment
-   *  and the DATE to the loan's live next-due SLOT (same figure the Statement
-   *  shows) — UNCLAMPED, so a daily loan advances to tomorrow once today is
-   *  collected and a monthly loan selects its next 30-day cycle date. Overdue →
-   *  the oldest unpaid slot (a past date). */
-  const onLoanPick = (loanId: string) => {
-    const loan = d.loans.find((l) => l.id === Number(loanId));
-    // RECEIPT-DATE RULE: default the payment date to TODAY (when the money is
-    // actually received), clamped to the loan date — never the next scheduled
-    // slot, which can sit weeks ahead after a bulk/advance payment and would
-    // future-date the receipt (corrupting profit-by-month). FIFO allocation
-    // decides which slot the money covers; the date never drives it.
-    let date = todayISO();
-    if (loan && date < loan.loanDate) date = loan.loanDate;
-    setForm((f) => (f ? { ...f, loanId, date, amount: f.amount || (loan?.dailyAmount ? String(loan.dailyAmount) : '') } : f));
-  };
 
-  const openAdd = () => setForm({ ...blank(), mode: lastMode });
 
-  const save = async () => {
-    if (!form) return;
-    // DOUBLE-SUBMIT GUARD: recording a payment is a money write, and the dialog
-    // stays open for the whole round-trip. Without this, a second click on a
-    // slow connection posts a SECOND collection — two receipts for one payment,
-    // which inflates collected/profit and needs manual ledger surgery to undo.
-    if (saving) return;
-    if (!form.loanId) { toast('Select a loan (shown by type)', 'error'); return; }
-    if (!Number(form.amount)) { toast('Enter an amount', 'error'); return; }
-    // Date discipline (mirrors the server + LedgerDialog rules):
-    //  • never before the loan date;
-    //  • never beyond the next due slot (or today+1, whichever is later);
-    //  • daily loans collect one slot per day — a day already fully funded
-    //    cannot be paid again (the picker pre-advances to the next open slot).
-    if (selectedLoan) {
-      const nd = d.nextDueFor(selectedLoan);
-      if (form.date < selectedLoan.loanDate) {
-        toast(`Payment date cannot be before the loan date (${fmtDate(selectedLoan.loanDate)})`, 'error'); return;
-      }
-      const cap = addDays(todayISO(), 1);
-      const maxDate = nd && nd > cap ? nd : cap;
-      if (form.date > maxDate) {
-        toast(`Payment date cannot be beyond the next due (${fmtDate(maxDate)})`, 'error'); return;
-      }
-      // NOTE: no "date < next due" guard — payments are a FIFO pool; the date is
-      // the receipt date and never drives slot allocation (see LedgerDialog).
-    }
-    const payload = { loanId: Number(form.loanId), date: form.date, amount: Number(form.amount), mode: form.mode, remarks: form.remarks || undefined };
-    setSaving(true);
-    try {
-      if (form.id) { await d.updateCollection(form.id, payload); toast('Collection updated'); }
-      else { await d.addCollection(payload); toast('Collection recorded · receipt generated'); }
-    } catch (e) {
-      toast(e instanceof ApiError ? e.message : 'Failed to record collection', 'error');
-      return; // keep the form open so the user can fix the highlighted issue
-    } finally {
-      setSaving(false); // always released, so a failed save can be retried
-    }
-    setLastMode(form.mode); // remember for the next entry
-    setForm(null);
-  };
+
 
   return (
     <div className="flex min-h-full flex-col">
@@ -163,7 +102,6 @@ export default function Collections() {
         icon={<HandCoins size={20} />}
         title="Collections"
         subtitle={`${d.collections.length} payments recorded · ${kpis.activeCount} active loans`}
-        actions={canEdit('Collections') ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openAdd}>Add Collection</HeaderPrimaryButton> : undefined}
       />
 
       <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
@@ -177,6 +115,28 @@ export default function Collections() {
           <StatCard label="Due now" value={inrShort(kpis.dueNow)} accent="#f59e0b" icon={<CalendarClock size={16} />} />
         )}
         <StatCard label="Total outstanding" value={inr(kpis.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={kpis.outstanding} />
+      </div>
+
+      {/* Find the loan to collect against. Recording a payment starts HERE:
+          search → open that loan's ledger → add against the day it pays. */}
+      <div className="relative">
+        <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search customer, loan number, mobile…"
+          aria-label="Search loans to record a collection against"
+          className="h-11 w-full rounded-xl border-[0.5px] border-slate-200 bg-white pl-10 pr-10 text-sm text-ink outline-none transition-all placeholder:text-muted focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-white/[.08] dark:bg-surface"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch('')}
+            aria-label="Clear search"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-1 text-muted transition-colors hover:bg-slate-100 hover:text-ink dark:hover:bg-white/[.06]"
+          >
+            <X size={15} />
+          </button>
+        )}
       </div>
 
       {/* Loan type filter chips */}
@@ -199,7 +159,7 @@ export default function Collections() {
 
       {/* Empty state */}
       {loansToShow.length === 0 ? (
-        <EmptyState typed={typeFilter !== 'ALL'} onAdd={canEdit('Collections') ? openAdd : undefined} />
+        <EmptyState typed={typeFilter !== 'ALL'} searched={search} onClearSearch={() => setSearch('')} />
       ) : (
       <>
       {/* ── Mobile / tablet: premium card list (touch-first, CRED-style) ── */}
@@ -336,32 +296,6 @@ export default function Collections() {
       </div>
 
       {/* Add / Edit dialog */}
-      <Dialog open={!!form} onClose={() => setForm(null)} title={form?.id ? 'Edit collection' : 'Add collection'}
-        footer={<><Button variant="ghost" onClick={() => setForm(null)} disabled={saving}>Cancel</Button><Button onClick={save} loading={saving}>{form?.id ? 'Save changes' : 'Save'}</Button></>}>
-        {form && (
-          <div className="grid grid-cols-1 gap-4 min-w-0 lg:grid-cols-2">
-            <Select label="Customer" value={form.customerId} onChange={(e) => { set('customerId', e.target.value); set('loanId', ''); }}
-              options={[{ value: '', label: 'All customers' }, ...d.customers.map((c) => ({ value: String(c.id), label: c.name }))]} />
-            <Select label="Loan *" value={form.loanId} onChange={(e) => onLoanPick(e.target.value)}
-              options={[{ value: '', label: 'Select loan…' }, ...custLoans.map((l) => ({ value: String(l.id), label: `${LOAN_LABELS[l.type]} · ${l.loanNumber}` }))]} />
-            <div className="min-w-0">
-              <Input label="Amount *" type="number" value={form.amount} onChange={(e) => set('amount', e.target.value)} />
-              {selectedLoan && (
-                <p className={`mt-1 text-[11px] ${overpay ? 'font-semibold text-warning' : 'text-muted'}`}>
-                  {overpay
-                    ? `Exceeds outstanding (${inr(d.outstandingFor(selectedLoan))}) — recorded as advance / settlement`
-                    : `Instalment ${inr(selectedLoan.dailyAmount ?? 0)} · outstanding ${inr(d.outstandingFor(selectedLoan))}`}
-                </p>
-              )}
-            </div>
-            <div className="min-w-0">
-              <DatePicker label="Date" value={form.date} onChange={(e) => set('date', e.target.value)} />
-            </div>
-            <Select label="Payment mode" value={form.mode} onChange={(e) => set('mode', e.target.value as PayMode)} options={MODES.map((m) => ({ value: m, label: m }))} />
-            <div className="min-w-0 lg:col-span-2"><Input label="Remarks" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></div>
-          </div>
-        )}
-      </Dialog>
 
       {ledger && <LedgerDialog loan={ledger} onClose={() => setLedger(null)} />}
     </div>
@@ -537,13 +471,26 @@ function CollectionCard({ loan, d, onView }: { loan: Loan; d: ReturnType<typeof 
   );
 }
 
-function EmptyState({ typed, onAdd }: { typed: boolean; onAdd?: () => void }) {
+function EmptyState({ typed, searched, onClearSearch }: { typed: boolean; searched: string; onClearSearch: () => void }) {
+  // Three distinct empty states — a search that found nothing is not the same
+  // as having no loans at all, and offering "record your first collection"
+  // when the book is full but the query missed would just be confusing.
+  const noMatch = searched.trim().length > 0;
   return (
     <div className="anim-pop flex flex-col items-center gap-3 rounded-card border border-slate-200/90 bg-white px-6 py-16 text-center shadow-card dark:border-white/[.07] dark:bg-surface">
-      <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-primary-400 to-primary text-white shadow-soft anim-float"><Inbox size={30} /></div>
-      <div className="font-display text-lg font-bold">No collections yet</div>
-      <p className="max-w-sm text-sm text-muted">{typed ? 'No active loans of this type yet.' : 'Record your first payment to get started.'}</p>
-      {onAdd && <Button onClick={onAdd}><Plus size={16} /> Record first collection</Button>}
+      <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-primary-400 to-primary text-white shadow-soft anim-float">
+        {noMatch ? <Search size={28} /> : <Inbox size={30} />}
+      </div>
+      <div className="font-display text-lg font-bold">
+        {noMatch ? 'No matching loans' : 'No collections yet'}
+      </div>
+      <p className="max-w-sm text-sm text-muted">
+        {noMatch
+          ? <>Nothing matches “<span className="font-medium text-ink">{searched}</span>”. Try a customer name, loan number, or mobile.</>
+          : typed ? 'No active loans of this type yet.'
+          : 'Open a loan below to record a payment against its ledger.'}
+      </p>
+      {noMatch && <Button variant="ghost" onClick={onClearSearch}>Clear search</Button>}
     </div>
   );
 }

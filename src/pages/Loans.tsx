@@ -186,18 +186,22 @@ type SortMode = 'newest' | 'urgency' | 'amount';
 /** Drawer-managed loan filters (draft is edited in the drawer, applied on button). */
 interface LoanFilters {
   status: '' | 'ACTIVE' | 'CLOSED';
+  /** '' = any; 'overdue' = in arrears; 'ontrack' = not overdue. Mirrors the
+   *  toolbar's urgency chip so the drawer can express the same idea, and both
+   *  are AND-ed in loanPasses — neither overrides the other. */
+  overdue: '' | 'overdue' | 'ontrack';
   types: LoanType[];        // loan is one of these (empty = any)
   outstanding: NumFilter;   // rupees
   principal: NumFilter;     // rupees
   sort: SortMode;
 }
 const defaultLoanFilters = (): LoanFilters => ({
-  status: '', types: [], outstanding: emptyNum(), principal: emptyNum(), sort: 'newest',
+  status: '', overdue: '', types: [], outstanding: emptyNum(), principal: emptyNum(), sort: 'newest',
 });
 
 /** How many drawer dimensions are constraining the list (sort excluded). */
 const countLoanFilters = (f: LoanFilters) =>
-  (f.status ? 1 : 0) + (f.types.length ? 1 : 0) + (numActive(f.outstanding) ? 1 : 0) + (numActive(f.principal) ? 1 : 0);
+  (f.status ? 1 : 0) + (f.overdue ? 1 : 0) + (f.types.length ? 1 : 0) + (numActive(f.outstanding) ? 1 : 0) + (numActive(f.principal) ? 1 : 0);
 
 export default function Loans() {
   const d = useData();
@@ -416,6 +420,11 @@ export default function Loans() {
     soon: d.loans.filter((l) => { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); return dd != null && dd >= 0 && dd <= 3; }).length,
     // Strictly TODAY — the same set the Dashboard's "Due Today" KPI counts.
     dueToday: d.loans.filter((l) => dueInDaysOf(l) === 0).length,
+    // Upfront interest kept at disbursal, and the cash borrowers actually
+    // received. cashDisbursedFor() handles every type: only Daily Collection
+    // deducts, so for the rest deduction is ₹0 and given === principal.
+    deduction: d.loans.reduce((s, l) => s + Math.max(0, l.principal - cashDisbursedFor(l)), 0),
+    given: d.loans.reduce((s, l) => s + cashDisbursedFor(l), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [d.loans, d.collections]);
 
@@ -431,6 +440,13 @@ export default function Loans() {
         && !LOAN_LABELS[l.type].toLowerCase().includes(q)) return false;
     }
     if (f.status && l.status !== f.status) return false;
+    // Overdue facet — AND-ed with the toolbar's urgency chip, never replacing it.
+    if (f.overdue) {
+      const dd = dueInDaysOf(l);
+      const isOver = dd != null && dd < 0;
+      if (f.overdue === 'overdue' && !isOver) return false;
+      if (f.overdue === 'ontrack' && isOver) return false;
+    }
     if (f.types.length && !f.types.includes(l.type)) return false;
     if (!matchNum(d.outstandingFor(l), f.outstanding)) return false;
     if (!matchNum(l.principal, f.principal)) return false;
@@ -573,10 +589,12 @@ export default function Loans() {
   const openCreate = () => { setErrors({}); setForm(blank()); };
 
   // Desktop-only table grid. Below lg, rows fall back to a stacked card layout.
-  // 9 columns: Borrower, Loan, Principal, Instalment, Collected, Overdue,
-  // Outstanding, End date, Status. Header and rows share this constant, so a
-  // column added here MUST get a matching cell in both or every value shifts.
-  const GRID = 'lg:grid lg:grid-cols-[1.5fr_1.15fr_0.95fr_0.9fr_1.1fr_1.05fr_1.05fr_0.95fr_92px] lg:items-center lg:gap-3.5';
+  // 11 columns: Borrower, Loan, Principal, Deduction, Given, Instalment,
+  // Collected, Overdue, Outstanding, End date, Status. Header and rows share
+  // this constant, so a column added here MUST get a matching cell in both or
+  // every value shifts. Widths were trimmed (not the column count reduced) to
+  // absorb Deduction and Given without squeezing the borrower name.
+  const GRID = 'lg:grid lg:grid-cols-[1.35fr_1fr_0.85fr_0.8fr_0.9fr_0.8fr_0.95fr_0.9fr_0.95fr_0.85fr_92px] lg:items-center lg:gap-2.5';
 
   return (
     <div className="flex min-h-full flex-col">
@@ -590,10 +608,17 @@ export default function Loans() {
 
       <div className="flex flex-1 flex-col gap-4 p-3.5 sm:px-5">
         {/* Stat cards / triage filters */}
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
+        {/* 7 cards now — Deduction and Given to Borrower were added, so the
+            desktop grid steps to 7 to keep one row and avoid an orphan. */}
+        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 2xl:grid-cols-7">
           <StatCard label="Total loans" value={String(stats.count)} accent="#6366f1" icon={<Layers size={16} />}
             active={urgency === 'all'} onClick={() => setUrgency('all')} />
           <StatCard label="Total outstanding" value={inr(stats.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={stats.outstanding} />
+          {/* Upfront interest kept, and the cash borrowers actually received.
+              Non-daily types deduct nothing, so Deduction reads ₹0 for them and
+              Given equals their principal — correct for every loan type. */}
+          <StatCard label="Deduction" value={inr(stats.deduction)} accent="#f59e0b" icon={<IndianRupee size={16} />} countUp={stats.deduction} />
+          <StatCard label="Given to borrower" value={inr(stats.given)} accent="#0891b2" icon={<Wallet size={16} />} countUp={stats.given} />
           <StatCard label="Overdue" value={String(stats.overdue)} accent="#ef4444" icon={<AlertTriangle size={16} />}
             active={urgency === 'overdue'} onClick={() => setUrgency('overdue')} />
           {/* Strictly today — the Dashboard's Due Today KPI links here. */}
@@ -654,7 +679,9 @@ export default function Loans() {
         <div className={`${GRID} hidden rounded-xl bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-5 py-3.5 text-[12px] font-bold uppercase tracking-[0.08em] text-white shadow-[0_4px_14px_rgba(2,41,153,.35)] lg:grid`}>
           <div>Borrower</div>
           <div>Loan</div>
+          <div>Given</div>
           <div>Principal</div>
+          <div>Deduction</div>
           <div>Instalment</div>
           <div>Collected</div>
           <div>Overdue</div>
@@ -768,10 +795,26 @@ export default function Loans() {
                   )}
                 </div>
 
+                {/* Given to borrower — cash actually handed over. Equals
+                    principal wherever nothing is deducted. */}
+                <div className="flex items-center justify-between text-[14.5px] tabular-nums text-ink/75 lg:block">
+                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Given</span>
+                  <span className="font-semibold text-[13px] sm:text-[14px]">{inr(cashDisbursedFor(l))}</span>
+                </div>
+
                 {/* Principal */}
                 <div className="flex items-center justify-between text-[14.5px] tabular-nums text-ink/75 lg:block">
                   <span className="text-[12.5px] font-medium text-muted lg:hidden">Principal</span>
                   <span className="font-bold text-[13px] sm:text-[14.5px]">{inr(l.principal)}</span>
+                </div>
+
+                {/* Deduction — interest kept upfront. ₹0 for every type except
+                    Daily Collection, so the column is safe for all loans. */}
+                <div className="flex items-center justify-between text-[14.5px] tabular-nums text-ink/75 lg:block">
+                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Deduction</span>
+                  <span className="font-semibold text-[13px] sm:text-[14px] text-amber-600 dark:text-amber-400">
+                    {inr(Math.max(0, l.principal - cashDisbursedFor(l)))}
+                  </span>
                 </div>
 
                 {/* Instalment (per-period amount) */}
@@ -996,6 +1039,14 @@ export default function Loans() {
               <Seg active={draft.status === ''} onClick={() => setDraft({ ...draft, status: '' })}>All</Seg>
               <Seg active={draft.status === 'ACTIVE'} onClick={() => setDraft({ ...draft, status: 'ACTIVE' })} tone="emerald">Active</Seg>
               <Seg active={draft.status === 'CLOSED'} onClick={() => setDraft({ ...draft, status: 'CLOSED' })}>Closed</Seg>
+            </SegGroup>
+          </FilterCard>
+
+          <FilterCard icon={<AlertTriangle size={16} />} title="Repayment" color="amber" active={!!draft.overdue}>
+            <SegGroup>
+              <Seg active={draft.overdue === ''} onClick={() => setDraft({ ...draft, overdue: '' })}>All</Seg>
+              <Seg active={draft.overdue === 'overdue'} onClick={() => setDraft({ ...draft, overdue: 'overdue' })} tone="amber">Overdue</Seg>
+              <Seg active={draft.overdue === 'ontrack'} onClick={() => setDraft({ ...draft, overdue: 'ontrack' })} tone="emerald">On track</Seg>
             </SegGroup>
           </FilterCard>
         </div>

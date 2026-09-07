@@ -6,6 +6,8 @@ import { customerApi } from '@/services/customerApi';
 import { loanApi } from '@/services/loanApi';
 import { collectionApi } from '@/services/collectionApi';
 import { expenseApi } from '@/services/expenseApi';
+import { investmentApi } from '@/services/investmentApi';
+import { cacheInvestorCapital } from '@/lib/investments';
 import type { RootState } from '@/store';
 
 // ─────────────── Types ───────────────
@@ -135,7 +137,13 @@ export type CollectionKind = 'INTEREST' | 'PRINCIPAL';
 /** targetDate = the schedule slot the collector explicitly chose to pay (the
  *  ledger row whose Add was clicked). Display attribution only — never money
  *  math. Absent on bulk/clear-overdue/foreclosure/legacy records. */
-export interface Collection { id: number; receiptNo: string; loanId: number; date: string; amount: number; mode: PayMode; kind?: CollectionKind; remarks?: string; targetDate?: string; }
+/** `recordedOn` = the calendar day the record was WRITTEN (server created_at),
+ *  as distinct from `date`, the day the money was received. They differ when a
+ *  collection is backdated — clearing an overdue row dates the receipt to that
+ *  slot's own due date. The ledger needs the entry day to tell "cleared behind
+ *  schedule" from "paid on the day it fell due"; without it a backdated clear
+ *  looks identical to an on-time payment. Read-only, never sent back. */
+export interface Collection { id: number; receiptNo: string; loanId: number; date: string; amount: number; mode: PayMode; kind?: CollectionKind; remarks?: string; targetDate?: string; recordedOn?: string; }
 export interface Expense { id: number; date: string; category: string; subCategory?: string; name: string; amount: number; mode: PayMode; remarks?: string; }
 export interface DocItem { id: number; customerId: number; type: string; fileName: string; size: string; dataUrl: string | null; mime: string | null; date: string; }
 
@@ -280,11 +288,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const accessToken = useSelector((s: RootState) => s.auth.accessToken);
   useEffect(() => {
     if (!config.useApi || !accessToken) return;
-    customerApi.list().then(setCustomers).catch(() => { /* surfaced per-action */ });
-    expenseApi.list().then(setExpenses).catch(() => { /* surfaced per-action */ });
+    // fetchAll everywhere: the plain list() calls take ONE server page (loans
+    // and customers cap at 100, expenses at 500) and drop the rest silently,
+    // which understates every derived total. Paging costs one extra request
+    // per 100-200 rows and is the only way these stay correct as the book grows.
+    customerApi.fetchAll().then(setCustomers).catch(() => { /* surfaced per-action */ });
+    expenseApi.fetchAll().then(setExpenses).catch(() => { /* surfaced per-action */ });
+    // INVESTOR CAPITAL — fetched on login, not left to a page visit.
+    //
+    // The Dashboard and Loans pages read this figure SYNCHRONOUSLY through
+    // activeInvestorCapital(), which in API mode can only consult a
+    // localStorage cache. That cache used to be written in one place only: the
+    // Investments page's own load. So a user who logged in and stayed on the
+    // dashboard saw "Investments ₹0 · No investor capital" with ₹1.84 Cr
+    // actually raised — and, worse, the lending guard reads the same figure, so
+    // ₹0 available silently permitted unfunded loans instead of blocking them.
+    //
+    // Priming it here makes the cache a cache (a fast path for a synchronous
+    // caller) rather than the only source. The Investments page still refreshes
+    // it on its own load, so nothing there changes.
+    investmentApi.list()
+      .then((list) => cacheInvestorCapital(
+        list.filter((i) => i.status === 'ACTIVE').reduce((s, i) => s + i.principal, 0),
+      ))
+      .catch(() => { /* leaves the previous cached value untouched */ });
     // Loans + collections together so we never keep payments for loans that
     // are gone (orphan collections were showing up as "Collected" on Reports).
-    Promise.all([loanApi.list(), collectionApi.list()])
+    // fetchAll (paginated) — NOT list(), which caps at 500 rows and silently
+    // truncated the book, so every money total derived from `collections`
+    // (dashboard KPIs, profit, charts) read low once the 500th payment landed.
+    Promise.all([loanApi.fetchAll(), collectionApi.fetchAll()])
       .then(([loanRows, collRows]) => {
         const ids = new Set(loanRows.map((l) => l.id));
         setLoans(loanRows);
@@ -587,7 +620,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           return collectionApi.record(c.loanId, c).then((created) => {
             setCollections((s) => [created, ...s]);
-            loanApi.list().then(setLoans).catch(() => {});
+            loanApi.fetchAll().then(setLoans).catch(() => {});
           });
         }
         setCollections((s) => [{ ...c, id: uid(), receiptNo: 'RCPT-' + rcptSeq }, ...s]);
@@ -597,7 +630,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           return collectionApi.update(id, patch).then((updated) => {
             setCollections((s) => s.map((c) => (c.id === id ? updated : c)));
-            loanApi.list().then(setLoans).catch(() => {});
+            loanApi.fetchAll().then(setLoans).catch(() => {});
           });
         }
         setCollections((s) => s.map((c) => (c.id === id ? { ...c, ...patch } : c)));
@@ -606,7 +639,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           return collectionApi.replace(loanId, replaceIds, payments).then((created) => {
             setCollections((s) => [...created, ...s.filter((c) => !replaceIds.includes(c.id))]);
-            loanApi.list().then(setLoans).catch(() => {});
+            loanApi.fetchAll().then(setLoans).catch(() => {});
           });
         }
         // Mock mode has no server transaction, but the swap is a single
@@ -622,7 +655,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           return collectionApi.remove(id).then(() => {
             setCollections((s) => s.filter((c) => c.id !== id));
-            loanApi.list().then(setLoans).catch(() => {});
+            loanApi.fetchAll().then(setLoans).catch(() => {});
           });
         }
         setCollections((s) => s.filter((c) => c.id !== id));
@@ -650,7 +683,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       },
       refreshExpenses: () => {
         if (!config.useApi) return;
-        return expenseApi.list().then(setExpenses).catch(() => { /* surfaced per-action */ });
+        return expenseApi.fetchAll().then(setExpenses).catch(() => { /* surfaced per-action */ });
       },
       addDocument: (d) => setDocuments((s) => [{ ...d, id: uid() }, ...s]),
       deleteDocument: (id) => setDocuments((s) => s.filter((d) => d.id !== id)),
