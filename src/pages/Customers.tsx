@@ -708,7 +708,6 @@ export default function Customers() {
                           {/* Mutations only for edit access — view-only users get an honest read-only row (backend 403s regardless). */}
                           {canEdit('Customers') && <>
                             <RowAction icon={<Pencil size={16} />} title="Edit" onClick={() => openEdit(c)} hover="hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/15" />
-                            <RowAction icon={<Trash2 size={16} />} title="Delete" onClick={() => setConfirm(c)} hover="hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15" />
                           </>}
                         </div>
                       </td>

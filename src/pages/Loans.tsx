@@ -765,7 +765,7 @@ export default function Loans() {
                       <MoreVertical size={16} />
                     </button>
                     {menuFor === l.id && (
-                      <div role="menu" aria-label="Loan actions" className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900 lg:left-0 lg:right-auto">
+                      <div role="menu" aria-label="Loan actions" className="absolute right-0 top-1/2 -translate-y-1/2 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900 lg:left-0 lg:right-auto">
                           <MenuItem icon={<FileText size={14} />} label="Statement" onClick={() => { setMenuFor(null); setLedger(l); }} />
                           {/* Mutations only for edit access — Statement stays for viewers. */}
                           {canEdit('Loans') && <>
@@ -780,7 +780,6 @@ export default function Loans() {
                             ) : (
                               <MenuItem icon={<RotateCcw size={14} />} label="Reopen loan" onClick={() => { setMenuFor(null); d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }} />
                             )}
-                            <MenuItem danger icon={<Trash2 size={14} />} label="Delete" onClick={() => { setMenuFor(null); setConfirm(l); }} />
                           </>}
                         </div>
                     )}
@@ -791,6 +790,22 @@ export default function Loans() {
                 <div className="min-w-0">
                   <div className="text-[14.5px] font-semibold tabular-nums text-ink">{l.loanNumber}</div>
                   <div className="mt-[3px] truncate text-[12.5px] font-semibold" style={{ color: t.fg }}>{LOAN_LABELS[l.type]}</div>
+                  <div className="flex items-center gap-1 mt-[1px]">
+                    <Calendar size={12} className="text-[10px] text-muted" />
+                    <span className="text-[10px] text-muted">Start: {fmtDate(l.loanDate)}</span>
+                  </div>
+                  {dd != null && dd < 0 && l.contact && (
+                    <div className="mt-2 flex items-center gap-1">
+                      <a
+                        href={`tel:${l.contact.split('-').join('')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-xl border-[0.5px] border-emerald-400 bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-600 dark:border-emerald-500/15 dark:bg-emerald-500/15 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-white/[.08]"
+                      >
+                        <Phone size={12} className="shrink-0" /> Call
+                      </a>
+                    </div>
+                  )}
                 </div>
 
                 {/* Given to borrower — cash actually handed over. Equals

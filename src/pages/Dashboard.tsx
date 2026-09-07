@@ -159,6 +159,7 @@ export default function Dashboard() {
   const openSidebar = useOpenSidebar();
   const { canView } = usePermissions();
   const [overdueQuery, setOverdueQuery] = useState('');
+  const [overdueFilterRisk, setOverdueFilterRisk] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   // Row whose mobile ⋮ menu is open (phones only — desktop shows the icon row).
   // Which KPI breakdown popup is open. The Profit card deep-links to the
   // Investments page; Investments and Available Funds explain themselves
@@ -653,14 +654,16 @@ export default function Dashboard() {
   const overdueFiltered = oq
     ? overdueView.filter((r) => r.customer.toLowerCase().includes(oq) || r.loanNo.toLowerCase().includes(oq) || riskFor(r.days).toLowerCase().includes(oq) || (r.type ?? '').toLowerCase().includes(oq))
     : overdueView;
-  // Draw 6 by default; the rest are one click away. Applied HERE, not in the
-  // useMemo, so overdueFiltered.length stays the honest count for the badge.
-  // EVERY overdue loan renders — no cap, no toggle. The panel is the place
-  // arrears get worked from, so the list scrolls inside its own container
-  // (sm:max-h-[340px] overflow-auto) rather than making the user click to
-  // reveal the rest. A hardcoded .slice(0, 6) used to sit in the useMemo,
-  // which both hid 32 loans and made the badge report "6" instead of 38.
+  // EVERY overdue loan renders — no cap, no toggle. The panel is where arrears
+  // get worked, so the list scrolls inside its own container rather than making
+  // the user click to reveal the rest. A hardcoded .slice(0, 6) used to sit in
+  // the useMemo, which both hid 32 loans AND made the badge report "6" of 38.
   const overdueVisible = overdueFiltered;
+  // Risk narrowing sits ON TOP of the uncapped list, so it filters all 38 —
+  // not a pre-truncated 6.
+  const overdueRiskFiltered = overdueFilterRisk === 'all'
+    ? overdueVisible
+    : overdueVisible.filter((r) => riskFor(r.days).toLowerCase() === `${overdueFilterRisk} risk`);
 
   return (
     <div className="min-h-full bg-[#F8FAFC] dark:bg-transparent">
@@ -747,10 +750,23 @@ export default function Dashboard() {
                   <Search size={15} className="shrink-0 text-slate-400" />
                   <input value={overdueQuery} onChange={(e) => setOverdueQuery(e.target.value)} placeholder="Search customer, loan…" className="w-full bg-transparent text-[13px] text-ink outline-none placeholder:text-muted" />
                 </div>
-                {/* Lands on the OVERDUE set, not the whole book — this sits in
-                    the Overdue Loans header, so "View all" must mean all
-                    overdue. It previously navigated to /loans unfiltered. */}
-                <button onClick={() => navigate('/loans?status=ACTIVE&urgency=overdue')} className="hidden text-[13px] font-semibold sm:inline" style={{ color: C.primary }}>View all</button>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={overdueFilterRisk}
+                    onChange={(e) => setOverdueFilterRisk(e.target.value as 'all' | 'high' | 'medium' | 'low')}
+                    aria-label="Filter overdue loans by risk"
+                    className="min-w-[120px] rounded-xl border-[0.5px] border-slate-200/80 bg-white px-2.5 py-1.5 text-[12px] text-ink outline-none dark:border-white/[.08] dark:bg-surface dark:text-ink"
+                  >
+                    <option value="all">All</option>
+                    <option value="high">High Risk</option>
+                    <option value="medium">Medium Risk</option>
+                    <option value="low">Low Risk</option>
+                  </select>
+                  {/* Lands on the OVERDUE set, not the whole book — this sits in
+                      the Overdue Loans header, so "View all" must mean all
+                      overdue. It previously navigated to /loans unfiltered. */}
+                  <button onClick={() => navigate('/loans?status=ACTIVE&urgency=overdue')} className="hidden text-[13px] font-semibold sm:inline" style={{ color: C.primary }}>View all</button>
+                </div>
               </div>
             </div>
 
@@ -804,9 +820,9 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {overdueFiltered.length === 0 ? (
+                    {overdueRiskFiltered.length === 0 ? (
                       <tr><td colSpan={6} className="py-16 text-center text-[13px] text-muted">No loans match &quot;{overdueQuery}&quot;.</td></tr>
-                    ) : overdueVisible.map((r) => {
+                    ) : overdueRiskFiltered.map((r) => {
                       const risk = riskFor(r.days);
                       const callHref = r.mobile ? telHref(r.mobile) : null;
                       const waHref = r.mobile
