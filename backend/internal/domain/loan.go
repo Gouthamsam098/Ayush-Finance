@@ -464,6 +464,32 @@ func (l *Loan) IsFullyPaid(c Collected, now time.Time) bool {
 	return l.Outstanding(c, now) <= 0
 }
 
+// HasNoBalanceIgnoringStatus is IsFullyPaid evaluated as if the loan were ACTIVE.
+//
+// Outstanding() deliberately short-circuits to 0 for a CLOSED interest-only or
+// EMI loan, because a settled loan owes nothing and every report should say so.
+// That makes IsFullyPaid unusable for deciding whether a CLOSED loan should be
+// REOPENED: it reads the status, concludes "no balance", and the caller's
+// `!fullyPaid && CLOSED` reopen branch can never fire. A closed interest-only
+// loan therefore stayed CLOSED even after every one of its payments was
+// deleted — verified on all four local loan types, where only DAILY_COLLECTION
+// (which takes the IsInstalmentLoan path and has no such short-circuit)
+// reopened correctly.
+//
+// This asks the question the reopen decision actually needs — "given these
+// collections, would this loan owe anything if it were open?" — by evaluating
+// against a copy forced to ACTIVE. Outstanding() itself is left exactly as it
+// is, so every reporting figure that relies on "CLOSED owes nothing" is
+// unchanged; only the status-sync decision uses this.
+func (l *Loan) HasNoBalanceIgnoringStatus(c Collected, now time.Time) bool {
+	if l.Status != StatusClosed {
+		return l.IsFullyPaid(c, now)
+	}
+	asActive := *l
+	asActive.Status = StatusActive
+	return asActive.Outstanding(c, now) <= 0
+}
+
 // clockSkewToleranceDays is how far ahead of the server's own clock a
 // user-entered date may be before it's treated as "in the future". The browser
 // and backend can sit in different timezones / drift by up to a day; without
