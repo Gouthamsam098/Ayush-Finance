@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSelector } from 'react-redux';
-import { todayISO, isoLocal, addDays, addMonths } from '@/lib/format';
+import { todayISO, addDays, addMonths } from '@/lib/format';
 import { config } from '@/lib/config';
 import { customerApi } from '@/services/customerApi';
 import { loanApi } from '@/services/loanApi';
@@ -155,65 +155,8 @@ export const EXPENSE_SUB_CATEGORIES = ['Office Rent', 'Electricity Bill', 'Offic
 
 let _uidSeq = 1000;
 const uid = () => ++_uidSeq;
-const monthAgo = (n: number) => { const d = new Date(); d.setMonth(d.getMonth() - n); return isoLocal(d); };
-const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return isoLocal(d); };
 const calcInterest = (principal: number, rate: number) => Math.round((principal * rate) / 100);
 
-// ─────────────── Seed ───────────────
-const seedCustomers: Customer[] = [
-  { id: 1, code: 'CUST-1001', name: 'Rohan Sharma', fatherName: 'Suresh Sharma', mobile: '9812345670', address: 'MG Road', city: 'Pune', state: 'Maharashtra', pincode: '411001', occupation: 'Shopkeeper', monthlyIncome: 45000, referenceName: 'Amit', referenceMobile: '9800011111', createdAt: monthAgo(6) },
-  { id: 2, code: 'CUST-1002', name: 'Ananya Iyer', fatherName: 'Raghav Iyer', mobile: '9898989812', address: 'Anna Nagar', city: 'Chennai', state: 'Tamil Nadu', pincode: '600040', occupation: 'Business', monthlyIncome: 120000, createdAt: monthAgo(4) },
-  { id: 3, code: 'CUST-1003', name: 'Vikram Nair', fatherName: 'Mohan Nair', mobile: '9745612300', address: 'Marine Drive', city: 'Kochi', state: 'Kerala', pincode: '682001', occupation: 'Driver', monthlyIncome: 28000, createdAt: monthAgo(3) },
-  { id: 4, code: 'CUST-1004', name: 'Meera Joshi', mobile: '9900011223', address: 'FC Road', city: 'Pune', state: 'Maharashtra', pincode: '411004', occupation: 'Tailor', monthlyIncome: 22000, createdAt: monthAgo(2) },
-  { id: 5, code: 'CUST-1005', name: 'Arjun Reddy', mobile: '9012345678', address: 'Banjara Hills', city: 'Hyderabad', state: 'Telangana', pincode: '500034', occupation: 'Contractor', monthlyIncome: 90000, createdAt: monthAgo(1) },
-];
-
-const L = (o: Partial<Loan> & { id: number; customerId: number; type: LoanType; principal: number; rate: number; loanDate: string }): Loan => ({
-  loanNumber: 'LN-' + (4000 + o.id), interest: calcInterest(o.principal, o.rate), status: 'ACTIVE', ...o,
-} as Loan);
-
-const seedLoans: Loan[] = [
-  // Daily Collection: fixed 100-day term; daily auto = 300000 ÷ 100 = 3000/day.
-  L({ id: 1, loanNumber: 'LN-4001', customerId: 1, type: 'DAILY_COLLECTION', principal: 300000, rate: 0.25, loanDate: daysAgo(9), dailyAmount: 3000, numDays: 100, nextDueDate: addDays(daysAgo(9), 1), contact: '9812345670' }),
-  // Vehicle EMI: ₹6,80,000 @ 12% overall = ₹81,600 interest; total ₹7,61,600 ÷ 10 months = ₹76,160 EMI.
-  L({ id: 3, loanNumber: 'LN-4003', customerId: 3, type: 'VEHICLE', principal: 680000, rate: 12, loanDate: monthAgo(4), dailyAmount: 76160, numDays: 10, vehicleNumber: 'KL-07-AB-1234', vehicleBrand: 'Maruti', vehicleName: 'Ertiga', nextDueDate: addDays(todayISO(), -3), contact: '9745612300' }),
-  L({ id: 4, loanNumber: 'LN-4004', customerId: 4, type: 'FLEXIBLE', principal: 150000, rate: 3, loanDate: monthAgo(1), numDays: 30, nextDueDate: addDays(todayISO(), 4) }),
-  // Property EMI: ₹45,00,000 @ 12% overall = ₹5,40,000 interest; total ₹50,40,000 ÷ 15 months = ₹3,36,000 EMI.
-  L({ id: 5, loanNumber: 'LN-4005', customerId: 5, type: 'PROPERTY', principal: 4500000, rate: 12, loanDate: monthAgo(2), dailyAmount: 336000, numDays: 15, nextDueDate: addDays(todayISO(), 12) }),
-  // Monthly Interest (interest-only): ₹1,00,000 at 5%/month → interest auto = ₹5,000/month; principal fixed until settled.
-  L({ id: 6, loanNumber: 'LN-4006', customerId: 2, type: 'MONTHLY_INTEREST', principal: 100000, rate: 5, loanDate: monthAgo(2), nextDueDate: addDays(todayISO(), 8), contact: '9898989812' }),
-  // Daily Interest (interest-only): ₹50,000 at 0.2%/day → interest auto = ₹100/day; principal fixed until settled.
-  L({ id: 7, loanNumber: 'LN-4007', customerId: 3, type: 'DAILY_INTEREST', principal: 50000, rate: 0.2, loanDate: daysAgo(15), nextDueDate: addDays(todayISO(), 1), contact: '9745612300' }),
-];
-
-let receiptCounter = 100001;
-const R = () => 'RCPT-' + receiptCounter++;
-const seedCollections: Collection[] = [
-  // Daily loan l1 — realistic ₹750/day payments over the last 9 days (mix of paid, partial, missed)
-  { id: uid(), receiptNo: R(), loanId: 1, date: daysAgo(9), amount: 750, mode: 'CASH' },
-  { id: uid(), receiptNo: R(), loanId: 1, date: daysAgo(8), amount: 750, mode: 'UPI' },
-  { id: uid(), receiptNo: R(), loanId: 1, date: daysAgo(7), amount: 500, mode: 'CASH' }, // partial
-  // daysAgo(6): no payment → Due
-  { id: uid(), receiptNo: R(), loanId: 1, date: daysAgo(5), amount: 750, mode: 'CASH' },
-  { id: uid(), receiptNo: R(), loanId: 1, date: daysAgo(4), amount: 750, mode: 'UPI' },
-  { id: uid(), receiptNo: R(), loanId: 1, date: daysAgo(2), amount: 300, mode: 'CASH' }, // partial
-  { id: uid(), receiptNo: R(), loanId: 1, date: todayISO(), amount: 750, mode: 'UPI' },
-  // Other loans — one payment each, keeps the dataset light (loan ids must exist in seedLoans)
-  { id: uid(), receiptNo: R(), loanId: 3, date: daysAgo(30), amount: 10200, mode: 'UPI' },
-  { id: uid(), receiptNo: R(), loanId: 5, date: daysAgo(10), amount: 54000, mode: 'BANK' },
-  { id: uid(), receiptNo: R(), loanId: 4, date: todayISO(), amount: 4500, mode: 'UPI' },
-];
-const seedExpenses: Expense[] = [
-  { id: uid(), date: monthAgo(1), category: 'Office Rent', name: 'Monthly office rent', amount: 85000, mode: 'BANK' },
-  { id: uid(), date: monthAgo(1), category: 'Petrol', name: 'Field visits fuel', amount: 12000, mode: 'CASH' },
-  { id: uid(), date: todayISO(), category: 'Internet', name: 'Broadband', amount: 2200, mode: 'UPI' },
-  { id: uid(), date: todayISO(), category: 'Tea', name: 'Pantry', amount: 1800, mode: 'CASH' },
-];
-const seedDocs: DocItem[] = [
-  { id: uid(), customerId: 1, type: 'Aadhaar', fileName: 'aadhaar_rohan.pdf', size: '2.1 MB', dataUrl: null, mime: null, date: monthAgo(6) },
-  { id: uid(), customerId: 1, type: 'PAN', fileName: 'pan_rohan.pdf', size: '1.3 MB', dataUrl: null, mime: null, date: monthAgo(6) },
-  { id: uid(), customerId: 3, type: 'RC', fileName: 'rc_vikram.pdf', size: '0.8 MB', dataUrl: null, mime: null, date: monthAgo(4) },
-];
 
 // ─────────────── Context ───────────────
 interface DataShape {
@@ -271,16 +214,25 @@ export const useData = () => {
 };
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  // In API mode, customers come from the backend (start empty, load on mount).
-  // Loans/collections/etc. remain seeded until their backend phases land.
-  const [customers, setCustomers] = useState<Customer[]>(config.useApi ? [] : seedCustomers);
-  const [loans, setLoans] = useState<Loan[]>(config.useApi ? [] : seedLoans);
-  const [collections, setCollections] = useState<Collection[]>(config.useApi ? [] : seedCollections);
-  const [expenses, setExpenses] = useState<Expense[]>(config.useApi ? [] : seedExpenses);
-  const [documents, setDocuments] = useState<DocItem[]>(seedDocs);
-  const [codeSeq, setCodeSeq] = useState(1006);
-  const [loanSeq, setLoanSeq] = useState(4006);
-  const [rcptSeq, setRcptSeq] = useState(100010);
+  // EVERY entity starts EMPTY. There is deliberately no seed dataset: this is a
+  // production finance app, and demo customers/loans/payments shipped in the
+  // bundle would be indistinguishable from real records on screen, inflate every
+  // KPI, and put fabricated names and mobile numbers in front of users.
+  //
+  // In API mode these fill from the backend (see the fetch effect below). In
+  // mock mode they stay empty until the user enters something, so each page
+  // shows its real empty state rather than someone else's book.
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [documents, setDocuments] = useState<DocItem[]>([]);
+  // Mock-mode code sequences. They start at the FIRST number now that no seed
+  // record occupies 1001-1005 / 4001-4007 / 100001-100010; the backend mints
+  // its own codes from Postgres sequences in API mode, so these are unused there.
+  const [codeSeq, setCodeSeq] = useState(1001);
+  const [loanSeq, setLoanSeq] = useState(4001);
+  const [rcptSeq, setRcptSeq] = useState(100001);
 
   // Load customers from the backend in API mode. Keyed off the access token so
   // the fetch runs AFTER login (the provider mounts before auth exists; a fetch

@@ -41,7 +41,7 @@ From `backend/`: `docker compose up --build` starts Postgres **and** the backend
 
 The front-end runs against **either** the in-memory mock **or** the real backend, switched by `VITE_USE_API` in `.env.local` (see `src/lib/config.ts`). This flag is the key to understanding data flow:
 
-- **`VITE_USE_API` unset/false** → everything lives in `src/mock/DataContext.tsx` (in-memory, seeded, resets on reload). `Login.tsx` accepts any credentials and dispatches a `demo-token`.
+- **`VITE_USE_API` unset/false** → everything lives in `src/mock/DataContext.tsx` (in-memory, **starts empty**, resets on reload). There is deliberately **no seed dataset** — demo customers/loans/payments would be indistinguishable from real records on screen and would inflate every KPI. `Login.tsx` matches an email against the localStorage user directory and **does not check the password**, dispatching a `demo-token`; this path must never be reachable in production (`Dockerfile` sets `VITE_USE_API=true`).
 - **`VITE_USE_API=true`** → wired features hit the Go backend through the `/api` proxy (`vite.config.ts` proxies `/api` → `http://localhost:4000`, override with `VITE_API_URL`). Currently **auth and customers (incl. documents)** are wired; loans/collections/expenses still use the mock even in API mode.
 
 `DataContext` is deliberately **API-aware behind the flag**: its `addCustomer`/`updateCustomer`/`deleteCustomer` call `customerApi` when the flag is on, otherwise mutate local state. Pages call `useData()` unchanged either way. When wiring a new feature to the backend, follow this pattern (add a `src/services/xApi.ts`, branch inside the relevant `DataContext` method on `config.useApi`) rather than rewriting pages.

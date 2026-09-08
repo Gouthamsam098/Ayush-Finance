@@ -239,7 +239,8 @@ src/
   `tokenStore` (localStorage).
 - **`DataContext`** holds everything else and is **API-aware behind a flag**: its
   mutators call the relevant `xApi` when `config.useApi` is set, otherwise they
-  mutate in-memory seed data. Pages call `useData()` and never know which.
+  mutate in-memory state (which starts empty — there is no seed dataset). Pages
+  call `useData()` and never know which.
 
 Provider nesting: `Redux → DataProvider → ToastProvider → BrowserRouter → App`.
 

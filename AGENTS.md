@@ -88,7 +88,7 @@ All protected routes are wrapped in `ProtectedRoute` and rendered within `AppShe
 - Dispatch actions via `useDispatch` hook
 
 **Mock Data:**
-- `DataContext` provider wraps the app for development/demo data
+- `DataContext` provider wraps the app for in-memory state (no demo data — it starts empty)
 - Can be replaced with real API calls when backend is available
 
 ### UI Components

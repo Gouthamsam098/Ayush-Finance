@@ -12,11 +12,16 @@ services:
       POSTGRES_USER: anush_admin
       # Local-only password; production uses managed secrets, never this file.
       POSTGRES_PASSWORD: dev_password
-    # Host 5433 → container 5432. Uses 5433 on the host to avoid clashing with
-    # a local PostgreSQL that may already own 5432. The backend reaches the DB
-    # over the internal Docker network, so this only affects host-side access.
+    # Host ${POSTGRES_HOST_PORT:-5433} → container 5432. Defaults to 5433 to
+    # avoid clashing with a local PostgreSQL that may already own 5432 — but a
+    # machine running SEVERAL clusters can have 5433 taken too, which fails the
+    # bind with "address already in use". Override per-machine in backend/.env
+    # (gitignored) rather than editing this tracked default:
+    #     POSTGRES_HOST_PORT=5434
+    # The backend reaches the DB over the internal Docker network at
+    # postgres:5432, so this only affects host-side access (psql, a GUI client).
     ports:
-      - "5433:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

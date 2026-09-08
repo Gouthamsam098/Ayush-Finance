@@ -1054,6 +1054,160 @@ export default function Dashboard() {
         <p className="pb-2 text-center text-[12px] text-muted">All amounts are in INR</p>
       </div>
 
+      {/* ── Funds breakdown dialogs ──────────────────────────────────────
+          RESTORED. Both KPI cards call setFundsDialog(...) on click, but the
+          dialogs that read `fundsDialog` were dropped in the merge that
+          produced the current HEAD (they existed in 7e8ad4c). The result was a
+          card that showed a chevron, took the click, set the state — and did
+          nothing visible, because no consumer of the state was left. */}
+
+      {/* ── Investments breakdown — where the raised capital physically sits ──
+          Investments is a RECORDED figure (what investors handed over), not a
+          derived one, so the useful thing to show is not how it was computed
+          but where every rupee of it has gone. The three rows are mutually
+          exclusive and sum back to the capital, which is what makes the card
+          auditable at a glance. */}
+      <Dialog
+        wide
+        open={fundsDialog === 'investments'}
+        onClose={() => setFundsDialog(null)}
+        title="Investor Capital"
+        subtitle="What was raised, and where every rupee of it is now"
+        footer={<Button onClick={() => setFundsDialog(null)}>Close</Button>}
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border-[0.5px] border-violet-200 bg-violet-50 px-4 py-3.5 dark:border-violet-500/25 dark:bg-violet-500/[.07]">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-violet-700 dark:text-violet-300">Total raised</div>
+            <div className="font-display text-2xl font-bold tabular-nums text-ink">{inr(funds.capital)}</div>
+            <div className="mt-0.5 text-[12px] text-muted">Across all active investments</div>
+          </div>
+
+          <div>
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted">Where it is now</div>
+            <div className="overflow-hidden rounded-xl border-[0.5px] border-slate-200 dark:border-white/[.07]">
+              {[
+                { label: 'Cash in hand', note: 'In the bank, ready to lend',
+                  value: funds.available, tone: 'text-teal-600 dark:text-teal-400' },
+                { label: 'With borrowers', note: 'Given to borrowers, minus what they have repaid',
+                  value: Math.max(0, funds.disbursed - funds.collected), tone: 'text-indigo-600 dark:text-indigo-400' },
+                { label: 'Spent on expenses', note: 'Running costs and investor payouts',
+                  value: funds.expenses, tone: 'text-rose-600 dark:text-rose-400' },
+              ].map((r) => (
+                <div key={r.label} className="flex items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 last:border-0 dark:border-white/[.06]">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-medium text-ink">{r.label}</div>
+                    <div className="text-[11.5px] text-muted">{r.note}</div>
+                  </div>
+                  <div className={`shrink-0 font-display text-[15px] font-bold tabular-nums ${r.tone}`}>{inr(r.value)}</div>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-3 bg-slate-50 px-3.5 py-2.5 dark:bg-white/[.03]">
+                <div className="text-[13px] font-semibold text-ink">= Total raised</div>
+                <div className="font-display text-[15px] font-bold tabular-nums text-violet-600 dark:text-violet-400">
+                  {inr(funds.available + Math.max(0, funds.disbursed - funds.collected) + funds.expenses)}
+                </div>
+              </div>
+            </div>
+            <p className="mt-2 text-[11.5px] leading-relaxed text-muted">
+              Every rupee raised is in one of these three places. Profit earned
+              ({inr(funds.netProfit)}) is already inside them — mostly in cash in hand.
+            </p>
+          </div>
+        </div>
+      </Dialog>
+
+      {/* ── Available Funds breakdown — the arithmetic, shown as arithmetic ───
+          This one IS derived, and its formula surprises people (interest is
+          inside `collected`; upfront deduction is inside `disbursed`), so the
+          dialog lays the four terms out in the order they are applied rather
+          than restating the result. */}
+      <Dialog
+        wide
+        open={fundsDialog === 'available'}
+        onClose={() => setFundsDialog(null)}
+        title="Available Funds"
+        subtitle="Cash you can lend right now, and how it is calculated"
+        footer={<Button onClick={() => setFundsDialog(null)}>Close</Button>}
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border-[0.5px] border-teal-200 bg-teal-50 px-4 py-3.5 dark:border-teal-500/25 dark:bg-teal-500/[.07]">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-300">Cash available to lend</div>
+            <div className="font-display text-2xl font-bold tabular-nums text-ink">{inr(funds.available)}</div>
+            <div className="mt-0.5 text-[12px] text-muted">
+              {funds.rawAvailable < 0 ? 'Overdrawn — shown as ₹0 above' : 'Ready to deploy into new loans'}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted">How it adds up</div>
+            <div className="overflow-hidden rounded-xl border-[0.5px] border-slate-200 dark:border-white/[.07]">
+              {[
+                { sign: '', label: 'Investment', note: 'Capital put in by investors',
+                  value: funds.capital, tone: 'text-violet-600 dark:text-violet-400' },
+                { sign: '−', label: 'Given to borrowers', note: 'Same figure as the dashboard card',
+                  value: funds.disbursed, tone: 'text-indigo-600 dark:text-indigo-400' },
+                // Its OWN row, not a footnote on the row above. This is real
+                // money the business kept at disbursal, and burying it in a
+                // subtitle made the gap against the Borrower Lent card look
+                // like an error. Shown as retained cash, NOT folded into
+                // profit — profit recognition is left exactly as it was, so no
+                // figure is deducted or credited twice.
+                ...(upfrontDeducted > 0 ? [{
+                  sign: '', label: 'of which deducted upfront',
+                  note: 'Interest kept from daily collection loans — you never paid this out',
+                  value: upfrontDeducted, tone: 'text-amber-600 dark:text-amber-400',
+                  inset: true,
+                }] : []),
+                // ONE definition of "repaid": ALL cash received, principal and
+                // interest together. Splitting it (principal here, interest on
+                // the Profit row) gave the word two values across the two
+                // popups — ₹26.6 L here vs ₹31.9 L in the Investments popup —
+                // so neither could be reconciled against the other.
+                { sign: '+', label: 'Total repaid by borrowers', note: 'All cash received back — principal and interest together',
+                  value: funds.collected, tone: 'text-emerald-600 dark:text-emerald-400' },
+                // Split the row above so both figures the dashboard shows are
+                // visible here: principal ties to the Principal Recovered card,
+                // interest to the Interest Earned card. Display-only (sign '')
+                // because both are already inside the total above.
+                { sign: '', label: 'of which principal', note: 'Matches the Principal Recovered card',
+                  value: Math.max(0, funds.collected - funds.interestEarned),
+                  tone: 'text-emerald-600 dark:text-emerald-400', inset: true },
+                // Interest is INSIDE the row above, so this row is display-only
+                // (sign '') — adding it again would double-count the earnings.
+                { sign: '', label: 'of which interest', note: 'Matches the Interest Earned card',
+                  value: funds.interestEarned, tone: 'text-amber-600 dark:text-amber-400', inset: true },
+                { sign: '−', label: 'Expenses', note: 'Running costs and investor payouts',
+                  value: funds.expenses, tone: 'text-rose-600 dark:text-rose-400' },
+              ].map((r) => (
+                <div key={r.label} className={`flex items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 last:border-0 dark:border-white/[.06] ${'inset' in r && r.inset ? 'bg-slate-50/70 dark:bg-white/[.02]' : ''}`}>
+                  <div className={`flex min-w-0 items-start gap-2.5 ${'inset' in r && r.inset ? 'pl-5' : ''}`}>
+                    <span className={`mt-px w-3 shrink-0 text-center font-display text-[15px] font-bold ${r.sign === '+' ? 'text-emerald-500' : r.sign === '−' ? 'text-rose-500' : 'text-transparent'}`}>{r.sign || '+'}</span>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium text-ink">{r.label}</div>
+                      <div className="text-[11.5px] text-muted">{r.note}</div>
+                    </div>
+                  </div>
+                  <div className={`shrink-0 font-display text-[15px] font-bold tabular-nums ${r.tone}`}>{inr(r.value)}</div>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-3 bg-slate-50 px-3.5 py-2.5 dark:bg-white/[.03]">
+                <div className="text-[13px] font-semibold text-ink">= Available Funds</div>
+                <div className="font-display text-[15px] font-bold tabular-nums text-teal-600 dark:text-teal-400">{inr(funds.available)}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* One note only. The rows above now carry their own explanation,
+              so this keeps just the fact that genuinely surprises people. */}
+          <p className="rounded-xl border-[0.5px] border-slate-200 bg-slate-50 px-3.5 py-3 text-[11.5px] leading-relaxed text-muted dark:border-white/[.06] dark:bg-white/[.02]">
+            <span className="font-medium text-ink">Profit is already inside this figure.</span>{' '}
+            Interest arrived as cash, so it is counted in the rows above — never add it on top.
+            Expenses are subtracted once, here; they also reduce the Profit card, but the two are
+            separate views of the same spend and are never added together.
+          </p>
+        </div>
+      </Dialog>
+
       {/* Full overdue book — searchable, filterable by loan type, paginated.
           Purely a view over `overdueAll`: the row actions below are the SAME
           handlers the card uses, so nothing here can diverge from it. */}
