@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData, LOAN_LABELS, isDailyLoan, isInstalmentLoan, behavesEmi, behavesInterestOnly, cadenceDaysForLoan, upfrontDeduction, type Loan, type PayMode, type CollectionKind } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,7 +34,7 @@ const fmtDayMon = (s: string) => {
 };
 
 /** Daily-collection ledger: 100 days, daily accrual + carry-forward, editable payments. */
-export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }: { loan: Loan; onClose: () => void; statementOnly?: boolean }) {
+export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, autoOpenAdd = false }: { loan: Loan; onClose: () => void; statementOnly?: boolean; /** Opens the Add-collection dialog on the first collectable slot (same as ledger Add). */ autoOpenAdd?: boolean }) {
   const d = useData();
   const toast = useToast();
   // RBAC: every mutation in this dialog is a Collections write. View-only users
@@ -666,6 +666,31 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       setAmount(r.pending != null ? String(r.pending) : defaultAmount()); setDate(receiptDate); setMode('CASH'); setKind('INTEREST'); setRemarks(''); setAddOpen(true);
     }
   };
+
+  const autoAddDone = useRef(false);
+  useEffect(() => {
+    autoAddDone.current = false;
+  }, [loanProp.id]);
+  useEffect(() => {
+    if (!autoOpenAdd || autoAddDone.current || !canCollect || loan.status !== 'ACTIVE' || rows.length === 0) return;
+    const target = rows.find((r) => r.status === 'Overdue')
+      ?? rows.find((r) => r.status === 'Partial')
+      ?? rows.find((r) => r.status === 'Next due');
+    if (!target) {
+      autoAddDone.current = true;
+      return;
+    }
+    autoAddDone.current = true;
+    openRow({
+      sn: target.sn,
+      date: target.date,
+      collected: target.collected,
+      due: target.due,
+      status: target.status,
+      pending: Math.max(0, target.due - target.collected),
+    });
+  }, [autoOpenAdd, canCollect, loan.status, rows]);
+
   const addColl = async () => {
     // DOUBLE-SUBMIT GUARD: every branch below writes money and the dialog stays
     // open for the round-trip, so a second click would post a duplicate. Worst
@@ -999,8 +1024,20 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
     toast('Statement downloaded');
   };
 
+  // Pay now from Collections: skip the XL ledger chrome so only one backdrop
+  // (the Add-collection dialog) is visible — stacked blurs looked like a glitch.
+  const payNowShellHidden = autoOpenAdd && (addOpen || !autoAddDone.current);
+
+  if (autoOpenAdd && !addOpen && !autoAddDone.current) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-md" aria-busy="true" aria-label="Opening payment form">
+        <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+      </div>
+    );
+  }
+
   return (
-    <Dialog open onClose={onClose} title={`${statementOnly && !isSimple ? 'Loan Statement' : 'Collection Ledger'} · ${loan.loanNumber}`} subtitle={isSimple ? `${LOAN_LABELS[loan.type]} · Payment history` : `${LOAN_LABELS[loan.type]} · ${totalTerm} ${isMonthly ? 'months' : 'days'}`} xl
+    <Dialog open onClose={onClose} hideShell={payNowShellHidden} title={`${statementOnly && !isSimple ? 'Loan Statement' : 'Collection Ledger'} · ${loan.loanNumber}`} subtitle={isSimple ? `${LOAN_LABELS[loan.type]} · Payment history` : `${LOAN_LABELS[loan.type]} · ${totalTerm} ${isMonthly ? 'months' : 'days'}`} xl
       footer={<>
         {shareWaHref ? (
           <a
@@ -1027,6 +1064,8 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
         <Button variant="ghost" onClick={() => generateReport()} title="Download the statement as a PDF"><FileDown size={15} /> Generate Statement</Button>
         <Button onClick={onClose}>Close</Button>
       </>}>
+      {!payNowShellHidden && (
+      <>
       {/* Customer information */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
         <div className="flex items-center gap-3">
@@ -1042,16 +1081,16 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       {/* View toggle: operational ledger vs bank-style statement — all loan types.
           Hidden when statementOnly (Loans page) — the ledger lives on Collections. */}
       {!statementOnly && (
-        <div className="mb-4 inline-flex rounded-lg border-[0.5px] border-slate-200/70 bg-slate-100/70 p-1 dark:border-white/[.06] dark:bg-white/[.04]">
+        <div className="mb-4 flex w-full min-w-0 rounded-lg border-[0.5px] border-slate-200/70 bg-slate-100/70 p-1 dark:border-white/[.06] dark:bg-white/[.04]">
           <button
             onClick={() => setTab('ledger')}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-semibold transition-colors ${tab === 'ledger' ? 'bg-blue-500 text-white shadow-sm' : 'text-muted hover:text-ink'}`}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] font-semibold transition-colors sm:flex-none sm:justify-start sm:px-3 sm:text-[13px] ${tab === 'ledger' ? 'bg-blue-500 text-white shadow-sm' : 'text-muted hover:text-ink'}`}
           >
             <LayoutList size={14} /> Ledger
           </button>
           <button
             onClick={() => setTab('statement')}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-semibold transition-colors ${tab === 'statement' ? 'bg-blue-500 text-white shadow-sm' : 'text-muted hover:text-ink'}`}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] font-semibold transition-colors sm:flex-none sm:justify-start sm:px-3 sm:text-[13px] ${tab === 'statement' ? 'bg-blue-500 text-white shadow-sm' : 'text-muted hover:text-ink'}`}
           >
             <Table2 size={14} /> Statement
           </button>
@@ -1281,9 +1320,11 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false }:
       </div>
       </>
       )}
+      </>
+      )}
 
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={editId ? 'Edit collection' : editReceipt ? 'Edit payment' : editDay ? 'Edit day collection' : isSettlement ? 'Settle & close' : clearDues ? 'Clear overdue' : 'Add collection'} subtitle={cust?.name ? `${cust.name} · ${loan.loanNumber}` : loan.loanNumber}
-        footer={<><Button variant="ghost" onClick={() => setAddOpen(false)} disabled={saving}>Cancel</Button>
+      <Dialog nested={!autoOpenAdd} open={addOpen} onClose={() => { setAddOpen(false); if (autoOpenAdd) onClose(); }} title={editId ? 'Edit collection' : editReceipt ? 'Edit payment' : editDay ? 'Edit day collection' : isSettlement ? 'Settle & close' : clearDues ? 'Clear overdue' : 'Add collection'} subtitle={cust?.name ? `${cust.name} · ${loan.loanNumber}` : loan.loanNumber}
+        footer={<><Button variant="ghost" onClick={() => { setAddOpen(false); if (autoOpenAdd) onClose(); }} disabled={saving}>Cancel</Button>
           <Button variant={isSettlement ? 'success' : 'primary'} onClick={addColl} loading={saving}>
             {editId || editDay || editReceipt ? 'Save changes' : isSettlement ? <><CheckCircle2 size={15} /> Settle &amp; close</> : <><Plus size={15} /> Record payment</>}
           </Button></>}>

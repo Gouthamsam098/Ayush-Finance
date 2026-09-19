@@ -655,11 +655,11 @@ export default function Dashboard() {
     : overdueView;
 
   return (
-    <div className="min-h-full bg-[#F8FAFC] dark:bg-transparent">
-      <div className="flex w-full flex-col gap-4 p-3 sm:p-4">
+    <div className="min-h-full min-w-0 w-full bg-[#F8FAFC] dark:bg-transparent">
+      <div className="flex w-full min-w-0 flex-col gap-4 p-3 sm:p-4">
         {/* Top bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
             <button onClick={openSidebar} aria-label="Open menu" className="grid h-10 w-10 place-items-center rounded-xl border-[0.5px] border-slate-200 bg-white text-slate-600 lg:hidden dark:border-white/10 dark:bg-white/5 dark:text-slate-300"><Menu size={18} /></button>
             <div>
               <h1 className="font-display text-[22px] font-bold tracking-tight text-ink">{greeting}, Admin 👋</h1>
@@ -670,7 +670,7 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex w-full min-w-0 max-w-full justify-start overflow-x-auto overscroll-x-contain sm:w-auto sm:justify-end">
             <PeriodFilter
               mode={periodMode}
               dateISO={periodDate}
@@ -689,7 +689,7 @@ export default function Dashboard() {
         {/* 10 cards in a clean 5 x 2 at xl. Seven-across truncated the rupee
             figures, so the strip steps 2 → 3 → 5; each breakpoint divides the
             count evenly, which keeps the rows balanced rather than ragged. */}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5 xl:gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5 xl:gap-3 [&>*]:min-w-0">
           {kpisView.map((k) => <KpiCard key={k.label} {...k} />)}
         </div>
 

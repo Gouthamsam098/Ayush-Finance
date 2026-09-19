@@ -54,6 +54,27 @@ const REPORTS: { key: ReportKey; label: string; icon: typeof Users; accent: stri
   { key: 'expenses', label: 'Expenses', icon: Wallet, accent: '#f59e0b' },
 ];
 
+const REPORT_CELL = 'box-border px-5 py-3.5 align-middle';
+const REPORT_CELL_NAME = 'box-border py-3.5 pl-5 pr-1 align-middle text-left';
+const REPORT_CELL_AMOUNT = 'box-border py-3.5 pl-1 pr-4 align-middle text-left font-display tabular-nums tracking-normal whitespace-nowrap';
+const EXPENSE_REPORT_COLS = [
+  { width: '12%', align: 'left' as const, id: 'date' },
+  { width: '13%', align: 'left' as const, id: 'category' },
+  { width: '18%', align: 'left' as const, id: 'sub' },
+  { width: '16%', align: 'left' as const, id: 'name' },
+  { width: '14%', align: 'left' as const, id: 'amount' },
+  { width: '11%', align: 'center' as const, id: 'mode' },
+];
+const reportAlign = (right: boolean) => (right ? 'text-right' : 'text-left');
+const expenseColAlign = (a: 'left' | 'right' | 'center') => (a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : 'text-left');
+const expenseReportCell = (ci: number, extra?: string) => {
+  const col = EXPENSE_REPORT_COLS[ci];
+  if (!col) return cn(REPORT_CELL, extra);
+  if (col.id === 'amount') return cn(REPORT_CELL_AMOUNT, extra);
+  if (col.id === 'name') return cn(REPORT_CELL_NAME, extra);
+  return cn(REPORT_CELL, expenseColAlign(col.align), extra);
+};
+
 // ── the applied filter state (draft is edited in the drawer, applied on button) ──
 interface ReportFilters { period: Period; loanStatus: 'ALL' | 'ACTIVE' | 'CLOSED'; loanType: 'ALL' | LoanType; expenseCat: 'ALL' | string; }
 const defaultFilters = (): ReportFilters => ({ period: 'ALL', loanStatus: 'ALL', loanType: 'ALL', expenseCat: 'ALL' });
@@ -374,7 +395,7 @@ export default function Reports() {
   };
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full min-w-0 w-full flex-col">
       <PageHeader
         icon={<FileText size={20} />}
         title="Reports"
@@ -388,10 +409,10 @@ export default function Reports() {
           </HeaderGhostButton>
         }
       />
-      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
       {/* Portfolio KPI band */}
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4 [&>*]:min-w-0">
         <StatCard label="Customers" value={String(portfolio.customers)} accent="#8b5cf6" icon={<Users size={16} />} />
         <StatCard label="Outstanding" value={inr(portfolio.outstanding)} accent="#6366f1" icon={<IndianRupee size={16} />} countUp={portfolio.outstanding} />
         <StatCard label="Collected" value={inr(portfolio.collected)} accent="#10b981" icon={<TrendingUp size={16} />} countUp={portfolio.collected} />
@@ -401,7 +422,7 @@ export default function Reports() {
       {/* One unified panel: tabs → toolbar → chart → table */}
       <div className="overflow-hidden rounded-[18px] border-[0.5px] border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(30,39,64,.04)] dark:border-white/[.08] dark:bg-surface">
         {/* report tabs — 2×2 grid on mobile so labels of different lengths stay aligned */}
-        <div className="grid grid-cols-2 gap-2 border-b border-slate-100 px-6 pb-4 pt-5 dark:border-white/[.06] sm:flex sm:flex-wrap">
+        <div className="grid min-w-0 grid-cols-2 gap-2 border-b border-slate-100 px-3.5 pb-4 pt-4 dark:border-white/[.06] sm:flex sm:flex-wrap sm:px-6 sm:pt-5">
           {REPORTS.map((r) => {
             const Icon = r.icon;
             const active = tab === r.key;
@@ -410,7 +431,7 @@ export default function Reports() {
                 key={r.key}
                 onClick={() => { setTab(r.key); setQuery(''); }}
                 className={cn(
-                  'inline-flex w-full items-center justify-center gap-2 rounded-xl border-[0.5px] px-4 py-2 text-[13.5px] font-semibold transition-all sm:w-auto sm:justify-start',
+                  'inline-flex min-w-0 w-full items-center justify-center gap-1.5 rounded-xl border-[0.5px] px-2.5 py-2 text-[12px] font-semibold transition-all sm:w-auto sm:justify-start sm:gap-2 sm:px-4 sm:text-[13.5px]',
                   active ? 'text-white shadow-sm' : 'border-slate-200/80 bg-white text-ink/75 hover:bg-slate-50 dark:border-white/[.08] dark:bg-surface dark:hover:bg-white/[.03]',
                 )}
                 style={active ? { background: `linear-gradient(135deg, ${r.accent}, ${r.accent}cc)`, borderColor: r.accent } : undefined}
@@ -422,8 +443,8 @@ export default function Reports() {
         </div>
 
         {/* toolbar: summary + search + export */}
-        <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-4 dark:border-white/[.06] lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2.5 text-[13px] mb-5 lg:mb-0">
+        <div className="flex min-w-0 flex-col gap-3 border-b border-slate-100 px-3.5 py-4 dark:border-white/[.06] sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="mb-0 flex min-w-0 flex-wrap items-center gap-2.5 text-[13px] lg:mb-0">
             <span className="text-muted">Showing</span>
             {tab === 'collections' ? (
               <>
@@ -464,7 +485,7 @@ export default function Reports() {
         </div>
 
         {/* preview table */}
-        <div className="overflow-x-auto px-6 pb-6">
+        <div className="overflow-x-auto px-3.5 pb-6 sm:px-6">
           {report.body.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
               <FileText size={30} className="text-slate-300 dark:text-white/20" />
@@ -524,11 +545,31 @@ export default function Reports() {
               </tbody>
             </table>
           ) : (
-            <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
+            <table className={cn(
+              'w-full border-collapse text-sm',
+              tab === 'expenses' ? 'min-w-[820px] table-fixed' : 'min-w-[900px] table-fixed',
+            )}>
+              {tab === 'expenses' && (
+                <colgroup>
+                  {EXPENSE_REPORT_COLS.map((col, i) => (
+                    <col key={i} style={{ width: col.width }} />
+                  ))}
+                </colgroup>
+              )}
               <thead>
-                <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
+                <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-[12px] font-bold uppercase tracking-[0.06em] text-white">
                   {report.head.map((h, i) => (
-                    <th key={h} className={cn('h-14 align-middle whitespace-nowrap px-6 first:pl-6 last:pr-6', report.rightAlignCols.includes(i) && 'text-right')}>{h}</th>
+                    <th
+                      key={h}
+                      scope="col"
+                      className={cn(
+                        tab === 'expenses'
+                          ? expenseReportCell(i, cn('text-[12px] font-bold uppercase tracking-[0.06em]'))
+                          : cn('box-border h-14 whitespace-nowrap px-5 align-middle', reportAlign(report.rightAlignCols.includes(i))),
+                      )}
+                    >
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -540,11 +581,15 @@ export default function Reports() {
                       const money = report.rightAlignCols.includes(ci);
                       return (
                         <td key={ci} className={cn(
-                          'h-[54px] align-middle whitespace-nowrap px-6 tabular-nums',
-                          // Money right-aligned and heavier — it is what the eye
-                          // scans for; everything else recedes.
-                          money ? 'text-right font-display text-[14.5px] font-bold text-ink' : 'text-[13.5px] text-ink/75',
-                          ci === 0 && 'font-mono text-xs font-semibold text-ink',
+                          tab === 'expenses'
+                            ? expenseReportCell(ci, cn(
+                              'tabular-nums',
+                              money ? 'text-[14.5px] font-bold text-ink' : 'overflow-hidden text-[13.5px] text-ink/75',
+                            ))
+                            : cn('box-border h-[54px] align-middle px-5 tabular-nums', reportAlign(money), money
+                              ? 'whitespace-nowrap font-display text-[14.5px] font-bold text-ink'
+                              : 'truncate text-[13.5px] text-ink/75'),
+                          header === 'Loan #' && 'font-mono text-xs font-semibold text-ink',
                         )}>
                           {/* Typed cells render as coloured chips so status,
                               category and mode are scannable. Plain text
@@ -553,16 +598,19 @@ export default function Reports() {
                           {header === 'Status' && (cell === 'ACTIVE' || cell === 'CLOSED')
                             ? <Badge tone={cell === 'CLOSED' ? 'ok' : 'info'}>{cell === 'CLOSED' ? 'Closed' : 'Active'}</Badge>
                             : header === 'Mode'
-                              ? <Badge tone="neutral">{cell}</Badge>
+                              ? tab === 'expenses'
+                                ? <div className="flex w-full justify-center"><Badge tone="neutral" className="max-w-full truncate">{cell}</Badge></div>
+                                : <Badge tone="neutral">{cell}</Badge>
                               : header === 'Category'
                                 ? <span className={cn(
-                                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold',
+                                  'inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2.5 py-1 text-[11.5px] font-bold',
                                   cell === 'Investor Interest' ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
                                     : cell === 'Office' ? 'bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
                                       : cell === 'Personal' ? 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300'
                                         : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
                                 )}>
-                                  <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />{cell}
+                                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
+                                  <span className="truncate">{cell}</span>
                                 </span>
                                 : header === 'Loan Type'
                                   ? <Badge tone="info">{cell}</Badge>
@@ -581,7 +629,7 @@ export default function Reports() {
                     {report.head.map((h, i) => {
                       if (i === 0) {
                         return (
-                          <td key={h} className="px-6 py-3.5 text-[11.5px] font-bold uppercase tracking-wide text-muted">
+                          <td key={h} className={cn(REPORT_CELL, 'text-left text-[11.5px] font-bold uppercase tracking-wide text-muted')}>
                             Total · {report.body.length} {report.body.length === 1 ? 'row' : 'rows'}
                           </td>
                         );
@@ -595,7 +643,9 @@ export default function Reports() {
                         if (Number.isFinite(n)) { sum += n; seen = true; }
                       }
                       return (
-                        <td key={h} className="whitespace-nowrap px-6 py-3.5 text-right font-display text-[15px] font-bold tabular-nums text-ink">
+                        <td key={h} className={cn(
+                          tab === 'expenses' ? cn(REPORT_CELL_AMOUNT, 'text-[15px] font-bold text-ink') : cn(REPORT_CELL, 'whitespace-nowrap text-right font-display text-[15px] font-bold tabular-nums text-ink'),
+                        )}>
                           {seen ? inr(sum) : ''}
                         </td>
                       );

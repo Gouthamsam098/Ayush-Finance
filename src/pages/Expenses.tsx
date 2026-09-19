@@ -25,6 +25,37 @@ const yearsAgoISO = (n: number) => { const d = new Date(); d.setFullYear(d.getFu
 interface EForm { id?: number; date: string; category: string; subCategory: string; name: string; amount: string; mode: PayMode; remarks: string; }
 const blank = (): EForm => ({ date: todayISO(), category: EXPENSE_CATEGORIES[0], subCategory: '', name: '', amount: '', mode: 'CASH', remarks: '' });
 
+const EXP_CELL = 'box-border px-5 py-3.5 align-middle';
+/** Tighter seam Name → Amount; amount header + values share one left-aligned cell style. */
+const EXP_CELL_NAME = 'box-border py-3.5 pl-5 pr-1 align-middle text-left';
+const EXP_CELL_AMOUNT = 'box-border py-3.5 pl-1 pr-4 align-middle text-left font-display tabular-nums tracking-normal whitespace-nowrap';
+type ExpColAlign = 'left' | 'right' | 'center';
+const EXPENSE_COLUMNS: { id: string; label: string; width: string; align: ExpColAlign }[] = [
+  { id: 'date', label: 'Date', width: '12%', align: 'left' },
+  { id: 'category', label: 'Category', width: '13%', align: 'left' },
+  { id: 'subCategory', label: 'Sub Category', width: '18%', align: 'left' },
+  { id: 'name', label: 'Name', width: '16%', align: 'left' },
+  { id: 'amount', label: 'Amount', width: '14%', align: 'left' },
+  { id: 'mode', label: 'Mode', width: '11%', align: 'center' },
+  { id: 'actions', label: 'Actions', width: '16%', align: 'right' },
+];
+const expAlign = (a: ExpColAlign) => (a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : 'text-left');
+const expCellFor = (colId: string, align: ExpColAlign, extra?: string) => {
+  if (colId === 'name') return cn(EXP_CELL_NAME, extra);
+  if (colId === 'amount') return cn(EXP_CELL_AMOUNT, extra);
+  return cn(EXP_CELL, expAlign(align), extra);
+};
+
+function categoryPill(category: string) {
+  return cn(
+    'inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold',
+    category === 'Investor Interest' ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+      : category === 'Office' ? 'bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
+        : category === 'Personal' ? 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300'
+          : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+  );
+}
+
 export default function Expenses() {
   const d = useData();
   const toast = useToast();
@@ -71,14 +102,14 @@ export default function Expenses() {
   ];
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full min-w-0 w-full flex-col">
       <PageHeader
         icon={<Wallet size={20} />}
         title="Expenses"
         subtitle={filter === 'ALL' ? `${d.expenses.length} entries` : `${rows.length} shown · ${d.expenses.length} total`}
         actions={editable ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setForm(blank())}>Add Expense</HeaderPrimaryButton> : undefined}
       />
-      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
       {/* current + previous 2 months — click a card to list that month's rows */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -111,66 +142,130 @@ export default function Expenses() {
           ))}
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[650px] text-sm">
-            <thead><tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
-              <th className="px-5 py-4">Date</th><th className="px-5 py-4">Category</th><th className="px-5 py-4">Sub Category</th><th className="px-5 py-4">Name</th><th className="px-5 py-4 text-right">Amount</th><th className="px-5 py-4">Mode</th><th className="px-5 py-4 text-right">Actions</th>
-            </tr></thead>
+          <table className="w-full min-w-[820px] table-fixed border-collapse text-sm">
+            <colgroup>
+              {EXPENSE_COLUMNS.map((col) => (
+                <col key={col.id} style={{ width: col.width }} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-white">
+                {EXPENSE_COLUMNS.map((col) => (
+                  <th
+                    key={col.id}
+                    scope="col"
+                    className={cn(
+                      expCellFor(col.id, col.align, 'text-[12px] font-bold uppercase whitespace-nowrap tracking-[0.06em]'),
+                    )}
+                  >
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-white/[.05]">
               {rows.map((e, i) => (
-                <tr key={e.id} style={{ animationDelay: `${Math.min(i * 30, 350)}ms` }}
-                  className="anim-pop group transition-colors odd:bg-slate-50/40 hover:bg-blue-50/60 dark:odd:bg-white/[.015] dark:hover:bg-blue-500/[.06]">
-                  {/* Date gets a two-line treatment: the day reads first, the
-                      year is context — a flat date string made every row look
-                      the same weight. */}
-                  <td className="whitespace-nowrap px-5 py-3.5">
-                    <div className="font-semibold text-ink">{fmtDate(e.date).replace(/\s\d{4}$/, '')}</div>
-                    <div className="text-[11px] text-muted">{e.date.slice(0, 4)}</div>
-                  </td>
-                  {/* Category colour-coded by MEANING, so spending type is
-                      scannable instead of every badge being the same blue. */}
-                  <td className="whitespace-nowrap px-5 py-3.5">
-                    <span className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold',
-                      e.category === 'Investor Interest' ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
-                        : e.category === 'Office' ? 'bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300'
-                          : e.category === 'Personal' ? 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300'
-                            : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
-                    )}>
-                      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-                      {e.category}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3.5 text-[12.5px] text-muted">{e.subCategory ?? '—'}</td>
-                  <td className="px-5 py-3.5 font-semibold text-ink">{e.name}</td>
-                  {/* Amount right-aligned and the largest thing in the row —
-                      it is what the reader is scanning for. */}
-                  <td className="whitespace-nowrap px-5 py-3.5 text-right font-display text-[15px] font-bold tabular-nums text-danger">{inr(e.amount)}</td>
-                  <td className="whitespace-nowrap px-5 py-3.5"><Badge tone="neutral">{e.mode}</Badge></td>
-                  <td className="px-5 py-3.5">
-                    <div className="flex justify-end gap-1.5">
-                      {editable ? (<>
-                      <button onClick={() => setForm({ id: e.id, date: e.date, category: e.category, subCategory: e.subCategory ?? '', name: e.name, amount: String(e.amount), mode: e.mode, remarks: e.remarks ?? '' })}
-                        className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-primary-50 hover:text-primary" title="Edit"><Pencil size={15} /></button>
-                      <button onClick={() => setConfirm(e)} className="grid h-8 w-8 place-items-center rounded-lg text-muted hover:bg-danger-50 hover:text-danger" title="Delete"><Trash2 size={15} /></button>
-                      </>) : <span className="text-[12px] text-muted">—</span>}
-                    </div>
-                  </td>
+                <tr
+                  key={e.id}
+                  style={{ animationDelay: `${Math.min(i * 30, 350)}ms` }}
+                  className="anim-pop group transition-colors odd:bg-slate-50/40 hover:bg-blue-50/60 dark:odd:bg-white/[.015] dark:hover:bg-blue-500/[.06]"
+                >
+                  {EXPENSE_COLUMNS.map((col) => {
+                    if (col.id === 'date') {
+                      return (
+                        <td key={col.id} className={expCellFor(col.id, col.align)}>
+                          <div className="font-semibold text-ink">{fmtDate(e.date).replace(/\s\d{4}$/, '')}</div>
+                          <div className="text-[11px] text-muted">{e.date.slice(0, 4)}</div>
+                        </td>
+                      );
+                    }
+                    if (col.id === 'category') {
+                      return (
+                        <td key={col.id} className={expCellFor(col.id, col.align, 'overflow-hidden')}>
+                          <span className={categoryPill(e.category)}>
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
+                            <span className="truncate">{e.category}</span>
+                          </span>
+                        </td>
+                      );
+                    }
+                    if (col.id === 'subCategory') {
+                      return (
+                        <td key={col.id} className={expCellFor(col.id, col.align, 'overflow-hidden text-[12.5px] text-muted')}>
+                          <span className="block truncate">{e.subCategory ?? '—'}</span>
+                        </td>
+                      );
+                    }
+                    if (col.id === 'name') {
+                      return (
+                        <td key={col.id} className={expCellFor(col.id, col.align, 'overflow-hidden font-semibold text-ink')}>
+                          <span className="block truncate" title={e.name}>{e.name}</span>
+                        </td>
+                      );
+                    }
+                    if (col.id === 'amount') {
+                      return (
+                        <td key={col.id} className={expCellFor(col.id, col.align, 'text-[15px] font-bold text-danger')}>
+                          {inr(e.amount)}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'mode') {
+                      return (
+                        <td key={col.id} className={expCellFor(col.id, col.align)}>
+                          <div className="flex w-full justify-center">
+                            <Badge tone="neutral" className="max-w-full truncate">{e.mode}</Badge>
+                          </div>
+                        </td>
+                      );
+                    }
+                    return (
+                      <td key={col.id} className={expCellFor(col.id, col.align, 'whitespace-nowrap')}>
+                        {editable ? (
+                          <span className="inline-flex w-full max-w-full items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setForm({ id: e.id, date: e.date, category: e.category, subCategory: e.subCategory ?? '', name: e.name, amount: String(e.amount), mode: e.mode, remarks: e.remarks ?? '' })}
+                              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-primary-50 hover:text-primary"
+                              title="Edit"
+                            >
+                              <Pencil size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirm(e)}
+                              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-danger-50 hover:text-danger"
+                              title="Delete"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="text-[12px] text-muted">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-muted">No expenses in this period.</td></tr>}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={EXPENSE_COLUMNS.length} className="py-10 text-center text-muted">
+                    No expenses in this period.
+                  </td>
+                </tr>
+              )}
             </tbody>
-            {/* Period total — a spend table without a total makes the reader do
-                the arithmetic themselves. */}
             {rows.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
-                  <td className="px-5 py-3.5 text-[12px] font-bold uppercase tracking-wide text-muted" colSpan={4}>
+                  <td className={cn(EXP_CELL, 'text-left text-[12px] font-bold uppercase tracking-wide text-muted')} colSpan={4}>
                     Total · {rows.length} {rows.length === 1 ? 'expense' : 'expenses'}
                   </td>
-                  <td className="whitespace-nowrap px-5 py-3.5 text-right font-display text-[16px] font-bold tabular-nums text-danger">
+                  <td className={expCellFor('amount', 'left', 'text-[16px] font-bold text-danger')}>
                     {inr(rows.reduce((s, e) => s + e.amount, 0))}
                   </td>
-                  <td colSpan={2} />
+                  <td className={EXP_CELL} colSpan={2} aria-hidden />
                 </tr>
               </tfoot>
             )}

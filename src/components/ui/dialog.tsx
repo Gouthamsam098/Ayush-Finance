@@ -13,8 +13,8 @@ const escStack: string[] = [];
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Dialog({ open, onClose, title, subtitle, children, footer, wide, xl }:
-  { open: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; footer?: ReactNode; wide?: boolean; xl?: boolean }) {
+export function Dialog({ open, onClose, title, subtitle, children, footer, wide, xl, hideShell, nested }:
+  { open: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; footer?: ReactNode; wide?: boolean; xl?: boolean; /** Renders children only — for a child modal to own the overlay (avoids double blur). */ hideShell?: boolean; /** Second modal on the stack: no extra backdrop-blur (parent already dimmed the page). */ nested?: boolean }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const id = useId();
@@ -85,9 +85,16 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
   }, [open, id]);
 
   if (!open) return null;
+  if (hideShell) return <>{children}</>;
+
+  const shellZ = nested ? 'z-[110]' : 'z-[100]';
+  const backdropClass = nested
+    ? 'absolute inset-0 bg-slate-950/45'
+    : 'absolute inset-0 bg-slate-950/60 backdrop-blur-md';
+
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 md:p-6" onClick={onClose}>
-      <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-md" />
+    <div className={`fixed inset-0 ${shellZ} flex items-center justify-center p-3 sm:p-4 md:p-6`} onClick={onClose}>
+      <div className={backdropClass} />
       <div
         ref={panelRef}
         role="dialog"

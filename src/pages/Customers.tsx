@@ -1,5 +1,4 @@
 import { useMemo, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
 import { useData, LOAN_LABELS, type Customer } from '@/mock/DataContext';
 import { cashDisbursedFor } from '@/lib/funds';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
 import { inr, inrShort, fmtDate, initials, todayISO } from '@/lib/format';
+import { cn } from '@/lib/utils';
 import { config } from '@/lib/config';
 import { validateCustomerForm, INDIAN_STATES, type FieldErrors } from '@/lib/customerValidation';
 import { customerApi } from '@/services/customerApi';
@@ -415,7 +415,7 @@ export default function Customers() {
 
   return (
     // Full-height column: dark header (full-bleed) + padded, scroll-managed body.
-    <div className="flex h-[100dvh] flex-col">
+    <div className="flex min-h-full min-w-0 w-full flex-col">
       {/* Dark page header */}
       <PageHeader
         icon={<Users size={20} />}
@@ -433,7 +433,7 @@ export default function Customers() {
       {overdueLead && (
         <button
           onClick={() => setView(overdueLead)}
-          className="flex items-center gap-2.5 border-b-[0.5px] border-red-200 bg-red-50 px-5 py-2.5 text-left dark:border-red-500/20 dark:bg-red-500/10"
+          className="flex min-w-0 items-center gap-2.5 border-b-[0.5px] border-red-200 bg-red-50 px-3.5 py-2.5 text-left sm:px-5 dark:border-red-500/20 dark:bg-red-500/10"
         >
           <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400">
             <AlertTriangle size={14} />
@@ -454,11 +454,11 @@ export default function Customers() {
       )}
 
       {/* Body */}
-      <div className="flex min-h-0 flex-1 flex-col gap-3 p-3.5 sm:px-4">
+      <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-3 p-3.5 sm:px-4">
         {/* Toolbar — result count + chips on the left, search/filter on the right */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           {/* Left: count + real chips */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="text-[14px] text-muted">
               Showing <strong className="font-semibold text-ink">{filtered.length}</strong> customer{filtered.length === 1 ? '' : 's'}
             </span>
@@ -473,13 +473,13 @@ export default function Customers() {
           </div>
 
           {/* Right: compact search + filters */}
-          <div className="flex items-center gap-2">
+          <div className="flex w-full min-w-0 items-center justify-end gap-2 sm:w-auto">
             {/* Expandable search */}
             <div
-              className={`flex items-center gap-2 rounded-lg border-[0.5px] transition-all duration-200 focus-within:border-blue-500 ${
+              className={`flex min-w-0 items-center gap-2 rounded-lg border-[0.5px] transition-all duration-200 focus-within:border-blue-500 ${
                 searchOpen || q
-                  ? 'w-56 border-slate-200/70 bg-white px-3 py-2.5 dark:border-white/[.06] dark:bg-surface'
-                  : 'w-9 justify-center border-transparent'
+                  ? 'w-full max-w-[14rem] border-slate-200/70 bg-white px-3 py-2.5 dark:border-white/[.06] dark:bg-surface sm:w-56'
+                  : 'w-9 shrink-0 justify-center border-transparent'
               }`}
             >
               <button
@@ -534,18 +534,10 @@ export default function Customers() {
           </div>
         </div>
 
-        {/* ── Mobile / tablet: card list ────────────────────────────────────
-            The desktop table is 9 columns at min-w-[800px], so below lg the two
-            columns that actually drive a decision — Outstanding and Status —
-            sat off-screen behind a horizontal drag (and the drag-release fired
-            the row's onClick, opening the wrong customer). Cards lead with
-            those instead. Same data, same row-tap target; mirrors the
-            CollectionCard pattern already used on the Collections page. */}
-        <div className="flex flex-col gap-3 lg:hidden">
-          {/* Empty state — the desktop copy lives inside the table card, which
-              is hidden below lg, so mobile needs its own. */}
-          {rows.length === 0 && (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200/90 bg-white px-6 py-16 text-center shadow-card dark:border-white/[.07] dark:bg-surface">
+        {/* Customer register — premium cards at every breakpoint. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          {rows.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center rounded-2xl border border-slate-200/90 bg-white px-6 py-16 text-center shadow-card dark:border-white/[.07] dark:bg-surface">
               <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-blue-50 text-blue-500 dark:bg-blue-500/15">
                 <Users size={26} />
               </div>
@@ -559,196 +551,41 @@ export default function Customers() {
                 <Button onClick={openAdd} className="mt-5 !min-h-[44px]"><Plus size={16} /> Add first customer</Button>
               )}
             </div>
-          )}
-          {rows.map((c) => {
-            const cLoans = loansOf(c.id);
-            const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
-            const hasOverdue = customerIsOverdue(cLoans);
-            const activeLoan = cLoans.some((l) => l.status === 'ACTIVE');
-            return (
-              <div
-                key={c.id}
-                onClick={() => setView(c)}
-                className={`anim-pop rounded-2xl border bg-white p-4 shadow-card transition-colors dark:bg-surface ${
-                  hasOverdue ? 'border-red-200 dark:border-red-500/25' : 'border-slate-200/90 dark:border-white/[.07]'
-                }`}
-              >
-                {/* Identity */}
-                <div className="flex items-start gap-3">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-primary-400 to-primary text-[13px] font-bold text-white">
-                    {initials(c.name)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-semibold text-ink">{c.name}</div>
-                    <div className="truncate text-[12.5px] text-muted">{c.code} · {c.mobile}</div>
-                  </div>
-                  <StatusBadge overdue={hasOverdue} active={activeLoan} />
-                </div>
-                {/* The decision-driving figures, always visible */}
-                <div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3 dark:border-white/[.06]">
-                  <div>
-                    <div className="text-[11px] text-muted">Outstanding</div>
-                    <div className={`font-display text-[15px] font-bold tabular-nums ${outstanding > 0 && hasOverdue ? 'text-red-600 dark:text-red-400' : 'text-ink'}`}>
-                      {inr(outstanding)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-muted">Loans</div>
-                    <div className="font-display text-[15px] font-bold tabular-nums text-ink">{cLoans.length}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-muted">KYC</div>
-                    <div className="mt-0.5"><KycBadge status={kycOf(c)} /></div>
-                  </div>
-                </div>
-                {/* Actions: 44px targets for touch. Edit/Delete respect RBAC,
-                    exactly as the desktop row does. */}
-                <div className="mt-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                  <Button variant="ghost" onClick={() => setView(c)} className="!min-h-[44px] flex-1 !text-[13px]">
-                    <Eye size={15} /> View
-                  </Button>
-                  {canEdit('Customers') && <>
-                    <Button variant="ghost" onClick={() => openEdit(c)} aria-label={`Edit ${c.name}`} title="Edit" className="!min-h-[44px] !min-w-[44px] !px-3">
-                      <Pencil size={15} />
-                    </Button>
-                    <Button variant="ghost" onClick={() => setConfirm(c)} aria-label={`Delete ${c.name}`} title="Delete" className="!min-h-[44px] !min-w-[44px] !px-3 !text-danger">
-                      <Trash2 size={15} />
-                    </Button>
-                  </>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Table card — desktop only (lg+); flexes to fill remaining height,
-            only its body scrolls. Markup below is unchanged. */}
-        <div className="hidden min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-[0.5px] border-slate-200/70 bg-white lg:flex dark:border-white/[.06] dark:bg-surface">
-          <div className="min-h-0 flex-1 overflow-auto">
-            <table className="w-full min-w-[800px] text-[15px]">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer</th>
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Customer ID</th>
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Mobile</th>
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">City</th>
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Loans</th>
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Given</th>
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Outstanding</th>
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">KYC</th>
-                  <th className="border-b border-slate-200 px-5 py-4 dark:border-white/10">Status</th>
-                  <th className="border-b border-slate-200 px-5 py-4 text-right dark:border-white/10">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-white/[.05]">
-                {rows.map((c, i) => {
+          ) : (
+            <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+              <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
+                {rows.map((c, idx) => {
                   const cLoans = loansOf(c.id);
                   const activeLoans = cLoans.filter((l) => l.status === 'ACTIVE');
                   const outstanding = cLoans.reduce((s, l) => s + d.outstandingFor(l), 0);
-                  // Cash this customer actually received. cashDisbursedFor()
-                  // covers every loan type — only Daily Collection deducts
-                  // upfront, so for the rest this equals their full principal.
                   const given = cLoans.reduce((s, l) => s + cashDisbursedFor(l), 0);
                   const hasOverdue = customerIsOverdue(cLoans);
-                  const kyc = kycOf(c);
                   const activeLoan = cLoans.some((l) => l.status === 'ACTIVE');
                   return (
-                    <motion.tr
+                    <CustomerCard
                       key={c.id}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: Math.min(i * 0.03, 0.3) }}
-                      className={`group cursor-pointer transition-colors hover:bg-blue-50/50 dark:hover:bg-blue-500/[.06] ${hasOverdue ? 'bg-red-500/[.03]' : 'odd:bg-slate-50/40 dark:odd:bg-white/[.015]'}`}
-                      onClick={() => setView(c)}
-                    >
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl text-sm font-bold text-white shadow-sm" style={{ background: `linear-gradient(135deg, ${avatarColor(c.name)}, ${avatarColor(c.name)}cc)` }}>
-                            {initials(c.name)}
-                            {(hasOverdue || kyc === 'PENDING') && (
-                              <span
-                                className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white dark:ring-surface"
-                                style={{ background: hasOverdue ? '#ef4444' : '#f59e0b' }}
-                              />
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate text-[15px] font-semibold text-ink">{c.name}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[12px] font-medium text-slate-600 dark:bg-white/[.06] dark:text-slate-300">{c.code}</span>
-                      </td>
-                      <td className="px-5 py-4 text-[14px] font-medium text-ink/85 tabular-nums">{c.mobile}</td>
-                      <td className="px-5 py-4 text-[14px] text-ink/85">{c.city || '—'}</td>
-                      <td className="px-5 py-4">
-                        {activeLoans.length > 0 ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-[12px] font-semibold text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
-                            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-                            {activeLoans.length} {activeLoans.length === 1 ? 'loan' : 'loans'}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-full border-[0.5px] border-slate-200 bg-slate-50 px-2.5 py-1 text-[12px] font-medium text-muted dark:border-white/[.08] dark:bg-white/[.03]">
-                            0 loans
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-5 py-4 text-[15px] font-semibold tabular-nums text-ink">
-                        {inr(given)}
-                      </td>
-                      <td className={`px-5 py-4 text-[15px] font-bold tabular-nums ${outstanding > 0 && hasOverdue ? 'text-red-600 dark:text-red-400' : 'text-ink'}`}>
-                        {inr(outstanding)}
-                      </td>
-                      <td className="px-5 py-4"><KycBadge status={kyc} /></td>
-                      <td className="px-5 py-4"><StatusBadge overdue={hasOverdue} active={activeLoan} /></td>
-                      <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex justify-end gap-1 opacity-60 transition-opacity group-hover:opacity-100">
-                          <RowAction icon={<Eye size={16} />} title="View" onClick={() => setView(c)} hover="hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/15" />
-                          {/* Mutations only for edit access — view-only users get an honest read-only row (backend 403s regardless). */}
-                          {canEdit('Customers') && <>
-                            <RowAction icon={<Pencil size={16} />} title="Edit" onClick={() => openEdit(c)} hover="hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-500/15" />
-                          </>}
-                        </div>
-                      </td>
-                    </motion.tr>
+                      customer={c}
+                      outstanding={outstanding}
+                      given={given}
+                      loanCount={cLoans.length}
+                      activeLoanCount={activeLoans.length}
+                      kyc={kycOf(c)}
+                      hasOverdue={hasOverdue}
+                      activeLoan={activeLoan}
+                      delay={Math.min(idx, 8) * 40}
+                      canEdit={canEdit('Customers')}
+                      onView={() => setView(c)}
+                      onEdit={() => openEdit(c)}
+                      onDelete={() => setConfirm(c)}
+                    />
                   );
                 })}
-              </tbody>
-            </table>
-
-            {/* Empty state */}
-            {rows.length === 0 && (
-              <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
-                <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-blue-50 text-blue-500 dark:bg-blue-500/15">
-                  <Users size={28} />
-                </div>
-                <h3 className="text-base font-semibold text-ink">
-                  {filtersActive ? 'No matching customers' : 'No customers yet'}
-                </h3>
-                <p className="mt-1 max-w-xs text-sm text-muted">
-                  {filtersActive ? 'Try adjusting your search or filters.' : 'Add your first customer to get started.'}
-                </p>
-                {!filtersActive && canEdit('Customers') && (
-                  <button
-                    onClick={openAdd}
-                    className="mt-5 inline-flex items-center gap-2 rounded-lg bg-blue-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-600"
-                  >
-                    <Plus size={16} /> Add first customer
-                  </button>
-                )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
-        </div>
-
-        {/* Pagination footer — OUTSIDE the desktop-only table card so the card
-            list below lg gets the same controls (it previously lived inside the
-            table and would have disappeared on mobile). Rounded on its own at
-            small widths; visually joined to the table card at lg. */}
         {filtered.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-[0.5px] border-slate-200/70 bg-slate-50 px-5 py-3.5 lg:-mt-px lg:rounded-t-none dark:border-white/[.06] dark:bg-white/[.02]">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-[0.5px] border-slate-200/70 bg-slate-50 px-5 py-3.5 dark:border-white/[.06] dark:bg-white/[.02]">
               <p className="text-[14px] text-muted">
                 Showing <span className="font-semibold text-ink">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)}</span> of{' '}
                 <span className="font-semibold text-ink">{filtered.length}</span> customers
@@ -800,6 +637,7 @@ export default function Customers() {
               </div>
             </div>
           )}
+      </div>
       </div>
 
       {/* Add / Edit — right-side slide-over */}
@@ -1175,7 +1013,6 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-// Page-number list with ellipses for the pagination footer.
 function pageNumbers(current: number, total: number): (number | '…')[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
   const out: (number | '…')[] = [1];
@@ -1186,6 +1023,209 @@ function pageNumbers(current: number, total: number): (number | '…')[] {
   if (end < total - 1) out.push('…');
   out.push(total);
   return out;
+}
+
+/** Premium customer register card — same grid at every breakpoint (InvestorCard pattern). */
+function CustomerCard({
+  customer,
+  outstanding,
+  given,
+  loanCount,
+  activeLoanCount,
+  kyc,
+  hasOverdue,
+  activeLoan,
+  delay = 0,
+  canEdit,
+  onView,
+  onEdit,
+  onDelete,
+}: {
+  customer: Customer;
+  outstanding: number;
+  given: number;
+  loanCount: number;
+  activeLoanCount: number;
+  kyc: 'VERIFIED' | 'PENDING' | 'REJECTED';
+  hasOverdue: boolean;
+  activeLoan: boolean;
+  delay?: number;
+  canEdit: boolean;
+  onView: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const kycStat = {
+    VERIFIED: { dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-300', label: 'Verified' },
+    PENDING: { dot: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-300', label: 'Pending' },
+    REJECTED: { dot: 'bg-rose-500', text: 'text-rose-700 dark:text-rose-300', label: 'Rejected' },
+  }[kyc];
+
+  return (
+    <article
+      className={cn(
+        'anim-pop group flex h-full flex-col overflow-hidden rounded-card border bg-surface shadow-card transition-[transform,box-shadow] duration-300',
+        'hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-22px_rgba(5,56,204,.2)] dark:hover:shadow-[0_18px_40px_-22px_rgba(0,0,0,.5)]',
+        hasOverdue ? 'border-danger/30 dark:border-danger/25' : 'border-slate-200/80 dark:border-white/[.08]',
+      )}
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <button
+        type="button"
+        onClick={onView}
+        className="flex w-full items-center gap-4 border-b border-slate-100 px-5 py-4 text-left transition-colors hover:bg-slate-50/90 dark:border-white/[.06] dark:hover:bg-white/[.03]"
+      >
+        <div
+          className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl text-[13px] font-bold text-white shadow-sm"
+          style={{ background: `linear-gradient(145deg, ${avatarColor(customer.name)}, ${avatarColor(customer.name)}bb)` }}
+        >
+          {initials(customer.name)}
+          {(hasOverdue || kyc === 'PENDING') && (
+            <span
+              className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface"
+              style={{ background: hasOverdue ? 'rgb(var(--danger))' : 'rgb(var(--warning))' }}
+            />
+          )}
+        </div>
+
+        <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto] grid-rows-[auto_auto_auto] items-center gap-x-3 gap-y-1">
+          <h3 className="col-start-1 row-start-1 truncate text-[15px] font-bold leading-tight text-ink group-hover:text-primary">
+            {customer.name}
+          </h3>
+          <div className="col-start-2 row-start-1 row-span-2 self-start pt-0.5">
+            <StatusBadge overdue={hasOverdue} active={activeLoan} />
+          </div>
+          <p className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 text-[12px] leading-snug text-muted">
+            <span className="shrink-0 font-mono text-[11px] font-medium text-ink/75 dark:text-ink/85">{customer.code}</span>
+            <span className="hidden h-3 w-px shrink-0 bg-slate-200 dark:bg-white/10 sm:block" aria-hidden />
+            <span className="tabular-nums">{customer.mobile}</span>
+          </p>
+          <p className="col-start-1 row-start-3 flex min-h-[18px] items-center gap-1 text-[11px] text-muted">
+            <MapPin size={11} className="shrink-0 opacity-60" />
+            <span className="truncate">{customer.city || '—'}</span>
+          </p>
+        </div>
+      </button>
+
+      <div className="px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Outstanding</p>
+            <p
+              className={cn(
+                'mt-1.5 font-display text-[28px] font-bold leading-none tracking-tight tabular-nums',
+                outstanding > 0 && hasOverdue ? 'text-danger' : 'text-ink',
+              )}
+            >
+              {inr(outstanding)}
+            </p>
+          </div>
+          {hasOverdue && (
+            <span className="mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full border border-danger/20 bg-danger/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-danger dark:border-danger/25 dark:bg-danger/15">
+              <AlertTriangle size={11} aria-hidden />
+              Overdue
+            </span>
+          )}
+        </div>
+        <p className="mt-2 text-[12px] text-muted">
+          {given > 0 ? (
+            <>
+              <span className="font-semibold tabular-nums text-ink/90">{inr(given)}</span> disbursed to date
+            </>
+          ) : (
+            'No disbursements yet'
+          )}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-px border-y border-slate-100 bg-slate-100/80 text-left dark:border-white/[.06] dark:bg-white/[.05]">
+        <StatCell label="Given" value={inr(given)} />
+        <StatCell
+          label="Loans"
+          value={String(loanCount)}
+          hint={activeLoanCount > 0 ? `${activeLoanCount} active` : undefined}
+          emphasize={activeLoanCount > 0}
+        />
+        <div className="flex h-[4.25rem] flex-col justify-center bg-surface px-4 dark:bg-surface">
+          <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">KYC</span>
+          <span className={cn('mt-1.5 flex items-center gap-1.5 text-[13px] font-semibold leading-none', kycStat.text)}>
+            <span className={cn('h-2 w-2 shrink-0 rounded-full', kycStat.dot)} aria-hidden />
+            {kycStat.label}
+          </span>
+        </div>
+      </div>
+
+      <div
+        className={cn(
+          'mt-auto grid divide-x divide-slate-100 dark:divide-white/[.06]',
+          canEdit ? 'grid-cols-3' : 'grid-cols-1',
+        )}
+      >
+        <CardAction icon={<Eye size={16} />} label="View" onClick={onView} variant="primary" />
+        {canEdit && (
+          <>
+            <CardAction icon={<Pencil size={16} />} label="Edit" onClick={onEdit} />
+            <CardAction icon={<Trash2 size={16} />} label="Delete" onClick={onDelete} variant="danger" />
+          </>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function StatCell({
+  label,
+  value,
+  hint,
+  emphasize,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  emphasize?: boolean;
+}) {
+  return (
+    <div className="flex h-[4.25rem] flex-col justify-center bg-surface px-4 dark:bg-surface">
+      <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">{label}</span>
+      <span
+        className={cn(
+          'mt-1.5 truncate font-display text-[15px] font-bold leading-none tabular-nums',
+          emphasize ? 'text-primary' : 'text-ink',
+        )}
+      >
+        {value}
+      </span>
+      {hint ? <span className="mt-1 text-[10px] font-medium leading-none text-muted">{hint}</span> : <span className="mt-1 block h-[10px]" aria-hidden />}
+    </div>
+  );
+}
+
+function CardAction({
+  icon,
+  label,
+  onClick,
+  variant,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  variant?: 'primary' | 'danger';
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex min-h-[48px] w-full flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold transition-colors sm:flex-row sm:gap-1.5 sm:text-[12px]',
+        variant === 'primary' && 'text-primary hover:bg-primary/[.06] active:bg-primary/[.1]',
+        variant === 'danger' && 'text-danger hover:bg-danger/[.08]',
+        !variant && 'text-ink/70 hover:bg-slate-50 hover:text-ink dark:hover:bg-white/[.04]',
+      )}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
 }
 
 function KycBadge({ status }: { status: 'VERIFIED' | 'PENDING' | 'REJECTED' }) {
@@ -1211,18 +1251,6 @@ function StatusBadge({ overdue, active }: { overdue: boolean; active: boolean })
     <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold ${map.cls}`}>
       <span className={`h-2 w-2 rounded-full ${map.dot}`} /> {map.label}
     </span>
-  );
-}
-
-function RowAction({ icon, title, onClick, hover }: { icon: React.ReactNode; title: string; onClick: () => void; hover: string }) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className={`grid h-9 w-9 place-items-center rounded-lg border-[0.5px] border-slate-200/70 bg-white text-slate-500 transition-all dark:border-white/[.06] dark:bg-white/[.03] ${hover}`}
-    >
-      {icon}
-    </button>
   );
 }
 

@@ -233,7 +233,7 @@ export default function Documents() {
   const closeViewer = () => { setViewer(null); setViewerUrl(null); };
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full min-w-0 w-full flex-col">
       <PageHeader
         icon={<Files size={20} />}
         title="Document Vault"
@@ -246,7 +246,7 @@ export default function Documents() {
         }
         actions={editable ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setOpen(true)}>Upload Document</HeaderPrimaryButton> : undefined}
       />
-      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
 
       {/* KPI band */}
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-3">

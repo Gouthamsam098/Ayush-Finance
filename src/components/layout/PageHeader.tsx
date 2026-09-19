@@ -17,7 +17,7 @@ export function PageHeader({
 }) {
   const openSidebar = useOpenSidebar();
   return (
-    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-blue-50 via-white to-blue-50 px-5 py-5 dark:border-transparent dark:from-[#0c1220] dark:via-[#111a30] dark:to-[#0c1220]">
+    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-blue-50 via-white to-blue-50 px-3.5 py-4 sm:px-5 sm:py-5 dark:border-transparent dark:from-[#0c1220] dark:via-[#111a30] dark:to-[#0c1220]">
       {/* Indigo glow wash + decorative geometry */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <span className="absolute -left-16 top-1/2 h-64 w-64 -translate-y-1/2 rounded-full bg-blue-500/10 blur-3xl dark:bg-blue-600/20" />
@@ -27,8 +27,8 @@ export function PageHeader({
         <span className="absolute -bottom-10 right-40 h-24 w-24 rounded-full border border-blue-300/30 dark:border-blue-400/10" />
       </div>
 
-      <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3 sm:gap-4">
+      <div className="relative z-10 flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-4">
           <button
             onClick={openSidebar}
             aria-label="Open menu"
@@ -36,15 +36,19 @@ export function PageHeader({
           >
             <Menu size={18} />
           </button>
-          <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-100 to-blue-100 text-blue-600 shadow-sm ring-1 ring-blue-200/50 dark:border-blue-400/40 dark:from-blue-500/40 dark:to-blue-500/30 dark:text-blue-100 dark:shadow-lg dark:shadow-blue-900/40 dark:ring-white/10">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-100 to-blue-100 text-blue-600 shadow-sm ring-1 ring-blue-200/50 sm:h-12 sm:w-12 dark:border-blue-400/40 dark:from-blue-500/40 dark:to-blue-500/30 dark:text-blue-100 dark:shadow-lg dark:shadow-blue-900/40 dark:ring-white/10">
             {icon}
           </span>
-          <div>
-            <div className="font-display text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white truncate">{title}</div>
-            {subtitle && <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</div>}
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-display text-lg font-bold tracking-tight text-slate-900 sm:text-2xl dark:text-white">{title}</div>
+            {subtitle && <div className="mt-0.5 line-clamp-2 text-[13px] text-slate-500 sm:text-sm dark:text-slate-400">{subtitle}</div>}
           </div>
         </div>
-        {actions && <div className="flex flex-wrap items-center gap-2 ml-auto">{actions}</div>}
+        {actions && (
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+            {actions}
+          </div>
+        )}
       </div>
     </div>
   );

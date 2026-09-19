@@ -213,7 +213,7 @@ export default function Settings() {
   // non-admin who deep-links to /settings from seeing a broken page of 403s.
   if (me && me.role !== 'ADMIN') {
     return (
-      <div className="flex min-h-full flex-col">
+      <div className="flex min-h-full min-w-0 w-full flex-col">
         <PageHeader icon={<SettingsIcon size={20} />} title="Settings" subtitle="User access & roles" />
         <div className="grid flex-1 place-items-center p-8">
           <div className="anim-pop flex max-w-sm flex-col items-center gap-3 rounded-card border border-slate-200/90 bg-white px-8 py-12 text-center shadow-card dark:border-white/[.07] dark:bg-surface">
@@ -227,7 +227,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full min-w-0 w-full flex-col">
       <PageHeader
         icon={<SettingsIcon size={20} />}
         title="Settings"
@@ -235,7 +235,7 @@ export default function Settings() {
         actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openCreate}>Add User</HeaderPrimaryButton>}
       />
 
-      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
         <Card className="anim-pop">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><UserPlus size={17} className="text-primary" /> User Management</CardTitle>

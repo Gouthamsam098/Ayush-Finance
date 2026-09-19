@@ -404,7 +404,7 @@ export default function Investments() {
   }, [form]);
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full min-w-0 w-full flex-col">
       <PageHeader
         icon={<Landmark size={20} />}
         title="Investments"
@@ -412,7 +412,7 @@ export default function Investments() {
         actions={editable ? <HeaderPrimaryButton onClick={openCreate} icon={<Plus size={16} />}>Add Investor</HeaderPrimaryButton> : undefined}
       />
 
-      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
         {/* ── Hero: the one number that matters (capital deployed) plus the
             cost of carrying it, on the brand gradient. */}
         {items.length > 0 && (
@@ -454,7 +454,7 @@ export default function Investments() {
         {/* KPI strip — figures that COMPLEMENT the hero (which already shows
             capital, monthly carry, due and paid), so nothing is stated twice. */}
         {items.length > 0 && (
-          <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 [&>*]:min-w-0">
             <StatCard label="Investors" value={String(totals.investors)} accent="#6366f1" icon={<Landmark size={16} />} />
             <StatCard label="Annual interest cost" value={inrShort(totals.monthlyOutgo * 12)} accent="#f59e0b" icon={<TrendingDown size={16} />} />
             {totals.overdueCount > 0 ? (
@@ -609,7 +609,7 @@ export default function Investments() {
               plain 8-column table flattened everything that matters (urgency,
               cadence, payout progress) into equal-weight text; cards give each
               investment a hierarchy and show its state at a glance. ── */}
-          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
             {rows.map((inv, idx) => (
               <InvestorCard
                 key={inv.id}
@@ -1477,35 +1477,36 @@ function InvestorCard({ inv, payouts, onOpen, onPay, onEdit, delay = 0 }: {
           rather than only inside the detail dialog: correcting a wrong rate or
           amount is a common first action straight from the list. */}
       <div className={cn(
-        'mt-auto grid border-t border-slate-100 dark:border-white/[.06]',
+        'mt-auto grid min-w-0 border-t border-slate-100 dark:border-white/[.06]',
         onPay && onEdit ? 'grid-cols-3' : onPay || onEdit ? 'grid-cols-2' : 'grid-cols-1',
       )}>
         <button
           onClick={onOpen}
-          className="flex w-full items-center justify-center gap-1.5 py-3 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09]"
+          className="flex w-full min-w-0 flex-row items-center justify-center gap-1 px-1 py-3 text-[10.5px] font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09] sm:text-[13px]"
         >
-          <ScrollText size={15} /> Details
+          <ScrollText size={15} className="shrink-0" /> <span className="truncate">Details</span>
         </button>
         {onEdit && (
           <button
             onClick={onEdit}
             title="Edit investor details"
-            className="flex w-full items-center justify-center gap-1.5 border-l border-slate-100 py-3 text-[13px] font-semibold text-ink/70 transition-colors hover:bg-slate-50 hover:text-ink dark:border-white/[.06] dark:hover:bg-white/[.04]"
+            className="flex w-full min-w-0 flex-row items-center justify-center gap-1 border-l border-slate-100 px-1 py-3 text-[10.5px] font-semibold text-ink/70 transition-colors hover:bg-slate-50 hover:text-ink sm:text-[13px] dark:border-white/[.06] dark:hover:bg-white/[.04]"
           >
-            <Pencil size={14} /> Edit
+            <Pencil size={14} className="shrink-0" /> <span className="truncate">Edit</span>
           </button>
         )}
         {onPay && (
           <button
             onClick={onPay}
             className={cn(
-              'flex w-full items-center justify-center gap-1.5 border-l border-slate-100 py-3 text-[13px] font-semibold transition-colors dark:border-white/[.06]',
+              'flex w-full min-w-0 flex-row items-center justify-center gap-1 border-l border-slate-100 px-1 py-3 text-[10.5px] font-semibold transition-colors sm:text-[13px] dark:border-white/[.06]',
               due > 0
                 ? 'bg-success/[.06] text-success hover:bg-success/[.12]'
                 : 'text-success hover:bg-success/[.06]',
             )}
           >
-            <HandCoins size={15} /> {onEdit ? 'Pay' : 'Pay Interest'}
+            <HandCoins size={15} className="shrink-0" />
+            <span className="truncate">{onEdit ? 'Pay' : 'Pay Interest'}</span>
           </button>
         )}
       </div>

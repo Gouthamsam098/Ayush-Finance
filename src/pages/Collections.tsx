@@ -1,13 +1,15 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, behavesInterestOnly, type LoanType, type Loan } from '@/mock/DataContext';
+import { useEffect, useMemo, useState } from 'react';
+import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, behavesInterestOnly, isEmiLoan, type LoanType, type Loan } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { StatCard } from '@/components/ui/stat-card';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { LedgerDialog } from '@/components/LedgerDialog';
+import { usePermissions } from '@/lib/permissions';
 import { CollectionProgress } from '@/components/CollectionProgress';
-import { inr, inrShort, fmtDate, todayISO, isoLocal, initials, DAILY_TERM } from '@/lib/format';
-import { Search, X, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins, ChevronRight } from 'lucide-react';
+import { inr, inrShort, fmtDate, todayISO, isoLocal, initials, DAILY_TERM, addDays } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { Search, X, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins } from 'lucide-react';
 
 
 /** Days denominator for the progress bar: daily loans use their term, Flexible uses its chosen days, everything else a 30-day cycle. */
@@ -30,12 +32,47 @@ const paidDaysFor = (l: Loan, pool: number) => {
   return per > 0 ? Math.min(Math.floor(pool / per), totalDaysFor(l)) : 0;
 };
 
+/** Scheduled shortfall as of today — same dispatch as ledger KPIs / Loans overdue column. */
+function overdueAmountFor(d: ReturnType<typeof useData>, l: Loan): number {
+  const due = isDailyLoan(l.type) ? d.totalDueForDaily(l)
+    : isMonthlyLike(l.type) ? d.totalDueForMonthly(l)
+      : behavesInterestOnly(l) ? d.totalDueForInterestOnly(l)
+        : 0;
+  return Math.max(0, due);
+}
+
+/** Loan end date label — open-ended for interest-only; mirrors Loans register. */
+function endDateLabelFor(l: Loan): string {
+  if (isInterestOnly(l.type)) return 'Open-ended';
+  if (isEmiLoan(l.type) && l.numDays) return fmtDate(addDays(l.loanDate, l.numDays * 30));
+  if (isDailyLoan(l.type)) return fmtDate(loanEndDateFor(l));
+  return '—';
+}
+
 
 export default function Collections() {
   const d = useData();
+  const { canEdit } = usePermissions();
+  const canCollect = canEdit('Collections');
   const [typeFilter, setTypeFilter] = useState<LoanType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
   const [ledger, setLedger] = useState<Loan | null>(null);
+  const [ledgerAutoAdd, setLedgerAutoAdd] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  const openLedger = (loan: Loan) => {
+    setLedgerAutoAdd(false);
+    setLedger(loan);
+  };
+  const payNow = (loan: Loan) => {
+    setLedgerAutoAdd(true);
+    setLedger(loan);
+  };
+  const closeLedger = () => {
+    setLedger(null);
+    setLedgerAutoAdd(false);
+  };
 
 
 
@@ -63,6 +100,17 @@ export default function Collections() {
       );
     });
   }, [d.loans, d.customers, typeFilter, search]);
+
+  // Pagination. `loansToShow` is the FULL filtered set (the chip counts and the
+  // empty state must keep reading it); `pageLoans` is the slice rendered by
+  // both the mobile card list and the desktop tables, so the two never disagree
+  // about which loans are on screen.
+  const totalPages = Math.max(1, Math.ceil(loansToShow.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageLoans = loansToShow.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  // Any change to the result set returns to page 1 — a filter that shrinks the
+  // list to 4 loans must not leave the collector staring at an empty page 3.
+  useEffect(() => { setPage(1); }, [search, typeFilter, pageSize]);
 
   const counts = useMemo(() => {
     const activeLoans = d.loans.filter((l) => l.status === 'ACTIVE');
@@ -96,7 +144,7 @@ export default function Collections() {
 
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full min-w-0 w-full flex-col">
       {/* Dark page header — shared chrome, matches Loans */}
       <PageHeader
         icon={<HandCoins size={20} />}
@@ -104,9 +152,9 @@ export default function Collections() {
         subtitle={`${d.collections.length} payments recorded · ${kpis.activeCount} active loans`}
       />
 
-      <div className="flex flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
       {/* KPI strip — real portfolio metrics */}
-      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 [&>*]:min-w-0">
         <StatCard label="Active loans" value={String(kpis.activeCount)} accent="#6366f1" icon={<Layers size={16} />} />
         <StatCard label="Collected today" value={inrShort(kpis.collectedToday)} accent="#10b981" icon={<TrendingUp size={16} />} />
         {kpis.dueNow > 0 ? (
@@ -161,312 +209,237 @@ export default function Collections() {
       {loansToShow.length === 0 ? (
         <EmptyState typed={typeFilter !== 'ALL'} searched={search} onClearSearch={() => setSearch('')} />
       ) : (
-      <>
-      {/* ── Mobile / tablet: premium card list (touch-first, CRED-style) ── */}
-      <div className="flex flex-col gap-3 lg:hidden">
-        {loansToShow.map((l) => (
-          <CollectionCard key={l.id} loan={l} d={d} onView={() => setLedger(l)} />
-        ))}
-      </div>
-
-      {/* ── Desktop: detailed per-type tables (unchanged) ── */}
-      <div className="hidden lg:block">
-      {typeFilter === 'DAILY_COLLECTION' ? (
-        /* ── Daily Collection: expanded view with start/end date, due, and balance ── */
-        <TableCard note="Total Due Amount is the cumulative shortfall from what's owed by today. Balance is Principal − Collected. Click a row to add, edit, or delete individual payments.">
-          <thead><HeaderRow cols={['Customer', 'Collection Progress', 'Loan Type', 'Loan Start', 'Loan End', 'Total Due', 'Balance', 'Amount Paid', 'Actions']} /></thead>
-          <tbody>
-            {loansToShow.map((l) => {
-              const cust = d.customers.find((c) => c.id === l.customerId);
-              const collected = d.collectedFor(l.id);
-              // Progress = instalments FUNDED; shortfall from the shared helper
-              // so it always matches the Ledger's "Total Due" tile.
-              const paid = paidDaysFor(l, collected);
-              const totalDue = d.totalDueForDaily(l);
-              const balance = d.outstandingFor(l); // Principal − Collected, for Daily Collection
-              return (
-                <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
-                  <NameTd name={cust?.name ?? '—'} onOpen={() => setLedger(l)} />
-                  <Td><CollectionProgress compact paid={paid} total={totalDaysFor(l)} /></Td>
-                  <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
-                  <Td>{fmtDate(l.loanDate)}</Td>
-                  <Td>{fmtDate(loanEndDateFor(l))}</Td>
-                  <Td className="font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</Td>
-                  <Td className="font-semibold">{inr(balance)}</Td>
-                  <Td className="font-display font-semibold text-success">{inr(collected)}</Td>
-                  <ActionTd onView={() => setLedger(l)} />
-                </Row>
-              );
-            })}
-          </tbody>
-        </TableCard>
-      ) : typeFilter !== 'ALL' && isMonthlyLike(typeFilter) ? (
-        /* ── Monthly Collection / Vehicle / Property: monthly instalment repays principal ── */
-        <TableCard note="Total Due Amount is the cumulative shortfall vs. the instalments owed by today (30-day cycles). Click a row to add, edit, or delete individual payments.">
-          <thead><HeaderRow cols={['Customer', 'Principal', 'Monthly Instalment', 'Total Due', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
-          <tbody>
-            {loansToShow.map((l) => {
-              const cust = d.customers.find((c) => c.id === l.customerId);
-              const totalDue = d.totalDueForMonthly(l);
-              return (
-                <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
-                  <NameTd name={cust?.name ?? '—'} onOpen={() => setLedger(l)} />
-                  <Td>{inr(l.principal)}</Td>
-                  <Td>{inr(l.dailyAmount ?? 0)}</Td>
-                  <Td className="font-semibold text-danger">{totalDue > 0 ? inr(totalDue) : '—'}</Td>
-                  <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
-                  <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
-                  <Td>{fmtDate(l.loanDate)}</Td>
-                  <ActionTd onView={() => setLedger(l)} />
-                </Row>
-              );
-            })}
-          </tbody>
-        </TableCard>
-      ) : typeFilter !== 'ALL' && isInterestOnly(typeFilter) ? (
-        /* ── Daily / Monthly Interest: interest-only, principal fixed until settled ── */
-        <TableCard note="Interest Due is the accrued, unpaid interest to date. Outstanding = Principal + Interest Due; the principal stays until separately settled.">
-          <thead><HeaderRow cols={['Customer', 'Principal', `${typeFilter === 'DAILY_INTEREST' ? 'Daily' : 'Monthly'} Interest`, 'Interest Collected', 'Interest Due', 'Outstanding', 'Loan Date', 'Actions']} /></thead>
-          <tbody>
-            {loansToShow.map((l) => {
-              const cust = d.customers.find((c) => c.id === l.customerId);
-              const due = d.totalDueForInterestOnly(l);
-              return (
-                <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
-                  <NameTd name={cust?.name ?? '—'} onOpen={() => setLedger(l)} />
-                  <Td>{inr(l.principal)}</Td>
-                  <Td>{inr(l.dailyAmount ?? 0)}</Td>
-                  <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
-                  <Td className="font-semibold text-danger">{due > 0 ? inr(due) : '—'}</Td>
-                  <Td className="font-semibold">{inr(d.outstandingFor(l))}</Td>
-                  <Td>{fmtDate(l.loanDate)}</Td>
-                  <ActionTd onView={() => setLedger(l)} />
-                </Row>
-              );
-            })}
-          </tbody>
-        </TableCard>
-      ) : (
-        /* ── One row per loan, for every other loan type (incl. ALL). A term
-              progress bar only makes sense for fixed-term loans (Daily
-              Collection); interest-only loans are OPEN-ENDED — "1/30 days" is
-              meaningless there. The universal, always-truthful column for a
-              collections worklist is NEXT DUE: oldest unpaid slot via
-              d.nextDueFor (matches Ledger). When that date is past we label
-              it "Due since" so it isn't read as an upcoming due. ── */
-        <TableCard note="Amount Paid is the total collected so far for each loan. Click a row to add, edit, or delete individual payments.">
-          <thead><HeaderRow cols={['Customer', 'Next Due', 'Loan Type', 'Amount Paid', 'Loan Date', 'Actions']} /></thead>
-          <tbody>
-            {loansToShow.map((l) => {
-              const cust = d.customers.find((c) => c.id === l.customerId);
-              const nd = d.nextDueFor(l);
-              const today = todayISO();
-              const overdue = !!nd && nd < today;
-              const dueToday = !!nd && nd === today;
-              return (
-                <Row key={l.id} onOpen={() => setLedger(l)} label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${l.loanNumber}`}>
-                  <NameTd name={cust?.name ?? '—'} onOpen={() => setLedger(l)} />
-                  <Td>
-                    {nd ? (
-                      <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                        <span className={overdue ? 'font-semibold text-danger' : dueToday ? 'font-semibold text-warning-600 dark:text-warning' : ''}>
-                          {overdue && <span className="mr-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-danger/80">Due since</span>}
-                          {fmtDate(nd)}
-                        </span>
-                        {overdue ? <Badge tone="err">Overdue</Badge> : dueToday ? <Badge tone="warn">Today</Badge> : null}
-                      </span>
-                    ) : (
-                      <span className="text-muted">Fully collected</span>
-                    )}
-                  </Td>
-                  <Td><Badge tone="info">{LOAN_LABELS[l.type]}</Badge></Td>
-                  <Td className="font-display font-semibold text-success">{inr(d.collectedFor(l.id))}</Td>
-                  <Td>{fmtDate(l.loanDate)}</Td>
-                  <ActionTd onView={() => setLedger(l)} />
-                </Row>
-              );
-            })}
-          </tbody>
-        </TableCard>
-      )}
-      </div>
-      </>
+        <>
+          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
+            {loansToShow.map((l, idx) => (
+              <CollectionCard
+                key={l.id}
+                loan={l}
+                d={d}
+                delay={Math.min(idx, 8) * 40}
+                canCollect={canCollect}
+                onView={() => openLedger(l)}
+                onPayNow={() => payNow(l)}
+              />
+            ))}
+          </div>
+          <p className="text-center text-[11px] text-muted sm:text-left">
+            Amount Paid is the total collected so far. Overdue matches the ledger report. Tap a card to add, edit, or delete payments.
+          </p>
+        </>
       )}
 
       </div>
 
       {/* Add / Edit dialog */}
 
-      {ledger && <LedgerDialog loan={ledger} onClose={() => setLedger(null)} />}
+      {ledger && <LedgerDialog loan={ledger} onClose={closeLedger} autoOpenAdd={ledgerAutoAdd} />}
     </div>
   );
 }
 
-/* ── Presentational helpers (kept local — cut the 4× table duplication) ── */
-
-/** A card wrapping a horizontally-scrollable table plus its footnote. */
-function TableCard({ children, note }: { children: ReactNode; note: string }) {
-  return (
-    <div className="anim-pop overflow-hidden rounded-card border border-slate-200/90 bg-white shadow-card dark:border-white/[.07] dark:bg-surface" style={{ animationDelay: '80ms' }}>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[650px] text-[15px]">{children}</table>
-      </div>
-      <p className="border-t border-slate-100 px-4 py-2.5 text-[11px] text-muted dark:border-white/[.06]">{note}</p>
-    </div>
-  );
-}
-
-/** Full-width gradient header row matching the Loans table treatment. */
-function HeaderRow({ cols }: { cols: string[] }) {
-  return (
-    <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-[12px] font-bold uppercase tracking-[0.08em] text-white">
-      {cols.map((c, i) => (
-        <th key={c} className={`whitespace-nowrap px-5 py-3.5 ${c === 'Actions' ? 'text-center' : 'text-left'} ${i === 0 ? 'rounded-l-none' : ''}`}>{c}</th>
-      ))}
-    </tr>
-  );
-}
-
-/** A loan row. When `onOpen` is given the WHOLE row opens the ledger — clicking
- *  the customer/loan is the natural way to record a collection, and hunting for
- *  the small "View Report" button every time was needless friction. The button
- *  stays for discoverability; the action cell stops row clicks so its own
- *  handler is never double-fired. */
-function Row({ children, onOpen, label }: { children: ReactNode; onOpen?: () => void; label?: string }) {
-  return (
-    <tr
-      {...(onOpen ? {
-        onClick: onOpen,
-        onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); }
-        },
-        tabIndex: 0,
-        role: 'button' as const,
-        'aria-label': label ?? 'Open collection ledger',
-      } : {})}
-      className={`group border-t border-slate-100 transition-colors hover:bg-primary-50/40 dark:border-white/[.06] dark:hover:bg-primary/[.06] ${
-        onOpen ? 'cursor-pointer focus:outline-none focus-visible:bg-primary-50/60 dark:focus-visible:bg-primary/[.1]' : ''
-      }`}
-    >
-      {children}
-    </tr>
-  );
-}
-
-function Td({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <td className={`whitespace-nowrap px-5 py-4 ${className}`}>{children}</td>;
-}
-
-/** The customer cell of a clickable row — styled as the primary affordance so
- *  it is visibly the thing to click. Uses a real <button> so taps register on
- *  mobile Safari (clicks on <tr> alone are unreliable on iOS). */
-function NameTd({ name, onOpen }: { name: string; onOpen?: () => void }) {
-  return (
-    <td className="whitespace-nowrap px-5 py-4">
-      {onOpen ? (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onOpen(); }}
-          className="touch-manipulation font-semibold text-primary underline-offset-2 hover:underline active:underline"
-        >
-          {name}
-        </button>
-      ) : (
-        <span className="font-semibold text-primary underline-offset-2 group-hover:underline">{name}</span>
-      )}
-    </td>
-  );
-}
-
-function ActionTd({ onView }: { onView: () => void }) {
-  return (
-    // stopPropagation: the row itself is clickable, so without this the ledger
-    // would be opened twice (harmless today, but a latent double-action bug).
-    <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-      <button onClick={onView} title="View Report" aria-label="View Report"
-        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-muted transition-colors hover:border-primary/40 hover:text-primary dark:border-slate-700">
-        <ScrollText size={14} /> View Report
-      </button>
-    </td>
-  );
-}
-
-/** Touch-first collection card for mobile/tablet — a premium, readable summary
- *  of one loan's collection state, with a full-width "View Report" action. */
-function CollectionCard({ loan, d, onView }: { loan: Loan; d: ReturnType<typeof useData>; onView: () => void }) {
+/** Premium collection card — all former table columns, every breakpoint. */
+function CollectionCard({
+  loan,
+  d,
+  onView,
+  onPayNow,
+  canCollect,
+  delay = 0,
+}: {
+  loan: Loan;
+  d: ReturnType<typeof useData>;
+  onView: () => void;
+  onPayNow: () => void;
+  canCollect: boolean;
+  delay?: number;
+}) {
   const cust = d.customers.find((c) => c.id === loan.customerId);
   const collected = d.collectedFor(loan.id);
   const outstanding = d.outstandingFor(loan);
+  const overdueAmt = overdueAmountFor(d, loan);
+  const endLabel = endDateLabelFor(loan);
+  const nd = d.nextDueFor(loan);
+  const today = todayISO();
+  const scheduleOverdue = !!nd && nd < today;
+  const dueToday = !!nd && nd === today;
   const hasTerm = isDailyLoan(loan.type) || loan.type === 'FLEXIBLE';
   const paid = isDailyLoan(loan.type)
-    ? paidDaysFor(loan, d.collectedFor(loan.id))
+    ? paidDaysFor(loan, collected)
     : d.collections.filter((c) => c.loanId === loan.id).length;
   const total = totalDaysFor(loan);
-  const pct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
   const per = loan.type === 'FLEXIBLE' ? '' : isDailyLoan(loan.type) || loan.type === 'DAILY_INTEREST' ? '/day' : '/mo';
+  const showPayNow = canCollect && loan.status === 'ACTIVE' && !!nd;
+
   return (
-    <div className="anim-pop overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-card dark:border-white/[.07] dark:bg-surface">
-      {/* Header — customer name opens the ledger (same as desktop NameTd) */}
+    <article
+      className={cn(
+        'anim-pop group relative flex h-full flex-col overflow-hidden rounded-[20px] border bg-surface shadow-[0_1px_0_rgba(255,255,255,.6)_inset,0_12px_40px_-18px_rgba(15,23,42,.12)] transition-[transform,box-shadow] duration-300 dark:shadow-[0_1px_0_rgba(255,255,255,.04)_inset,0_20px_48px_-24px_rgba(0,0,0,.55)]',
+        'hover:-translate-y-1 hover:shadow-[0_1px_0_rgba(255,255,255,.6)_inset,0_22px_50px_-20px_rgba(5,56,204,.22)] dark:hover:shadow-[0_1px_0_rgba(255,255,255,.04)_inset,0_24px_56px_-22px_rgba(0,0,0,.65)]',
+        scheduleOverdue
+          ? 'border-danger/30 dark:border-danger/25'
+          : 'border-slate-200/90 dark:border-white/[.09]',
+      )}
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <div
+        className={cn(
+          'pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b opacity-80',
+          scheduleOverdue
+            ? 'from-danger/[.06] to-transparent dark:from-danger/[.08]'
+            : 'from-primary/[.05] to-transparent dark:from-primary/[.07]',
+        )}
+      />
+
       <button
         type="button"
         onClick={onView}
         aria-label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${loan.loanNumber}`}
-        className="flex w-full touch-manipulation items-center gap-3 px-4 pt-4 text-left transition-colors hover:bg-primary/[.04] active:bg-primary/[.07]"
+        className="relative flex w-full touch-manipulation items-start gap-4 px-5 pb-3 pt-5 text-left transition-colors"
       >
-        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-blue-700 to-blue-500 text-sm font-bold text-white shadow-sm">
-          {initials(cust?.name ?? '—')}
+        <div className="relative shrink-0">
+          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-[#022999] via-[#0538cc] to-[#0AA8F8] text-[13px] font-bold text-white shadow-[0_8px_20px_-8px_rgba(5,56,204,.55)] ring-2 ring-white/20 dark:ring-white/10">
+            {initials(cust?.name ?? '—')}
+          </div>
+          {scheduleOverdue && (
+            <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-danger ring-2 ring-surface" aria-hidden />
+          )}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] font-semibold text-primary underline-offset-2 active:underline">{cust?.name ?? '—'}</div>
-          <div className="mt-0.5 font-mono text-xs text-muted">{loan.loanNumber}</div>
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="truncate text-[16px] font-bold tracking-tight text-ink group-hover:text-primary">{cust?.name ?? '—'}</h3>
+            <Badge tone="info" className="shrink-0 shadow-sm">{LOAN_LABELS[loan.type]}</Badge>
+          </div>
+          <p className="mt-0.5 font-mono text-[11px] font-semibold text-muted">{loan.loanNumber}</p>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px]">
+            {nd ? (
+              <>
+                <span className={cn('tabular-nums', scheduleOverdue && 'font-semibold text-danger', dueToday && 'font-semibold text-warning-600 dark:text-warning')}>
+                  {scheduleOverdue && <span className="mr-1 text-[10px] font-bold uppercase tracking-wide text-danger/80">Due since </span>}
+                  {fmtDate(nd)}
+                </span>
+                {scheduleOverdue ? <Badge tone="err">Overdue</Badge> : dueToday ? <Badge tone="warn">Today</Badge> : null}
+              </>
+            ) : (
+              <span className="text-muted">Fully collected</span>
+            )}
+          </div>
         </div>
-        <Badge tone="info">{LOAN_LABELS[loan.type]}</Badge>
       </button>
 
-      {/* Progress — only for loans with a defined term */}
       {hasTerm && (
-        <div className="px-4 pt-3.5">
-          <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-muted">
-            <span>Progress</span>
-            <span className="tabular-nums">{paid} / {total} days</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-white/[.08]">
-            <div className="h-full rounded-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all" style={{ width: `${pct}%` }} />
-          </div>
+        <div className="relative border-y border-slate-100/80 px-5 py-3 dark:border-white/[.06]">
+          <CollectionProgress compact paid={paid} total={total} />
         </div>
       )}
 
-      {/* Stat grid */}
-      <div className="mt-3.5 grid grid-cols-2 gap-px bg-slate-100 text-sm dark:bg-white/[.06]">
-        <div className="bg-white px-4 py-3 dark:bg-surface">
-          <div className="text-[11px] font-medium text-muted">Collected</div>
-          <div className="mt-0.5 font-display font-semibold tabular-nums text-success">{inr(collected)}</div>
-        </div>
-        <div className="bg-white px-4 py-3 dark:bg-surface">
-          <div className="text-[11px] font-medium text-muted">Outstanding</div>
-          <div className="mt-0.5 font-semibold tabular-nums text-ink">{inr(outstanding)}</div>
-        </div>
-        <div className="bg-white px-4 py-3 dark:bg-surface">
-          <div className="text-[11px] font-medium text-muted">Instalment</div>
-          <div className="mt-0.5 font-semibold tabular-nums text-ink">
-            {loan.dailyAmount ? inr(loan.dailyAmount) : '—'}
-            {loan.dailyAmount ? <span className="text-[11px] font-normal text-muted">{per}</span> : null}
+      <div className="relative mx-4 mt-1 rounded-2xl border border-slate-200/60 bg-gradient-to-br from-slate-50/90 via-surface to-slate-50/50 px-4 py-4 dark:border-white/[.08] dark:from-white/[.04] dark:via-surface dark:to-white/[.02]">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Amount paid</p>
+            <p className="mt-1 font-display text-[30px] font-bold leading-none tracking-tight tabular-nums text-success">
+              {inr(collected)}
+            </p>
           </div>
-        </div>
-        <div className="bg-white px-4 py-3 dark:bg-surface">
-          <div className="text-[11px] font-medium text-muted">Loan date</div>
-          <div className="mt-0.5 font-semibold tabular-nums text-ink">{fmtDate(loan.loanDate)}</div>
+          {overdueAmt > 0 && (
+            <div className="rounded-xl border border-danger/20 bg-danger/[.06] px-3 py-2 text-right dark:bg-danger/[.08]">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-danger/80">Due now</p>
+              <p className="mt-0.5 text-[15px] font-bold tabular-nums text-danger">{inr(overdueAmt)}</p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* CTA — touch-friendly (48px) */}
-      <button
-        type="button"
-        onClick={onView}
-        className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-2 border-t border-slate-100 py-3.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09] dark:border-white/[.06]"
+      <div className="grid grid-cols-2 gap-2.5 px-4 py-4 sm:grid-cols-3">
+        <CollStatCell label="Loan date" value={fmtDate(loan.loanDate)} variant="date" />
+        <CollStatCell label="End date" value={endLabel} variant="date" />
+        <CollStatCell label="Next due" value={nd ? fmtDate(nd) : '—'} variant="date" emphasize={!!nd} />
+        <CollStatCell label="Outstanding" value={inr(outstanding)} variant="money" emphasize={outstanding > 0} />
+        <CollStatCell
+          label="Instalment"
+          value={loan.dailyAmount ? inr(loan.dailyAmount) : '—'}
+          hint={loan.dailyAmount ? per : undefined}
+          variant="money"
+        />
+        <CollStatCell
+          label="Overdue"
+          value={overdueAmt > 0 ? inr(overdueAmt) : '—'}
+          variant="money"
+          tone={overdueAmt > 0 ? 'danger' : undefined}
+        />
+      </div>
+
+      <div
+        className={cn(
+          'mt-auto grid min-w-0 border-t border-slate-100 dark:border-white/[.06]',
+          showPayNow ? 'grid-cols-2' : 'grid-cols-1',
+        )}
       >
-        <ScrollText size={16} /> View Report <ChevronRight size={15} className="opacity-60" />
-      </button>
+        <button
+          type="button"
+          onClick={onView}
+          className="flex w-full min-w-0 touch-manipulation flex-row items-center justify-center gap-1 px-1 py-3 text-[10.5px] font-semibold text-primary transition-colors hover:bg-primary/[.05] active:bg-primary/[.09] sm:text-[13px]"
+        >
+          <ScrollText size={15} className="shrink-0" /> <span className="truncate">View Report</span>
+        </button>
+        {showPayNow ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPayNow();
+            }}
+            className={cn(
+              'flex w-full min-w-0 touch-manipulation flex-row items-center justify-center gap-1 border-l border-slate-100 px-1 py-3 text-[10.5px] font-semibold transition-colors sm:text-[13px] dark:border-white/[.06]',
+              overdueAmt > 0
+                ? 'bg-success/[.06] text-success hover:bg-success/[.12]'
+                : 'text-success hover:bg-success/[.06]',
+            )}
+          >
+            <HandCoins size={15} className="shrink-0" /> <span className="truncate">Pay</span>
+          </button>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function CollStatCell({
+  label,
+  value,
+  hint,
+  tone,
+  emphasize,
+  variant = 'money',
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: 'danger';
+  emphasize?: boolean;
+  variant?: 'date' | 'money';
+}) {
+  const isDate = variant === 'date';
+  return (
+    <div
+      className={cn(
+        'flex min-h-[4.75rem] flex-col justify-center rounded-xl border border-slate-200/50 bg-surface/80 px-3 py-2.5 shadow-[0_1px_0_rgba(255,255,255,.5)_inset] backdrop-blur-[2px] dark:border-white/[.08] dark:bg-white/[.03] dark:shadow-none',
+        tone === 'danger' && 'border-danger/25 bg-danger/[.05] dark:border-danger/30 dark:bg-danger/[.07]',
+      )}
+    >
+      <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-muted">{label}</span>
+      <span
+        className={cn(
+          'mt-1.5 font-display font-bold leading-snug',
+          isDate ? 'text-[11px] whitespace-normal break-words sm:text-[12px]' : 'text-[13px] tabular-nums sm:text-[14px]',
+          tone === 'danger' && 'text-danger',
+          emphasize && !tone && 'text-primary',
+          !tone && !emphasize && 'text-ink',
+        )}
+      >
+        {value}
+      </span>
+      {hint ? <span className="mt-0.5 text-[10px] font-semibold leading-none text-muted">{hint}</span> : null}
     </div>
   );
 }

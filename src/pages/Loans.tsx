@@ -588,16 +588,16 @@ export default function Loans() {
   };
   const openCreate = () => { setErrors({}); setForm(blank()); };
 
-  // Desktop-only table grid. Below lg, rows fall back to a stacked card layout.
-  // 11 columns: Borrower, Loan, Principal, Deduction, Given, Instalment,
-  // Collected, Overdue, Outstanding, End date, Status. Header and rows share
-  // this constant, so a column added here MUST get a matching cell in both or
-  // every value shifts. Widths were trimmed (not the column count reduced) to
-  // absorb Deduction and Given without squeezing the borrower name.
-  const GRID = 'lg:grid lg:grid-cols-[1.35fr_1fr_0.85fr_0.8fr_0.9fr_0.8fr_0.95fr_0.9fr_0.95fr_0.85fr_92px] lg:items-center lg:gap-2.5';
+  const phoneForLoan = (l: Loan) => {
+    const fromLoan = (l.contact ?? '').replace(/\D/g, '');
+    if (fromLoan.length >= 10) return fromLoan;
+    const cust = d.customers.find((c) => c.id === l.customerId);
+    const fromCust = (cust?.mobile ?? '').replace(/\D/g, '');
+    return fromCust.length >= 10 ? fromCust : '';
+  };
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full min-w-0 w-full flex-col">
       {/* Dark page header */}
       <PageHeader
         icon={<Layers size={20} />}
@@ -606,11 +606,11 @@ export default function Loans() {
         actions={canEdit('Loans') ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openCreate}>Create Loan</HeaderPrimaryButton> : undefined}
       />
 
-      <div className="flex flex-1 flex-col gap-4 p-3.5 sm:px-5">
+      <div className="flex min-w-0 w-full flex-1 flex-col gap-4 p-3.5 sm:px-5">
         {/* Stat cards / triage filters */}
         {/* 7 cards now — Deduction and Given to Borrower were added, so the
             desktop grid steps to 7 to keep one row and avoid an orphan. */}
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 2xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2.5 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
           <StatCard label="Total loans" value={String(stats.count)} accent="#6366f1" icon={<Layers size={16} />}
             active={urgency === 'all'} onClick={() => setUrgency('all')} />
           <StatCard label="Total outstanding" value={inr(stats.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={stats.outstanding} />
@@ -629,8 +629,8 @@ export default function Loans() {
         </div>
 
         {/* Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-[14px]">
+        <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-[14px]">
             <span className="text-muted">Showing</span>
             <span className="font-bold text-ink">{rows.length}</span>
             <span className="text-muted">{activeLabel}</span>
@@ -644,9 +644,9 @@ export default function Loans() {
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex w-full min-w-0 flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
             {/* Search */}
-            <div className="flex w-full sm:w-60 items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] focus-within:border-blue-400 dark:border-white/[.08] dark:bg-surface">
+            <div className="flex w-full min-w-0 items-center gap-2 rounded-[11px] border-[0.5px] border-slate-200/80 bg-white px-3.5 py-[9px] focus-within:border-blue-400 sm:w-60 dark:border-white/[.08] dark:bg-surface">
               <Search size={16} className="shrink-0 text-slate-400" />
               <input
                 value={query}
@@ -675,230 +675,71 @@ export default function Loans() {
           </div>
         </div>
 
-        {/* Column header — solid full-color band */}
-        <div className={`${GRID} hidden rounded-xl bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-5 py-3.5 text-[12px] font-bold uppercase tracking-[0.08em] text-white shadow-[0_4px_14px_rgba(2,41,153,.35)] lg:grid`}>
-          <div>Borrower</div>
-          <div>Loan</div>
-          <div>Given</div>
-          <div>Principal</div>
-          <div>Deduction</div>
-          <div>Instalment</div>
-          <div>Collected</div>
-          <div>Overdue</div>
-          <div>Outstanding</div>
-          <div>End date</div>
-          <div className="text-right">Status</div>
-        </div>
-
-        {/* Rows */}
-        <div className="flex flex-col gap-2">
-          {pageRows.map((l) => {
-            const t = TYPE_META[l.type];
-            const dd = dueInDaysOf(l);
-            const endDate = endDateOf(l);
-            const closed = l.status !== 'ACTIVE';
-            // Live repayment figures for this row (all real, never fabricated).
-            const rowCollected = d.collectedFor(l.id);
-            const perSuffix = l.type === 'FLEXIBLE' ? '' : isDailyLoan(l.type) || l.type === 'DAILY_INTEREST' ? '/day' : '/mo';
-            return (
-              <div
-                key={l.id}
-                className={`${GRID} group flex flex-col gap-2.5 rounded-[14px] border-[0.5px] border-slate-200/90 bg-white px-5 py-4 transition-all hover:border-slate-300 hover:shadow-[0_6px_20px_rgba(30,39,64,.08)] lg:hover:-translate-y-px dark:border-white/[.07] dark:bg-surface dark:hover:border-white/[.14] ${
-                  menuFor === l.id ? 'relative z-50' : ''
-                } ${closed && menuFor !== l.id ? 'opacity-70' : ''}`}
-              >
-                {/* Borrower — hover reveals the ⋮ actions menu */}
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="relative shrink-0">
-                    <div
-                      className="flex h-[46px] w-[46px] items-center justify-center rounded-2xl border text-[15px] font-bold tracking-tight shadow-sm"
-                      style={{ background: t.bg, borderColor: t.bd, color: t.fg }}
-                    >
-                      {initials(custName(l.customerId))}
-                    </div>
-                    {/* Loan-type accent dot */}
-                    <span
-                      className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white dark:border-surface"
-                      style={{ background: t.dot }}
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[15px] font-semibold text-ink">{custName(l.customerId)}</div>
-                  </div>
-                  {/* Keyboard: Escape closes the menu and returns focus to the
-                      trigger. This menu is the ONLY route to Statement / Edit /
-                      Close / Delete, and dismissal previously relied on a mouse
-                      overlay — so a keyboard user could open it and get stuck
-                      behind that overlay with no way out. */}
-                  <div
-                    className="relative shrink-0"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape' && menuFor === l.id) {
-                        e.stopPropagation();
-                        setMenuFor(null);
-                        (e.currentTarget.querySelector('button') as HTMLElement | null)?.focus();
-                      }
-                    }}
-                  >
-                    <button
-                      onClick={() => setMenuFor(menuFor === l.id ? null : l.id)}
-                      title="Actions" aria-label="Loan actions"
-                      aria-haspopup="menu"
-                      aria-expanded={menuFor === l.id}
-                      className={`grid h-11 w-11 place-items-center rounded-lg text-muted transition-all hover:bg-slate-100 hover:text-ink sm:h-8 sm:w-8 dark:hover:bg-white/[.08] ${
-                        menuFor === l.id ? 'bg-slate-100 opacity-100 dark:bg-white/[.08]' : 'opacity-100'
-                      }`}
-                    >
-                      <MoreVertical size={16} />
-                    </button>
-                    {menuFor === l.id && (
-                      <div role="menu" aria-label="Loan actions" className="absolute right-0 top-1/2 -translate-y-1/2 z-50 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12] dark:bg-slate-900 lg:left-0 lg:right-auto">
-                          <MenuItem icon={<FileText size={14} />} label="Statement" onClick={() => { setMenuFor(null); setLedger(l); }} />
-                          {/* Mutations only for edit access — Statement stays for viewers. */}
-                          {canEdit('Loans') && <>
-                            <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { setMenuFor(null); editLoan(l); }} />
-                            {l.status === 'ACTIVE' ? (
-                              <MenuItem icon={<CheckCircle2 size={14} />} label="Close loan" onClick={() => {
-                                setMenuFor(null);
-                                const outstanding = d.outstandingFor(l);
-                                if (outstanding > 0) { toast(`Cannot close — outstanding balance of ${inr(outstanding)} remains`, 'error'); return; }
-                                setCloseTarget(l);
-                              }} />
-                            ) : (
-                              <MenuItem icon={<RotateCcw size={14} />} label="Reopen loan" onClick={() => { setMenuFor(null); d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }} />
-                            )}
-                          </>}
-                        </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Loan number + type */}
-                <div className="min-w-0">
-                  <div className="text-[14.5px] font-semibold tabular-nums text-ink">{l.loanNumber}</div>
-                  <div className="mt-[3px] truncate text-[12.5px] font-semibold" style={{ color: t.fg }}>{LOAN_LABELS[l.type]}</div>
-                  <div className="flex items-center gap-1 mt-[1px]">
-                    <Calendar size={12} className="text-[10px] text-muted" />
-                    <span className="text-[10px] text-muted">Start: {fmtDate(l.loanDate)}</span>
-                  </div>
-                  {dd != null && dd < 0 && l.contact && (
-                    <div className="mt-2 flex items-center gap-1">
-                      <a
-                        href={`tel:${l.contact.split('-').join('')}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 rounded-xl border-[0.5px] border-emerald-400 bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-600 dark:border-emerald-500/15 dark:bg-emerald-500/15 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-white/[.08]"
-                      >
-                        <Phone size={12} className="shrink-0" /> Call
-                      </a>
-                    </div>
-                  )}
-                </div>
-
-                {/* Given to borrower — cash actually handed over. Equals
-                    principal wherever nothing is deducted. */}
-                <div className="flex items-center justify-between text-[14.5px] tabular-nums text-ink/75 lg:block">
-                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Given</span>
-                  <span className="font-semibold text-[13px] sm:text-[14px]">{inr(cashDisbursedFor(l))}</span>
-                </div>
-
-                {/* Principal */}
-                <div className="flex items-center justify-between text-[14.5px] tabular-nums text-ink/75 lg:block">
-                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Principal</span>
-                  <span className="font-bold text-[13px] sm:text-[14.5px]">{inr(l.principal)}</span>
-                </div>
-
-                {/* Deduction — interest kept upfront. ₹0 for every type except
-                    Daily Collection, so the column is safe for all loans. */}
-                <div className="flex items-center justify-between text-[14.5px] tabular-nums text-ink/75 lg:block">
-                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Deduction</span>
-                  <span className="font-semibold text-[13px] sm:text-[14px] text-amber-600 dark:text-amber-400">
-                    {inr(Math.max(0, l.principal - cashDisbursedFor(l)))}
-                  </span>
-                </div>
-
-                {/* Instalment (per-period amount) */}
-                <div className="flex items-center justify-between tabular-nums lg:block">
-                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Instalment</span>
-                  <span>
-                    <span className="text-[14.5px] font-semibold text-ink">{l.dailyAmount ? inr(l.dailyAmount) : '—'}</span>
-                    {l.dailyAmount ? <span className="text-[11px] text-muted">{perSuffix}</span> : null}
-                  </span>
-                </div>
-
-                {/* Collected + mini progress */}
-                <div className="min-w-0">
-                  <div className="flex items-center justify-between lg:block">
-                    <span className="text-[12.5px] font-medium text-muted lg:hidden">Collected</span>
-                    <div className="text-[14.5px] font-semibold tabular-nums text-[#15803d] dark:text-emerald-400">{inr(rowCollected)}</div>
-                  </div>
-                </div>
-
-                {/* Overdue — the SCHEDULED SHORTFALL as of today: what should
-                    have been collected by now, less what has been. Uses the same
-                    per-loan-type dispatch as the Dashboard's overdue list, so
-                    the two can never disagree:
-                      • interest-only → accrued unpaid interest (uncapped)
-                      • daily         → billable days × daily, capped at term
-                      • EMI/monthly   → cycles fallen due × EMI, capped at tenure
-                    All three already floor at 0. A CLOSED loan shows '—': its
-                    schedule no longer runs, so a residual figure would read as a
-                    live arrear. */}
-                <div className="flex items-center justify-between lg:block">
-                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Overdue</span>
-                  {(() => {
-                    if (closed) return <span className="text-[14.5px] text-muted">—</span>;
-                    const over = overdueAmountOf(l);
-                    return over > 0
-                      ? <span className="text-[14.5px] font-semibold tabular-nums text-red-600 dark:text-red-400">{inr(over)}</span>
-                      : <span className="text-[14.5px] tabular-nums text-muted">—</span>;
-                  })()}
-                </div>
-
-                {/* Outstanding */}
-                <div className="flex items-center justify-between text-[15.5px] font-bold tabular-nums text-ink lg:block">
-                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Outstanding</span>
-                  <span className="font-bold">{inr(d.outstandingFor(l))}</span>
-                </div>
-
-                {/* End date + urgency */}
-                <div className="flex items-center justify-between lg:block">
-                  <span className="text-[12.5px] font-medium text-muted lg:hidden">End date</span>
-                  <div className="flex items-center gap-2 lg:block">
-                    <div className="text-[14px] tabular-nums font-bold text-ink">
-                      {endDate ? fmtDate(endDate) : isInterestOnly(l.type) ? <span className="text-muted">Open-ended</span> : '—'}
-                    </div>
-                    {dd != null && <DueBadge days={dd} />}
-                  </div>
-                </div>
-
-                {/* Status — Overdue (red) if an active loan's due date has passed,
-                    else Active (green) / Closed (grey). */}
-                <div className="flex items-center justify-between lg:justify-end">
-                  <span className="text-[12.5px] font-medium text-muted lg:hidden">Status</span>
-                  {(() => {
-                    const overdue = !closed && dd != null && dd < 0;
-                    // Closed = settled (indigo), Overdue = red, Active = green.
-                    const tone = closed
-                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
-                      : overdue
-                        ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
-                        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300';
-                    const dot = closed ? 'bg-blue-500' : overdue ? 'bg-red-500' : 'bg-emerald-500';
-                    return (
-                      <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-[11.5px] font-bold ${tone}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
-                        {closed ? 'Closed' : overdue ? 'Overdue' : 'Active'}
-                      </span>
-                    );
-                  })()}
-                </div>
+        {/* Loan register — premium cards at every breakpoint (same pattern as Customers). */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          {pageRows.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-card border border-slate-200/90 bg-surface px-6 py-16 text-center shadow-card dark:border-white/[.07]">
+              <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-blue-50 text-blue-500 dark:bg-blue-500/15">
+                <Layers size={26} />
               </div>
-            );
-          })}
-          {rows.length === 0 && (
-            <div className="rounded-[14px] border-[0.5px] border-slate-200/80 bg-white p-12 text-center text-slate-400 dark:border-white/[.08] dark:bg-surface">
-              {d.loans.length === 0 ? 'No Loans Disbursed' : 'No loans match that. Try a different search or clear the filter.'}
+              <h3 className="text-base font-semibold text-ink">
+                {d.loans.length === 0 ? 'No loans disbursed' : 'No matching loans'}
+              </h3>
+              <p className="mt-1 max-w-xs text-sm text-muted">
+                {d.loans.length === 0 ? 'Create your first loan to get started.' : 'Try a different search or clear the filter.'}
+              </p>
+              {d.loans.length === 0 && canEdit('Loans') && (
+                <Button onClick={openCreate} className="mt-5 !min-h-[44px]"><Plus size={16} /> Create loan</Button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
+              {pageRows.map((l, idx) => {
+                const t = TYPE_META[l.type];
+                const dd = dueInDaysOf(l);
+                const endDate = endDateOf(l);
+                const closed = l.status !== 'ACTIVE';
+                const rowCollected = d.collectedFor(l.id);
+                const perSuffix = l.type === 'FLEXIBLE' ? '' : isDailyLoan(l.type) || l.type === 'DAILY_INTEREST' ? '/day' : '/mo';
+                const over = closed ? 0 : overdueAmountOf(l);
+                const overdueSchedule = !closed && dd != null && dd < 0;
+                const tel = phoneForLoan(l);
+                const showCall = overdueSchedule && tel.length >= 10;
+                return (
+                  <LoanCard
+                    key={l.id}
+                    loan={l}
+                    borrowerName={custName(l.customerId)}
+                    typeMeta={t}
+                    typeLabel={LOAN_LABELS[l.type]}
+                    collected={rowCollected}
+                    outstanding={d.outstandingFor(l)}
+                    given={cashDisbursedFor(l)}
+                    deduction={Math.max(0, l.principal - cashDisbursedFor(l))}
+                    overdueAmount={over}
+                    endDate={endDate}
+                    dueDays={dd}
+                    closed={closed}
+                    perSuffix={perSuffix}
+                    showCall={showCall}
+                    callTel={tel}
+                    delay={Math.min(idx, 8) * 40}
+                    menuOpen={menuFor === l.id}
+                    onToggleMenu={() => setMenuFor(menuFor === l.id ? null : l.id)}
+                    onCloseMenu={() => setMenuFor(null)}
+                    onStatement={() => { setMenuFor(null); setLedger(l); }}
+                    canEditLoans={canEdit('Loans')}
+                    onEdit={() => { setMenuFor(null); editLoan(l); }}
+                    onCloseLoan={() => {
+                      setMenuFor(null);
+                      const outstanding = d.outstandingFor(l);
+                      if (outstanding > 0) { toast(`Cannot close — outstanding balance of ${inr(outstanding)} remains`, 'error'); return; }
+                      setCloseTarget(l);
+                    }}
+                    onReopenLoan={() => { setMenuFor(null); d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
@@ -1256,8 +1097,248 @@ export default function Loans() {
   );
 }
 
+type LoanTypeMeta = { bg: string; fg: string; bd: string; dot: string };
+
+/** Premium loan register card — all former table columns, every breakpoint. */
+function LoanCard({
+  loan,
+  borrowerName,
+  typeMeta,
+  typeLabel,
+  collected,
+  outstanding,
+  given,
+  deduction,
+  overdueAmount,
+  endDate,
+  dueDays,
+  closed,
+  perSuffix,
+  showCall,
+  callTel,
+  delay = 0,
+  menuOpen,
+  onToggleMenu,
+  onCloseMenu,
+  onStatement,
+  canEditLoans,
+  onEdit,
+  onCloseLoan,
+  onReopenLoan,
+}: {
+  loan: Loan;
+  borrowerName: string;
+  typeMeta: LoanTypeMeta;
+  typeLabel: string;
+  collected: number;
+  outstanding: number;
+  given: number;
+  deduction: number;
+  overdueAmount: number;
+  endDate: string | null;
+  dueDays: number | null;
+  closed: boolean;
+  perSuffix: string;
+  showCall: boolean;
+  callTel: string;
+  delay?: number;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  onCloseMenu: () => void;
+  onStatement: () => void;
+  canEditLoans: boolean;
+  onEdit: () => void;
+  onCloseLoan: () => void;
+  onReopenLoan: () => void;
+}) {
+  const scheduleOverdue = !closed && dueDays != null && dueDays < 0;
+  const statusLabel = closed ? 'Closed' : scheduleOverdue ? 'Overdue' : 'Active';
+  const statusTone = closed
+    ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
+    : scheduleOverdue
+      ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300';
+  const statusDot = closed ? 'bg-blue-500' : scheduleOverdue ? 'bg-red-500' : 'bg-emerald-500';
+  const instalmentText = loan.dailyAmount ? `${inr(loan.dailyAmount)}${perSuffix ? ` ${perSuffix}` : ''}` : '—';
+  const endLabel = endDate ? fmtDate(endDate) : isInterestOnly(loan.type) ? 'Open-ended' : '—';
+  const overdueHero =
+    closed ? '—' : overdueAmount > 0 ? inr(overdueAmount) : '—';
+  const footerCols = showCall ? 'grid-cols-3' : 'grid-cols-2';
+
+  return (
+    <article
+      className={cn(
+        'anim-pop group relative flex h-full flex-col overflow-hidden rounded-card border bg-surface shadow-card ring-1 ring-slate-200/50 transition-[transform,box-shadow] duration-300 dark:ring-white/[.06]',
+        'hover:-translate-y-0.5 hover:shadow-[0_20px_44px_-24px_rgba(5,56,204,.22)] dark:hover:shadow-[0_20px_44px_-24px_rgba(0,0,0,.55)]',
+        scheduleOverdue ? 'border-danger/25 dark:border-danger/20' : 'border-slate-200/80 dark:border-white/[.08]',
+        closed && !menuOpen && 'opacity-[0.88]',
+        menuOpen && 'z-50',
+      )}
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <button
+        type="button"
+        onClick={onStatement}
+        className="flex w-full items-start gap-4 border-b border-slate-100/90 bg-gradient-to-b from-slate-50/40 to-transparent px-5 py-4 text-left transition-colors hover:from-slate-50/70 dark:border-white/[.06] dark:from-white/[.02] dark:hover:from-white/[.04]"
+      >
+        <div className="relative shrink-0">
+          <div
+            className="grid h-11 w-11 place-items-center rounded-xl border text-[13px] font-bold shadow-sm"
+            style={{ background: typeMeta.bg, borderColor: typeMeta.bd, color: typeMeta.fg }}
+          >
+            {initials(borrowerName)}
+          </div>
+          <span
+            className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface"
+            style={{ background: typeMeta.dot }}
+          />
+        </div>
+
+        <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto] gap-x-2 gap-y-1">
+          <h3 className="col-start-1 row-start-1 truncate text-[15px] font-bold leading-tight text-ink group-hover:text-primary">
+            {borrowerName}
+          </h3>
+          <span className={`col-start-2 row-start-1 inline-flex shrink-0 items-center gap-1.5 self-start rounded-full px-2.5 py-1 text-[11px] font-bold ${statusTone}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${statusDot}`} />
+            {statusLabel}
+          </span>
+          <p className="col-start-1 row-start-2 font-mono text-[11px] font-semibold tabular-nums text-ink/80">{loan.loanNumber}</p>
+          <p className="col-span-2 row-start-3 text-[12px] font-semibold leading-snug" style={{ color: typeMeta.fg }}>
+            {typeLabel}
+          </p>
+          <p className="col-span-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-muted">
+            <Calendar size={11} className="shrink-0 opacity-70" />
+            <span className="shrink-0">Start {fmtDate(loan.loanDate)}</span>
+            {dueDays != null && !closed && <DueBadge days={dueDays} inline />}
+          </p>
+        </div>
+      </button>
+
+      <div className="border-b border-slate-100/90 px-5 py-4 dark:border-white/[.06]">
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Overdue</p>
+        <p
+          className={cn(
+            'mt-1.5 font-display text-[28px] font-bold leading-none tracking-tight tabular-nums',
+            !closed && overdueAmount > 0 ? 'text-danger' : 'text-muted',
+          )}
+        >
+          {overdueHero}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-px border-y border-slate-100 bg-slate-100/80 dark:border-white/[.06] dark:bg-white/[.05] sm:grid-cols-4">
+        <LoanStatCell label="Given" value={inr(given)} />
+        <LoanStatCell label="Principal" value={inr(loan.principal)} bold />
+        <LoanStatCell label="Deduction" value={inr(deduction)} tone="amber" />
+        <LoanStatCell label="Instalment" value={instalmentText} small />
+      </div>
+
+      <div className="grid grid-cols-3 gap-px border-b border-slate-100 bg-slate-100/80 dark:border-white/[.06] dark:bg-white/[.05]">
+        <LoanStatCell label="Collected" value={inr(collected)} tone="success" />
+        <LoanStatCell label="Outstanding" value={inr(outstanding)} bold emphasize={outstanding > 0} />
+        <LoanStatCell label="End date" value={endLabel} small />
+      </div>
+
+      <div className={cn('mt-auto grid divide-x divide-slate-100 bg-slate-50/30 dark:divide-white/[.06] dark:bg-white/[.02]', footerCols)}>
+        <div
+          className="relative bg-surface dark:bg-surface"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && menuOpen) {
+              e.stopPropagation();
+              onCloseMenu();
+              (e.currentTarget.querySelector('button') as HTMLElement | null)?.focus();
+            }
+          }}
+        >
+          <button
+            type="button"
+            onClick={onToggleMenu}
+            title="More actions"
+            aria-label="Loan actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="flex min-h-[48px] w-full flex-row items-center justify-center gap-1.5 px-1 py-2.5 text-[10.5px] font-semibold text-ink/70 transition-colors hover:bg-slate-50 hover:text-ink sm:text-[12px] dark:hover:bg-white/[.04]"
+          >
+            <MoreVertical size={16} /> More
+          </button>
+          {menuOpen && (
+            <div
+              role="menu"
+              aria-label="Loan actions"
+              className="absolute bottom-full left-0 z-50 mb-1 w-48 overflow-hidden rounded-xl border border-slate-200 bg-surface py-1 shadow-[0_12px_32px_rgba(30,39,64,.18)] dark:border-white/[.12]"
+            >
+              <MenuItem icon={<FileText size={14} />} label="Statement" onClick={onStatement} />
+              {canEditLoans && (
+                <>
+                  <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={onEdit} />
+                  {loan.status === 'ACTIVE' ? (
+                    <MenuItem icon={<CheckCircle2 size={14} />} label="Close loan" onClick={onCloseLoan} />
+                  ) : (
+                    <MenuItem icon={<RotateCcw size={14} />} label="Reopen loan" onClick={onReopenLoan} />
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onStatement}
+          className="flex min-h-[48px] flex-row items-center justify-center gap-1.5 bg-surface px-1 py-2.5 text-[10.5px] font-semibold text-primary transition-colors hover:bg-primary/[.06] sm:text-[12px] dark:bg-surface"
+        >
+          <FileText size={16} /> Statement
+        </button>
+        {showCall ? (
+          <a
+            href={`tel:${callTel}`}
+            className="flex min-h-[48px] flex-row items-center justify-center gap-1.5 bg-surface px-1 py-2.5 text-[10.5px] font-semibold text-success transition-colors hover:bg-success/[.08] sm:text-[12px] dark:bg-surface"
+          >
+            <Phone size={16} /> Call
+          </a>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function LoanStatCell({
+  label,
+  value,
+  bold,
+  small,
+  tone,
+  emphasize,
+}: {
+  label: string;
+  value: string;
+  bold?: boolean;
+  small?: boolean;
+  tone?: 'amber' | 'success' | 'danger';
+  emphasize?: boolean;
+}) {
+  return (
+    <div className="flex min-h-[4.25rem] flex-col justify-center bg-surface px-3 py-2.5 dark:bg-surface sm:px-4">
+      <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-muted">{label}</span>
+      <span
+        className={cn(
+          'mt-1.5 truncate font-display font-bold leading-tight tabular-nums',
+          small ? 'text-[12px]' : 'text-[14px]',
+          bold && 'text-[15px]',
+          tone === 'amber' && 'text-amber-600 dark:text-amber-400',
+          tone === 'success' && 'text-success',
+          tone === 'danger' && 'text-danger',
+          emphasize && !tone && 'text-primary',
+          !tone && !emphasize && 'text-ink',
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
 /** Due-date urgency badge — exact tones from the approved design. */
-function DueBadge({ days }: { days: number }) {
+function DueBadge({ days, inline }: { days: number; inline?: boolean }) {
   let tone: { bg: string; fg: string; bd: string; dot: string };
   let label: string;
   if (days < 0) { tone = { bg: '#fdeaea', fg: '#dc2626', bd: '#f7cfcf', dot: '#ef4444' }; label = `${Math.abs(days)}d overdue`; }
@@ -1266,7 +1347,10 @@ function DueBadge({ days }: { days: number }) {
   else { tone = { bg: '#f1f3f8', fg: '#6b7591', bd: '#e2e6ef', dot: '#94a3b8' }; label = `In ${days}d`; }
   return (
     <span
-      className="mt-[5px] inline-flex items-center gap-1.5 rounded-full border px-[9px] py-[3px] text-[11.5px] font-semibold"
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-[9px] py-[3px] text-[11.5px] font-semibold',
+        !inline && 'mt-[5px]',
+      )}
       style={{ background: tone.bg, color: tone.fg, borderColor: tone.bd }}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.dot }} />

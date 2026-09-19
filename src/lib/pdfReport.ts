@@ -91,6 +91,9 @@ function safeValue(val: string | number): string {
   return safeCurrency(String(val));
 }
 
+/** Centre-aligned table defaults for every exported PDF. */
+const TABLE_CENTER = { halign: 'center' as const };
+
 /** Pack detail fields into 4-column rows: Label | Value | Label | Value. */
 function detailRows(fields: ReportSummaryItem[]): string[][] {
   const rows: string[][] = [];
@@ -120,27 +123,28 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
   // header: title + loan type on the left, borrower + loan number on the right.
   const bandH = 74;
   gradientBand(doc, margin, y, contentW, bandH, 10);
+  const cx = pageWidth / 2;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(15);
   doc.setTextColor(...C.white);
-  doc.text(title, margin + 18, y + 28);
+  doc.text(title, cx, y + 24, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
-  doc.text(`${p.loanTypeLabel}  ·  Loan date ${p.loanDate}`, margin + 18, y + 45);
-  // Right side: borrower identity.
+  doc.text(`${p.loanTypeLabel}  ·  Loan date ${p.loanDate}`, cx, y + 40, { align: 'center' });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11.5);
-  doc.text(p.customerName, pageWidth - margin - 18, y + 28, { align: 'right' });
+  doc.text(p.customerName, cx, y + 50, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.text(`${p.loanNumber}  ·  ${p.customerMobile}`, pageWidth - margin - 18, y + 45, { align: 'right' });
-  // Generated stamp, bottom-right inside the band.
+  doc.text(`${p.loanNumber}  ·  ${p.customerMobile}`, cx, y + 62, { align: 'center' });
+  y += bandH + 8;
   doc.setFontSize(7.5);
+  doc.setTextColor(...C.muted);
   doc.text(
     `Generated ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
-    pageWidth - margin - 18, y + 62, { align: 'right' },
+    cx, y, { align: 'center' },
   );
-  y += bandH + 16;
+  y += 14;
 
   // Borrower / loan detail grid (Statement tab two-column fields)
   if (p.detailFields && p.detailFields.length) {
@@ -149,12 +153,12 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
       margin: { left: margin, right: margin },
       body: detailRows(p.detailFields),
       theme: 'plain',
-      styles: { fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 } },
+      styles: { fontSize: 9, cellPadding: { top: 4, bottom: 4, left: 6, right: 6 }, ...TABLE_CENTER },
       columnStyles: {
-        0: { cellWidth: 95, textColor: [100, 116, 139], fontStyle: 'bold', fontSize: 8 },
-        1: { cellWidth: (pageWidth - margin * 2) / 2 - 95, textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 9.5 },
-        2: { cellWidth: 95, textColor: [100, 116, 139], fontStyle: 'bold', fontSize: 8 },
-        3: { cellWidth: (pageWidth - margin * 2) / 2 - 95, textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 9.5 },
+        0: { cellWidth: 95, textColor: [100, 116, 139], fontStyle: 'bold', fontSize: 8, ...TABLE_CENTER },
+        1: { cellWidth: (pageWidth - margin * 2) / 2 - 95, textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 9.5, ...TABLE_CENTER },
+        2: { cellWidth: 95, textColor: [100, 116, 139], fontStyle: 'bold', fontSize: 8, ...TABLE_CENTER },
+        3: { cellWidth: (pageWidth - margin * 2) / 2 - 95, textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 9.5, ...TABLE_CENTER },
       },
     });
     // @ts-expect-error lastAutoTable is attached by the plugin at runtime
@@ -180,10 +184,10 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(6.8);
       doc.setTextColor(...C.muted);
-      doc.text(s.label.toUpperCase(), cx + 8, y + 18, { maxWidth: cardW - 16 });
+      doc.text(s.label.toUpperCase(), cx + cardW / 2, y + 18, { align: 'center', maxWidth: cardW - 16 });
       doc.setFontSize(11);
       doc.setTextColor(...C.ink);
-      doc.text(safeValue(s.value), cx + 8, y + 34, { maxWidth: cardW - 16 });
+      doc.text(safeValue(s.value), cx + cardW / 2, y + 34, { align: 'center', maxWidth: cardW - 16 });
     });
     y += cardH + 18;
   }
@@ -195,7 +199,7 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(...C.muted);
-    doc.text(`${label.toUpperCase()}  ${paid} / ${total}`, margin, y);
+    doc.text(`${label.toUpperCase()}  ${paid} / ${total}`, pageWidth / 2, y, { align: 'center' });
     const barY = y + 6;
     doc.setFillColor(...C.hair);
     doc.roundedRect(margin, barY, contentW, 6, 3, 3, 'F');
@@ -210,7 +214,7 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.setTextColor(...C.ink);
-  doc.text(p.tableTitle, margin, y);
+  doc.text(p.tableTitle, pageWidth / 2, y, { align: 'center' });
   y += 12;
 
   // Status column is colour-coded exactly like the on-screen StatusPill.
@@ -258,15 +262,14 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
     foot: totalsRow ? [totalsRow] : undefined,
     showFoot: totalsRow ? 'lastPage' : 'never', // totals belong at the very end, not on every page
     theme: 'grid',
-    styles: { fontSize: 8, cellPadding: 5, lineColor: C.hair, lineWidth: 0.5, textColor: C.ink },
-    headStyles: { fillColor: C.brandDark, textColor: C.white, fontStyle: 'bold', fontSize: 8, cellPadding: 6 },
-    footStyles: { fillColor: C.tintBg, textColor: C.ink, fontStyle: 'bold', fontSize: 8.5, cellPadding: 6, lineColor: C.hair, lineWidth: 0.5 },
+    styles: { fontSize: 8, cellPadding: 5, lineColor: C.hair, lineWidth: 0.5, textColor: C.ink, ...TABLE_CENTER },
+    headStyles: { fillColor: C.brandDark, textColor: C.white, fontStyle: 'bold', fontSize: 8, cellPadding: 6, ...TABLE_CENTER },
+    footStyles: { fillColor: C.tintBg, textColor: C.ink, fontStyle: 'bold', fontSize: 8.5, cellPadding: 6, lineColor: C.hair, lineWidth: 0.5, ...TABLE_CENTER },
     alternateRowStyles: { fillColor: C.tintBg },
     columnStyles: statusCol >= 0 ? { [statusCol]: { halign: 'center', fontStyle: 'bold' } } : undefined,
     didParseCell: (data) => {
-      // Totals row: right-align the summed money cells, keep the TOTAL label left.
       if (data.section === 'foot') {
-        if (totalCols.includes(data.column.index)) data.cell.styles.halign = 'right';
+        data.cell.styles.halign = 'center';
         return;
       }
       if (data.section !== 'body' || data.column.index !== statusCol) return;
@@ -285,8 +288,7 @@ export function buildLedgerReportPDF(p: ReportParams): jsPDF {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       doc.setTextColor(...C.faint);
-      doc.text(`${title} — Confidential`, margin, h - 16);
-      doc.text(`Page ${doc.getNumberOfPages()}`, pageWidth - margin, h - 16, { align: 'right' });
+      doc.text(`${title} — Confidential  ·  Page ${doc.getNumberOfPages()}`, pageWidth / 2, h - 16, { align: 'center' });
     },
   });
 
@@ -319,18 +321,18 @@ export function buildDatasetReportPDF(p: DatasetReportParams): jsPDF {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(148, 163, 184);
-  doc.text(genStamp, pageWidth - margin, y, { align: 'right' });
+  const cx = pageWidth / 2;
+  doc.text(genStamp, cx, y, { align: 'center' });
 
-  // Title + subtitle (left)
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(15);
   doc.setTextColor(15, 23, 42);
-  doc.text(p.title, margin, y);
+  doc.text(p.title, cx, y + 14, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
   doc.setTextColor(100, 116, 139);
-  doc.text(p.subtitle, margin, y + 16);
-  y += 34;
+  doc.text(p.subtitle, cx, y + 30, { align: 'center' });
+  y += 44;
 
   // Optional KPI summary strip (label row + value row)
   if (p.summary && p.summary.length) {
@@ -342,8 +344,9 @@ export function buildDatasetReportPDF(p: DatasetReportParams): jsPDF {
         p.summary.map((s) => safeValue(s.value)),
       ],
       theme: 'plain',
-      styles: { fontSize: 8.5, cellPadding: { top: 3, bottom: 1, left: 6, right: 6 } },
+      styles: { fontSize: 8.5, cellPadding: { top: 3, bottom: 1, left: 6, right: 6 }, ...TABLE_CENTER },
       didParseCell: (data) => {
+        data.cell.styles.halign = 'center';
         if (data.row.index === 1) { data.cell.styles.textColor = [15, 23, 42]; data.cell.styles.fontStyle = 'bold'; data.cell.styles.fontSize = 11; }
         else { data.cell.styles.textColor = [100, 116, 139]; data.cell.styles.fontStyle = 'normal'; data.cell.styles.fontSize = 7.5; }
       },
@@ -377,18 +380,17 @@ export function buildDatasetReportPDF(p: DatasetReportParams): jsPDF {
     foot: datasetTotals ? [datasetTotals] : undefined,
     showFoot: datasetTotals ? 'lastPage' : 'never',
     theme: 'grid',
-    styles: { fontSize: 7.8, cellPadding: 4.5, lineColor: [226, 232, 240], lineWidth: 0.5, overflow: 'linebreak' },
-    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-    footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 8.2, cellPadding: 5, lineColor: [226, 232, 240], lineWidth: 0.5 },
+    styles: { fontSize: 7.8, cellPadding: 4.5, lineColor: [226, 232, 240], lineWidth: 0.5, overflow: 'linebreak', ...TABLE_CENTER },
+    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8, ...TABLE_CENTER },
+    footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold', fontSize: 8.2, cellPadding: 5, lineColor: [226, 232, 240], lineWidth: 0.5, ...TABLE_CENTER },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     didParseCell: (data) => {
-      if (rightCols.has(data.column.index)) data.cell.styles.halign = 'right';
+      data.cell.styles.halign = 'center';
     },
     didDrawPage: () => {
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
-      doc.text(`Page ${doc.getNumberOfPages()}`, pageWidth - margin, pageHeight - 14, { align: 'right' });
-      doc.text('Anush Finserv — Confidential', margin, pageHeight - 14);
+      doc.text(`Anush Finserv — Confidential  ·  Page ${doc.getNumberOfPages()}`, pageWidth / 2, pageHeight - 14, { align: 'center' });
     },
   });
 
@@ -436,29 +438,32 @@ export function buildOverdueNoticePDF(p: OverdueNoticeParams): jsPDF {
   // ── Brand header band ──
   const bandH = 74;
   gradientBand(doc, margin, y, contentW, bandH, 10);
+  const cx = pageWidth / 2;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(15);
   doc.setTextColor(...C.white);
-  doc.text('Payment Reminder', margin + 18, y + 28);
+  doc.text('Payment Reminder', cx, y + 24, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
-  doc.text(`${p.loanTypeLabel}  ·  Loan date ${p.loanDate}`, margin + 18, y + 45);
+  doc.text(`${p.loanTypeLabel}  ·  Loan date ${p.loanDate}`, cx, y + 40, { align: 'center' });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11.5);
-  doc.text(p.customerName, pageWidth - margin - 18, y + 28, { align: 'right' });
+  doc.text(p.customerName, cx, y + 52, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.text(`${p.loanNumber}  ·  ${p.customerMobile}`, pageWidth - margin - 18, y + 45, { align: 'right' });
+  doc.text(`${p.loanNumber}  ·  ${p.customerMobile}`, cx, y + 64, { align: 'center' });
+  y += bandH + 8;
   doc.setFontSize(7.5);
+  doc.setTextColor(...C.muted);
   doc.text(
     `Issued ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`,
-    pageWidth - margin - 18, y + 62, { align: 'right' },
+    cx, y, { align: 'center' },
   );
-  y += bandH + 18;
+  y += 18;
 
   // ── The headline: amount due, in a red callout. This is the one number the
   // reader must not miss, so it gets its own block rather than a table cell.
-  const calloutH = 58;
+  const calloutH = 72;
   doc.setFillColor(...C.redBg);
   doc.setDrawColor(...C.red);
   doc.setLineWidth(0.8);
@@ -466,25 +471,23 @@ export function buildOverdueNoticePDF(p: OverdueNoticeParams): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(...C.redInk);
-  doc.text('TOTAL AMOUNT DUE', margin + 16, y + 20);
+  doc.text('TOTAL AMOUNT DUE', cx, y + 18, { align: 'center' });
   doc.setFontSize(22);
-  doc.text(safeCurrency(p.totalDue), margin + 16, y + 44);
-  // Right side: how late, so urgency is explicit.
+  doc.text(safeCurrency(p.totalDue), cx, y + 40, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(...C.redInk);
-  doc.text(`Overdue since ${p.dueSince}`, pageWidth - margin - 16, y + 26, { align: 'right' });
+  doc.text(`Overdue since ${p.dueSince}`, cx, y + 52, { align: 'center' });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.text(`${p.daysOverdue} ${p.daysOverdue === 1 ? 'day' : 'days'} late`,
-    pageWidth - margin - 16, y + 44, { align: 'right' });
+  doc.text(`${p.daysOverdue} ${p.daysOverdue === 1 ? 'day' : 'days'} late`, cx, y + 64, { align: 'center' });
   y += calloutH + 20;
 
   // ── Unpaid instalments ──
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.setTextColor(...C.ink);
-  doc.text('Pending instalments', margin, y);
+  doc.text('Pending instalments', cx, y, { align: 'center' });
   y += 10;
 
   const showPaidCol = p.rows.some((r) => r.paid);
@@ -505,13 +508,13 @@ export function buildOverdueNoticePDF(p: OverdueNoticeParams): jsPDF {
       : ['', '', safeCurrency(p.totalDue)]],
     showFoot: 'lastPage',
     theme: 'grid',
-    styles: { fontSize: 9, cellPadding: 6, lineColor: C.hair, lineWidth: 0.5, textColor: C.ink },
-    headStyles: { fillColor: C.brandDark, textColor: C.white, fontStyle: 'bold', fontSize: 8.5 },
-    footStyles: { fillColor: C.redBg, textColor: C.redInk, fontStyle: 'bold', fontSize: 10 },
+    styles: { fontSize: 9, cellPadding: 6, lineColor: C.hair, lineWidth: 0.5, textColor: C.ink, ...TABLE_CENTER },
+    headStyles: { fillColor: C.brandDark, textColor: C.white, fontStyle: 'bold', fontSize: 8.5, ...TABLE_CENTER },
+    footStyles: { fillColor: C.redBg, textColor: C.redInk, fontStyle: 'bold', fontSize: 10, ...TABLE_CENTER },
     alternateRowStyles: { fillColor: C.tintBg },
     columnStyles: showPaidCol
-      ? { 0: { cellWidth: 60 }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } }
-      : { 0: { cellWidth: 60 }, 2: { halign: 'right' } },
+      ? { 0: { cellWidth: 60, ...TABLE_CENTER }, 2: TABLE_CENTER, 3: TABLE_CENTER, 4: TABLE_CENTER }
+      : { 0: { cellWidth: 60, ...TABLE_CENTER }, 2: TABLE_CENTER },
     didDrawPage: () => {
       const h = doc.internal.pageSize.getHeight();
       // Closing note + footer rule.
@@ -522,12 +525,11 @@ export function buildOverdueNoticePDF(p: OverdueNoticeParams): jsPDF {
       doc.setFontSize(8.5);
       doc.setTextColor(...C.muted);
       doc.text('Kindly clear the dues at the earliest. Please ignore this notice if payment has already been made.',
-        margin, h - 36);
-      if (p.contactLine) doc.text(p.contactLine, margin, h - 24);
+        pageWidth / 2, h - 36, { align: 'center', maxWidth: contentW });
+      if (p.contactLine) doc.text(p.contactLine, pageWidth / 2, h - 24, { align: 'center', maxWidth: contentW });
       doc.setFontSize(8);
       doc.setTextColor(...C.faint);
-      doc.text('Payment Reminder — Confidential', margin, h - 12);
-      doc.text(`Page ${doc.getNumberOfPages()}`, pageWidth - margin, h - 12, { align: 'right' });
+      doc.text(`Payment Reminder — Confidential  ·  Page ${doc.getNumberOfPages()}`, pageWidth / 2, h - 12, { align: 'center' });
     },
   });
 
