@@ -113,6 +113,7 @@ export default function CustomerPortal() {
               return (
                 <CustomerLoanCard
                   key={loan.id}
+                  customerId={customerId}
                   loan={loan}
                   summary={summary}
                   nextDue={nd}

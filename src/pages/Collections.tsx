@@ -17,9 +17,16 @@ import { CollectionProgress } from '@/components/CollectionProgress';
 import { inr, inrShort, fmtDate, todayISO, isoLocal, DAILY_TERM, addDays } from '@/lib/format';
 import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { cn } from '@/lib/utils';
-import { Search, X, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins, ShieldCheck, UserCheck, ChevronDown } from 'lucide-react';
+import { Search, X, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins, ShieldCheck, UserCheck, ChevronDown, ImageIcon } from 'lucide-react';
+import {
+  countPendingPaymentProofs,
+  listPaymentProofs,
+  pendingProofCountByLoanId,
+  PAYMENT_PROOF_SUBMITTED_EVENT,
+} from '@/features/customer-portal/paymentProofStore';
 import { recoveryAgentNameByLoanId } from '@/features/recovery/agentLookup';
 import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
+import { CustomerPortalProofsPanel } from '@/features/customer-portal/components/CustomerPortalProofsPanel';
 
 
 /** Days denominator for the progress bar: daily loans use their term, Flexible uses its chosen days, everything else a 30-day cycle. */
@@ -72,7 +79,8 @@ export default function Collections() {
   const pendingRecovery = recoveryDemo
     ? recovery.submissions.filter((s) => s.type === 'COLLECTION_CLAIM' && s.status === 'PENDING').length
     : 0;
-  const [staffTab, setStaffTab] = useState<'portfolio' | 'recovery'>('portfolio');
+  const [staffTab, setStaffTab] = useState<'portfolio' | 'recovery' | 'portal-proofs'>('portfolio');
+  const [proofTick, setProofTick] = useState(0);
   const [typeFilter, setTypeFilter] = useState<LoanType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
   const [ledger, setLedger] = useState<Loan | null>(null);
@@ -139,6 +147,17 @@ export default function Collections() {
     refreshRecoveryQueue();
   }, [refreshRecoveryQueue]);
 
+  useEffect(() => {
+    const bump = () => setProofTick((n) => n + 1);
+    window.addEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
+    return () => window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
+  }, []);
+
+  const pendingPortalProofs = useMemo(() => countPendingPaymentProofs(), [proofTick]);
+  const portalProofTotal = useMemo(() => listPaymentProofs().length, [proofTick]);
+  const pendingProofsByLoan = useMemo(() => pendingProofCountByLoanId(), [proofTick]);
+  const showRecoveryTab = recoveryDemo && isAdmin;
+
   const counts = useMemo(() => {
     const activeLoans = d.loans.filter((l) => l.status === 'ACTIVE');
     const m: Record<string, number> = { ALL: activeLoans.length };
@@ -183,13 +202,17 @@ export default function Collections() {
       <PageHeader
         icon={<HandCoins size={20} />}
         title="Collections"
-        subtitle={staffTab === 'recovery' && recoveryDemo
-          ? `${pendingRecovery} pending agent submission${pendingRecovery === 1 ? '' : 's'}`
-          : `${d.collections.length} payments recorded · ${kpis.activeCount} active loans`}
+        subtitle={
+          staffTab === 'recovery' && showRecoveryTab
+            ? `${pendingRecovery} pending agent submission${pendingRecovery === 1 ? '' : 's'}`
+            : staffTab === 'portal-proofs'
+              ? `${portalProofTotal} submission${portalProofTotal === 1 ? '' : 's'}${pendingPortalProofs > 0 ? ` · ${pendingPortalProofs} pending review` : ''}`
+              : `${d.collections.length} payments recorded · ${kpis.activeCount} active loans`
+        }
       />
 
       <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
-      {recoveryDemo && isAdmin && pendingRecovery > 0 && staffTab === 'portfolio' && (
+      {showRecoveryTab && pendingRecovery > 0 && staffTab === 'portfolio' && (
         <button
           type="button"
           onClick={() => setStaffTab('recovery')}
@@ -203,20 +226,34 @@ export default function Collections() {
         </button>
       )}
 
-      {recoveryDemo && isAdmin && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setStaffTab('portfolio')}
-            className={cn(
-              'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
-              staffTab === 'portfolio'
-                ? 'bg-gradient-to-r from-blue-700 to-blue-500 text-white shadow-[0_4px_14px_rgba(37,99,235,.35)]'
-                : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
-            )}
-          >
-            <HandCoins size={14} /> Portfolio
-          </button>
+      {pendingPortalProofs > 0 && staffTab === 'portfolio' && (
+        <button
+          type="button"
+          onClick={() => setStaffTab('portal-proofs')}
+          className="anim-pop flex w-full items-center justify-between gap-3 rounded-xl border border-violet-300/50 bg-violet-500/[.06] px-4 py-3 text-left transition-colors hover:bg-violet-500/[.09] dark:border-violet-500/25 dark:bg-violet-500/10"
+        >
+          <span className="text-[13px] font-semibold text-ink">
+            <ImageIcon size={16} className="mr-2 inline text-violet-600 dark:text-violet-300" aria-hidden />
+            {pendingPortalProofs} customer payment proof{pendingPortalProofs === 1 ? '' : 's'} to review
+          </span>
+          <span className="shrink-0 text-[12px] font-bold text-primary">Open proofs →</span>
+        </button>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setStaffTab('portfolio')}
+          className={cn(
+            'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+            staffTab === 'portfolio'
+              ? 'bg-gradient-to-r from-blue-700 to-blue-500 text-white shadow-[0_4px_14px_rgba(37,99,235,.35)]'
+              : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
+          )}
+        >
+          <HandCoins size={14} /> Portfolio
+        </button>
+        {showRecoveryTab && (
           <button
             type="button"
             onClick={() => setStaffTab('recovery')}
@@ -232,11 +269,41 @@ export default function Collections() {
               <span className="rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-bold">{pendingRecovery}</span>
             )}
           </button>
-        </div>
-      )}
+        )}
+        <button
+          type="button"
+          onClick={() => setStaffTab('portal-proofs')}
+          className={cn(
+            'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+            staffTab === 'portal-proofs'
+              ? 'bg-gradient-to-r from-violet-700 to-indigo-600 text-white shadow-[0_4px_14px_rgba(109,40,217,.35)]'
+              : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
+          )}
+        >
+          <ImageIcon size={14} /> Portal proofs
+          {pendingPortalProofs > 0 && (
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                staffTab === 'portal-proofs' ? 'bg-white/25' : 'bg-violet-500/15 text-violet-700 dark:text-violet-200',
+              )}
+            >
+              {pendingPortalProofs}
+            </span>
+          )}
+        </button>
+      </div>
 
-      {staffTab === 'recovery' && recoveryDemo && isAdmin ? (
+      {staffTab === 'recovery' && showRecoveryTab ? (
         <RecoveryQueuePanel />
+      ) : staffTab === 'portal-proofs' ? (
+        <CustomerPortalProofsPanel
+          canReview={canCollect}
+          onOpenLoan={(loanId) => {
+            const loan = d.loans.find((l) => l.id === loanId);
+            if (loan) openLedger(loan);
+          }}
+        />
       ) : (
         <>
       {/* KPI strip — real portfolio metrics */}
@@ -305,6 +372,8 @@ export default function Collections() {
                 delay={Math.min(idx, 8) * 40}
                 canCollect={canCollect}
                 recoveryAgentName={recoveryAgentByLoan[l.id]}
+                portalProofPending={pendingProofsByLoan[l.id] ?? 0}
+                onOpenPortalProofs={() => setStaffTab('portal-proofs')}
                 onView={() => openLedger(l)}
                 onPayNow={() => payNow(l)}
               />
@@ -320,7 +389,9 @@ export default function Collections() {
 
       {/* Add / Edit dialog */}
 
-      {ledger && staffTab === 'portfolio' && <LedgerDialog loan={ledger} onClose={closeLedger} autoOpenAdd={ledgerAutoAdd} />}
+      {ledger && staffTab !== 'recovery' && (
+        <LedgerDialog loan={ledger} onClose={closeLedger} autoOpenAdd={ledgerAutoAdd} />
+      )}
     </div>
   );
 }
@@ -333,6 +404,8 @@ function CollectionCard({
   onPayNow,
   canCollect,
   recoveryAgentName,
+  portalProofPending = 0,
+  onOpenPortalProofs,
   delay = 0,
 }: {
   loan: Loan;
@@ -341,6 +414,8 @@ function CollectionCard({
   onPayNow: () => void;
   canCollect: boolean;
   recoveryAgentName?: string;
+  portalProofPending?: number;
+  onOpenPortalProofs?: () => void;
   delay?: number;
 }) {
   const cust = d.customers.find((c) => c.id === loan.customerId);
@@ -410,6 +485,21 @@ function CollectionCard({
                 <UserCheck size={12} className="shrink-0" aria-hidden />
                 <span className="truncate">Recovery · {recoveryAgentName}</span>
               </p>
+            )}
+            {portalProofPending > 0 && onOpenPortalProofs && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenPortalProofs();
+                }}
+                className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full bg-violet-500/12 px-2 py-0.5 text-[10px] font-semibold text-violet-800 ring-1 ring-violet-400/25 transition-colors hover:bg-violet-500/20 dark:text-violet-200 sm:mt-2 sm:px-2.5 sm:py-1 sm:text-[11px]"
+              >
+                <ImageIcon size={12} className="shrink-0" aria-hidden />
+                <span className="truncate">
+                  Portal proof · {portalProofPending} pending
+                </span>
+              </button>
             )}
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
               {nd ? (

@@ -5,6 +5,7 @@ import { inr, fmtDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { LoanPortalSummary, PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 import { CalendarClock, ChevronRight, FileText, Landmark, Sparkles, Wallet } from 'lucide-react';
+import { PaymentProofUpload } from '@/features/customer-portal/components/PaymentProofUpload';
 
 function Metric({
   label,
@@ -36,6 +37,7 @@ function Metric({
 }
 
 interface Props {
+  customerId: number;
   loan: Loan;
   summary: LoanPortalSummary;
   nextDue: string | null;
@@ -46,7 +48,7 @@ interface Props {
 }
 
 export function CustomerLoanCard({
-  loan, summary, nextDue, overdue, index, onPay, onStatement,
+  customerId, loan, summary, nextDue, overdue, index, onPay, onStatement,
 }: Props) {
   const canPay = loan.status === 'ACTIVE' && summary.outstanding > 0;
 
@@ -259,6 +261,16 @@ export function CustomerLoanCard({
               </p>
             </div>
           </motion.div>
+        )}
+
+        {canPay && payAmount > 0 && (
+          <PaymentProofUpload
+            customerId={customerId}
+            loanId={loan.id}
+            loanNumber={loan.loanNumber}
+            amountRupees={payAmount}
+            purpose={activeOption?.id ?? 'OUTSTANDING'}
+          />
         )}
 
         <motion.button
