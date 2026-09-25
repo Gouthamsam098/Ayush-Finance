@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
-import { ProtectedRoute, AdminRoute, ModuleRoute } from '@/routes/ProtectedRoute';
+import { ProtectedRoute, AdminRoute, ModuleRoute, StaffOnlyRoute, CustomerPortalRoute } from '@/routes/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
+import { CustomerPortalShell } from '@/components/layout/CustomerPortalShell';
 import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
 import { authApi } from '@/services/authApi';
@@ -26,6 +27,7 @@ const Investments = lazy(() => import('@/pages/Investments'));
 const Documents = lazy(() => import('@/pages/Documents'));
 const Reports = lazy(() => import('@/pages/Reports'));
 const Settings = lazy(() => import('@/pages/Settings'));
+const CustomerPortal = lazy(() => import('@/pages/CustomerPortal'));
 
 export default function App() {
   const dispatch = useDispatch();
@@ -57,19 +59,26 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute />}>
-        <Route element={<AppShell />}>
-          <Route path="/" element={page(<Dashboard />)} />
-          <Route path="/customers" element={page(<Customers />)} />
-          <Route path="/loans" element={page(<Loans />)} />
-          <Route path="/collections" element={page(<Collections />)} />
-          <Route path="/expenses" element={page(<Expenses />)} />
-          <Route path="/investments" element={page(<Investments />)} />
-          <Route path="/documents" element={page(<Documents />)} />
-          <Route element={<ModuleRoute module="Reports" />}>
-            <Route path="/reports" element={page(<Reports />)} />
+        <Route element={<CustomerPortalRoute />}>
+          <Route element={<CustomerPortalShell />}>
+            <Route path="/portal" element={page(<CustomerPortal />)} />
           </Route>
-          <Route element={<AdminRoute />}>
-            <Route path="/settings" element={page(<Settings />)} />
+        </Route>
+        <Route element={<AppShell />}>
+          <Route path="/collections" element={page(<Collections />)} />
+          <Route element={<StaffOnlyRoute />}>
+            <Route path="/" element={page(<Dashboard />)} />
+            <Route path="/customers" element={page(<Customers />)} />
+            <Route path="/loans" element={page(<Loans />)} />
+            <Route path="/expenses" element={page(<Expenses />)} />
+            <Route path="/investments" element={page(<Investments />)} />
+            <Route path="/documents" element={page(<Documents />)} />
+            <Route element={<ModuleRoute module="Reports" />}>
+              <Route path="/reports" element={page(<Reports />)} />
+            </Route>
+            <Route element={<AdminRoute />}>
+              <Route path="/settings" element={page(<Settings />)} />
+            </Route>
           </Route>
         </Route>
       </Route>

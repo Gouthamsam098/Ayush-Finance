@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSelector } from 'react-redux';
 import { todayISO, addDays, addMonths } from '@/lib/format';
 import { config } from '@/lib/config';
@@ -8,6 +8,8 @@ import { collectionApi } from '@/services/collectionApi';
 import { expenseApi } from '@/services/expenseApi';
 import { investmentApi } from '@/services/investmentApi';
 import { cacheInvestorCapital } from '@/lib/investments';
+import { loadMockBook, mockUidFloor, repairDuplicateCustomerIds, saveMockBook } from '@/lib/mockBookPersistence';
+import { ensureDemoPortalUserFromEnv } from '@/lib/demoPortalBootstrap';
 import type { RootState } from '@/store';
 
 // ─────────────── Types ───────────────
@@ -153,8 +155,6 @@ export interface DocItem { id: number; customerId: number; type: string; fileNam
 export const EXPENSE_CATEGORIES = ['Personal', 'Office', 'Savings', 'Investor Interest'];
 export const EXPENSE_SUB_CATEGORIES = ['Office Rent', 'Electricity Bill', 'Office Boy Salary', 'Petrol', 'Diesel', 'Internet', 'Stationery', 'Marketing', 'Maintenance', 'Tea', 'Travel', 'Courier', 'Miscellaneous'];
 
-let _uidSeq = 1000;
-const uid = () => ++_uidSeq;
 const calcInterest = (principal: number, rate: number) => Math.round((principal * rate) / 100);
 
 
@@ -162,13 +162,15 @@ const calcInterest = (principal: number, rate: number) => Math.round((principal 
 interface DataShape {
   customers: Customer[]; loans: Loan[]; collections: Collection[]; expenses: Expense[]; documents: DocItem[];
   nextCode: () => string; nextLoanNo: () => string;
-  addCustomer: (c: Omit<Customer, 'id' | 'code' | 'createdAt'>) => void;
+  /** Mock mode returns the created record (for attaching documents on save). */
+  addCustomer: (c: Omit<Customer, 'id' | 'code' | 'createdAt'>) => Customer | void;
   /** Insert an already-created customer (from the API) into local state without a second API call. */
   addCustomerRecord: (c: Customer) => void;
   /** Replace an existing customer with an authoritative record (from the API) without a second call. */
   updateCustomerRecord: (c: Customer) => void;
   updateCustomer: (id: number, c: Partial<Customer>) => void;
-  deleteCustomer: (id: number) => void;
+  /** `customerCode` disambiguates when legacy data reused the same numeric id twice. */
+  deleteCustomer: (id: number, customerCode?: string) => void | Promise<void>;
   addLoan: (l: Omit<Loan, 'id' | 'loanNumber' | 'interest' | 'status'>) => void;
   /** Prepend an authoritative loan record (from the API) without a second call. */
   addLoanRecord: (l: Loan) => void;
@@ -177,7 +179,7 @@ interface DataShape {
   updateLoan: (id: number, l: Partial<Loan>) => void;
   deleteLoan: (id: number) => void;
   closeLoan: (id: number) => void;
-  addCollection: (c: Omit<Collection, 'id' | 'receiptNo'>) => Promise<void> | void;
+  addCollection: (c: Omit<Collection, 'id' | 'receiptNo'>) => Promise<Collection> | Collection;
   updateCollection: (id: number, c: Partial<Collection>) => Promise<void> | void;
   deleteCollection: (id: number) => Promise<void> | void;
   /** Atomically swap a loan's payments: soft-delete `replaceIds` and insert
@@ -214,25 +216,63 @@ export const useData = () => {
 };
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  // EVERY entity starts EMPTY. There is deliberately no seed dataset: this is a
-  // production finance app, and demo customers/loans/payments shipped in the
-  // bundle would be indistinguishable from real records on screen, inflate every
-  // KPI, and put fabricated names and mobile numbers in front of users.
-  //
-  // In API mode these fill from the backend (see the fetch effect below). In
-  // mock mode they stay empty until the user enters something, so each page
-  // shows its real empty state rather than someone else's book.
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [loans, setLoans] = useState<Loan[]>([]);
-  const [collections, setCollections] = useState<Collection[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [documents, setDocuments] = useState<DocItem[]>([]);
-  // Mock-mode code sequences. They start at the FIRST number now that no seed
-  // record occupies 1001-1005 / 4001-4007 / 100001-100010; the backend mints
-  // its own codes from Postgres sequences in API mode, so these are unused there.
-  const [codeSeq, setCodeSeq] = useState(1001);
-  const [loanSeq, setLoanSeq] = useState(4001);
-  const [rcptSeq, setRcptSeq] = useState(100001);
+  // API mode: empty until login fetch. Demo mode: hydrate from localStorage so
+  // refresh keeps the user's book (no seed data — still starts empty on first visit).
+  const mockBoot = config.useApi ? null : loadMockBook();
+  const [customers, setCustomers] = useState<Customer[]>(() => mockBoot?.customers ?? []);
+  const [loans, setLoans] = useState<Loan[]>(() => mockBoot?.loans ?? []);
+  const [collections, setCollections] = useState<Collection[]>(() => mockBoot?.collections ?? []);
+  const [expenses, setExpenses] = useState<Expense[]>(() => mockBoot?.expenses ?? []);
+  const [documents, setDocuments] = useState<DocItem[]>(() => mockBoot?.documents ?? []);
+  const [codeSeq, setCodeSeq] = useState(() => mockBoot?.codeSeq ?? 1001);
+  const [loanSeq, setLoanSeq] = useState(() => mockBoot?.loanSeq ?? 4001);
+  const [rcptSeq, setRcptSeq] = useState(() => mockBoot?.rcptSeq ?? 100001);
+  const uidRef = useRef(mockUidFloor(mockBoot));
+
+  const allocId = () => {
+    uidRef.current += 1;
+    return uidRef.current;
+  };
+
+  useEffect(() => {
+    if (config.useApi) return;
+    setCustomers((list) => {
+      const repaired = repairDuplicateCustomerIds({
+        v: 1,
+        customers: list,
+        loans: [],
+        collections: [],
+        expenses: [],
+        documents: [],
+        codeSeq: 0,
+        loanSeq: 0,
+        rcptSeq: 0,
+        uidSeq: uidRef.current,
+      });
+      if (repaired.uidSeq > uidRef.current) uidRef.current = repaired.uidSeq;
+      return repaired.customers;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (config.useApi) return;
+    saveMockBook({
+      customers,
+      loans,
+      collections,
+      expenses,
+      documents,
+      codeSeq,
+      loanSeq,
+      rcptSeq,
+      uidSeq: uidRef.current,
+    });
+  }, [customers, loans, collections, expenses, documents, codeSeq, loanSeq, rcptSeq]);
+
+  useEffect(() => {
+    if (customers.length === 0) return;
+    ensureDemoPortalUserFromEnv(customers);
+  }, [customers]);
 
   // Load customers from the backend in API mode. Keyed off the access token so
   // the fetch runs AFTER login (the provider mounts before auth exists; a fetch
@@ -481,8 +521,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
           customerApi.create(c).then((created) => setCustomers((s) => [created, ...s]));
           return;
         }
-        setCustomers((s) => [{ ...c, id: uid(), code: 'CUST-' + codeSeq, createdAt: todayISO() }, ...s]);
+        const created: Customer = { ...c, id: allocId(), code: 'CUST-' + codeSeq, createdAt: todayISO() };
+        setCustomers((s) => [created, ...s]);
         setCodeSeq((n) => n + 1);
+        return created;
       },
       addCustomerRecord: (c) => setCustomers((s) => [c, ...s.filter((x) => x.id !== c.id)]),
       updateCustomerRecord: (c) => setCustomers((s) => s.map((x) => (x.id === c.id ? c : x))),
@@ -494,21 +536,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         setCustomers((s) => s.map((c) => (c.id === id ? { ...c, ...patch } : c)));
       },
-      deleteCustomer: (id) => {
-        // Capture loan ids before the async remove so collections can be
-        // purged from local state even if the loans array changes meanwhile.
-        const loanIds = new Set(loans.filter((l) => l.customerId === id).map((l) => l.id));
+      deleteCustomer: (id, customerCode) => {
+        const victim = customerCode
+          ? customers.find((c) => c.code === customerCode)
+          : customers.find((c) => c.id === id);
+        if (!victim) return;
+        const targetId = victim.id;
+        const idShared = customers.some((c) => c.id === targetId && c.code !== victim.code);
+        const loanIds = idShared
+          ? new Set<number>()
+          : new Set(loans.filter((l) => l.customerId === targetId).map((l) => l.id));
         const purgeLocal = () => {
-          setCustomers((s) => s.filter((c) => c.id !== id));
-          setLoans((s) => s.filter((l) => l.customerId !== id));
-          setCollections((s) => s.filter((c) => !loanIds.has(c.loanId)));
-          setDocuments((s) => s.filter((doc) => doc.customerId !== id));
+          setCustomers((s) => s.filter((c) => c.code !== victim.code));
+          if (!idShared) {
+            setLoans((s) => s.filter((l) => l.customerId !== targetId));
+            setCollections((s) => s.filter((c) => !loanIds.has(c.loanId)));
+            setDocuments((s) => s.filter((doc) => doc.customerId !== targetId));
+          }
         };
         if (config.useApi) {
-          // Backend soft-deletes the customer and cascaded loans/collections/
-          // documents; mirror the same purge in React state so Reports/Loans/
-          // Collections clear immediately (expenses are independent and stay).
-          return customerApi.remove(id).then(purgeLocal);
+          return customerApi.remove(targetId).then(purgeLocal);
         }
         purgeLocal();
       },
@@ -523,7 +570,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // Daily Collection retains 3 months of interest upfront; other instalment
         // loans retain 1× interest; interest-only & flexible retain nothing.
         const ded = upfrontDeduction(l.type, interest);
-        setLoans((s) => [{ ...l, id: uid(), loanNumber: 'LN-' + loanSeq, interest, deduction: ded || undefined, status: 'ACTIVE' }, ...s]);
+        setLoans((s) => [{ ...l, id: allocId(), loanNumber: 'LN-' + loanSeq, interest, deduction: ded || undefined, status: 'ACTIVE' }, ...s]);
         setLoanSeq((n) => n + 1);
       },
       addLoanRecord: (l) => setLoans((s) => [l, ...s.filter((x) => x.id !== l.id)]),
@@ -573,10 +620,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
           return collectionApi.record(c.loanId, c).then((created) => {
             setCollections((s) => [created, ...s]);
             loanApi.fetchAll().then(setLoans).catch(() => {});
+            return created;
           });
         }
-        setCollections((s) => [{ ...c, id: uid(), receiptNo: 'RCPT-' + rcptSeq }, ...s]);
+        const created: Collection = { ...c, id: allocId(), receiptNo: 'RCPT-' + rcptSeq };
+        setCollections((s) => [created, ...s]);
         setRcptSeq((n) => n + 1);
+        return created;
       },
       updateCollection: (id, patch) => {
         if (config.useApi) {
@@ -598,7 +648,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // synchronous state update, so it is atomic from the UI's point of view.
         setCollections((s) => {
           const kept = s.filter((c) => !replaceIds.includes(c.id));
-          const made = payments.map((p, i) => ({ ...p, id: uid() + i, receiptNo: 'RCPT-' + (rcptSeq + i) }));
+          const made = payments.map((p, i) => ({ ...p, id: allocId(), receiptNo: 'RCPT-' + (rcptSeq + i) }));
           return [...made, ...kept];
         });
         setRcptSeq((n) => n + payments.length);
@@ -618,7 +668,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           return expenseApi.create(e).then((created) => setExpenses((s) => [created, ...s]));
         }
-        setExpenses((s) => [{ ...e, id: uid() }, ...s]);
+        setExpenses((s) => [{ ...e, id: allocId() }, ...s]);
       },
       updateExpense: (id, patch) => {
         if (config.useApi) {
@@ -637,7 +687,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (!config.useApi) return;
         return expenseApi.fetchAll().then(setExpenses).catch(() => { /* surfaced per-action */ });
       },
-      addDocument: (d) => setDocuments((s) => [{ ...d, id: uid() }, ...s]),
+      addDocument: (d) => setDocuments((s) => [{ ...d, id: allocId() }, ...s]),
       deleteDocument: (id) => setDocuments((s) => s.filter((d) => d.id !== id)),
       collectedFor, interestCollectedFor, principalCollectedFor, outstandingFor, nextDueForDaily, nextDueFor, totalDueForDaily, totalDueForMonthly, totalDueForInterestOnly,
     };

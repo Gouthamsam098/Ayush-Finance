@@ -430,3 +430,32 @@ button, a, input, select, textarea {
   .anim-float, .anim-glow, .anim-spin-slow, .text-gradient, .sheen::before { animation: none !important; }
   .tilt { transform: none !important; }
 }
+
+/* Mobile / tablet shells — iPhone notch, home indicator, Samsung Fold insets */
+@supports (padding: max(0px)) {
+  .pt-safe {
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+  }
+  .pb-safe {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+  .px-safe {
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+}
+.min-h-app {
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+}
+.touch-target {
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

@@ -9,7 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
-import { inr, inrShort, fmtDate, initials, todayISO } from '@/lib/format';
+import { inr, inrShort, fmtDate, todayISO } from '@/lib/format';
+import { CustomerAvatar } from '@/components/CustomerAvatar';
+import { bumpCustomerPhotoCache, cacheCustomerPhotoDataUrl } from '@/lib/customerPhoto';
 import { cn } from '@/lib/utils';
 import { config } from '@/lib/config';
 import { validateCustomerForm, INDIAN_STATES, type FieldErrors } from '@/lib/customerValidation';
@@ -30,7 +32,7 @@ import {
 } from '@/components/ui/filter-kit';
 import {
   Search, Plus, Eye, Pencil, Trash2, Download, Users,
-  FileText, AlertTriangle, ArrowRight, AlertCircle, Clock, IndianRupee,
+  FileText, AlertTriangle, AlertCircle, Clock, IndianRupee,
   User, MapPin, ShieldCheck, Upload, SlidersHorizontal, Activity,
   CreditCard, Check, X, Car, Home, RotateCcw, ChevronLeft, ChevronRight, ChevronDown,
 } from 'lucide-react';
@@ -227,18 +229,50 @@ export default function Customers() {
     }));
   };
 
-  // Upload every file the user picked, for the document types relevant to the
-  // chosen loan type. In API mode this hits the backend; mock mode is a no-op.
+  const readFileAsDataUrl = (file: File): Promise<{ dataUrl: string; mime: string }> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () =>
+        resolve({
+          dataUrl: reader.result as string,
+          mime: file.type || (/\.(jpe?g|png|webp)$/i.test(file.name) ? 'image/jpeg' : 'application/octet-stream'),
+        });
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+  // Upload every file the user picked (API → backend; demo → DataContext documents).
   const uploadPendingDocs = async (customerId: number) => {
-    if (!config.useApi) return;
-    // Upload every attached tile (required + the optional PHOTO/OTHER).
+    let hadPhoto = false;
     for (const type of docTilesForLoan(loanType)) {
       const file = pendingDocs[type];
-      if (file) {
-        try { await documentApi.upload(customerId, type, file); }
-        catch { toast(`Failed to upload ${type} document`, 'error'); }
+      if (!file) continue;
+      if (type === 'PHOTO') hadPhoto = true;
+      try {
+        const encoded = type === 'PHOTO' ? await readFileAsDataUrl(file) : null;
+        if (encoded?.dataUrl.startsWith('data:image/')) {
+          cacheCustomerPhotoDataUrl(customerId, encoded.dataUrl);
+        }
+        if (config.useApi) {
+          await documentApi.upload(customerId, type, file);
+        } else {
+          const { dataUrl, mime } = encoded ?? await readFileAsDataUrl(file);
+          d.addDocument({
+            customerId,
+            type,
+            fileName: file.name,
+            size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
+            dataUrl,
+            mime,
+            date: todayISO(),
+          });
+        }
+      } catch {
+        toast(`Failed to upload ${type} document`, 'error');
       }
     }
+    if (hadPhoto || config.useApi) bumpCustomerPhotoCache();
+    setPendingDocs({});
   };
 
   // DOUBLE-SUBMIT GUARD: `saveInner` has many early-return paths, so the
@@ -320,6 +354,7 @@ export default function Customers() {
       }
     } else if (editId) {
       d.updateCustomer(editId, payload);
+      await uploadPendingDocs(editId);
       toast('Customer updated');
     } else if (config.useApi) {
       // Create via API so we get the new ID, then attach documents to it.
@@ -340,7 +375,8 @@ export default function Customers() {
         return;
       }
     } else {
-      d.addCustomer(payload as Omit<Customer, 'id' | 'code' | 'createdAt'>);
+      const created = d.addCustomer(payload as Omit<Customer, 'id' | 'code' | 'createdAt'>);
+      if (created) await uploadPendingDocs(created.id);
       toast('Customer added');
     }
     setForm(null);
@@ -401,14 +437,7 @@ export default function Customers() {
   const activeCustomers = d.customers.filter((c) => loansOf(c.id).some((l) => l.status === 'ACTIVE')).length;
   const totalOutstanding = d.loans.reduce((sum, l) => sum + d.outstandingFor(l), 0);
 
-  // Customers with at least one overdue active loan — drives the red alert bar + chip.
   const overdueCustomers = d.customers.filter((c) => customerIsOverdue(loansOf(c.id)));
-  const overdueLead = overdueCustomers[0];
-  const overdueLeadLoan = overdueLead
-    ? loansOf(overdueLead.id)
-        .filter(loanIsOverdue)
-        .sort((a, b) => d.outstandingFor(b) - d.outstandingFor(a))[0]
-    : undefined;
 
   // Customers awaiting KYC — drives the "pending KYC" meta chip.
   const pendingKycCustomers = d.customers.filter((c) => kycOf(c) === 'PENDING');
@@ -428,30 +457,6 @@ export default function Customers() {
           </>
         }
       />
-
-      {/* Overdue alert bar */}
-      {overdueLead && (
-        <button
-          onClick={() => setView(overdueLead)}
-          className="flex min-w-0 items-center gap-2.5 border-b-[0.5px] border-red-200 bg-red-50 px-3.5 py-2.5 text-left sm:px-5 dark:border-red-500/20 dark:bg-red-500/10"
-        >
-          <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400">
-            <AlertTriangle size={14} />
-          </span>
-          <span className="flex-1 text-[13px] font-medium text-red-700 dark:text-red-300">
-            {overdueCustomers.length} customer{overdueCustomers.length > 1 ? 's' : ''} overdue
-            {overdueLeadLoan && (
-              <span className="ml-1.5 font-normal text-red-600/80 dark:text-red-400/80">
-                · {overdueLead.name} · {inr(d.outstandingFor(overdueLeadLoan))} outstanding
-                {(() => { const nd = d.nextDueFor(overdueLeadLoan); return nd ? ` · due ${fmtDate(nd)}` : ''; })()}
-              </span>
-            )}
-          </span>
-          <span className="flex shrink-0 items-center gap-1 text-[13px] font-medium text-red-600 dark:text-red-400">
-            View loan <ArrowRight size={13} />
-          </span>
-        </button>
-      )}
 
       {/* Body */}
       <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-3 p-3.5 sm:px-4">
@@ -708,17 +713,19 @@ export default function Customers() {
               {/* Loan type first — it drives which documents are required below */}
               <div className="mb-5">
                 <Select
-                  label="Loan Type *"
+                  label="Expected loan product (documents only)"
                   value={loanType}
                   onChange={(e) => { setLoanType(e.target.value as LoanTypeOption); setDocErrors([]); }}
                   options={LOAN_TYPE_OPTIONS}
                 />
                 <p className="mt-1.5 text-xs text-muted">
+                  Chooses which KYC documents to collect here. This does <strong className="font-semibold text-ink/80">not</strong> create a loan — open{' '}
+                  <span className="font-semibold text-ink/80">Loans → New loan</span> after the customer is saved.
                   {loanType === 'VEHICLE'
-                    ? 'Vehicle loans also require Driving License and RC.'
+                    ? ' Vehicle files also include Driving License and RC.'
                     : loanType === 'PROPERTY'
-                      ? 'Property loans also require a Property document.'
-                      : 'Aadhaar and PAN are required for all loan types.'}
+                      ? ' Property files also include a Property document.'
+                      : ' Aadhaar and PAN apply to all products.'}
                 </p>
               </div>
 
@@ -961,7 +968,7 @@ export default function Customers() {
       <Dialog open={!!confirm} onClose={() => setConfirm(null)} title="Delete customer?"
         subtitle={confirm ? `${confirm.name} (${confirm.code})` : ''}
         footer={<><Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
-          <Button variant="danger" onClick={() => { if (confirm) { d.deleteCustomer(confirm.id); toast('Customer and related records deleted', 'info'); } setConfirm(null); }}>Delete everything</Button></>}>
+          <Button variant="danger" onClick={() => { if (confirm) { d.deleteCustomer(confirm.id, confirm.code); toast('Customer and related records deleted', 'info'); } setConfirm(null); }}>Delete everything</Button></>}>
         {confirm && (() => {
           const custLoanList = d.loans.filter((l) => l.customerId === confirm.id);
           const loanIds = new Set(custLoanList.map((l) => l.id));
@@ -1003,14 +1010,6 @@ function MetaTag({ tone = 'neutral', icon, children }: { tone?: MetaTone; icon?:
       {icon}{children}
     </span>
   );
-}
-
-// Deterministic solid color per name so avatars are colourful but stable.
-const AVATAR_COLORS = ['#6366f1', '#ec4899', '#14b8a6', '#f97316', '#8b5cf6', '#f59e0b', '#0ea5e9', '#ef4444'];
-function avatarColor(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
 function pageNumbers(current: number, total: number): (number | '…')[] {
@@ -1075,18 +1074,18 @@ function CustomerCard({
         onClick={onView}
         className="flex w-full items-center gap-4 border-b border-slate-100 px-5 py-4 text-left transition-colors hover:bg-slate-50/90 dark:border-white/[.06] dark:hover:bg-white/[.03]"
       >
-        <div
-          className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl text-[13px] font-bold text-white shadow-sm"
-          style={{ background: `linear-gradient(145deg, ${avatarColor(customer.name)}, ${avatarColor(customer.name)}bb)` }}
+        <CustomerAvatar
+          customerId={customer.id}
+          name={customer.name}
+          className="h-11 w-11 rounded-xl text-[13px] shadow-sm"
         >
-          {initials(customer.name)}
           {(hasOverdue || kyc === 'PENDING') && (
             <span
               className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface"
               style={{ background: hasOverdue ? 'rgb(var(--danger))' : 'rgb(var(--warning))' }}
             />
           )}
-        </div>
+        </CustomerAvatar>
 
         <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto] grid-rows-[auto_auto_auto] items-center gap-x-3 gap-y-1">
           <h3 className="col-start-1 row-start-1 truncate text-[15px] font-bold leading-tight text-ink group-hover:text-primary">

@@ -11,7 +11,8 @@ import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader'
 import { usePermissions } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
 import { computeFunds, interestRealised, cashDisbursedFor } from '@/lib/funds';
-import { inr, inrShort, fmtDate, todayISO, addDays, addMonths, initials, DAILY_TERM } from '@/lib/format';
+import { inr, inrShort, fmtDate, todayISO, addDays, addMonths, DAILY_TERM } from '@/lib/format';
+import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { emptyNum, matchNum, numActive, type NumFilter } from '@/lib/customerFilters';
 import { PAGE_SIZE_OPTIONS, pageNumbers } from '@/lib/pagination';
 import { FilterCard, SegGroup, Seg, NumFilterRow, MatchPreview } from '@/components/ui/filter-kit';
@@ -182,6 +183,7 @@ function validateLoanForm(f: LoanForm): LoanErrors {
 // the set it counted rather than a wider one.
 type Urgency = 'all' | 'overdue' | 'today' | 'soon';
 type SortMode = 'newest' | 'urgency' | 'amount';
+type PortfolioTab = 'active' | 'closed';
 
 /** Drawer-managed loan filters (draft is edited in the drawer, applied on button). */
 interface LoanFilters {
@@ -199,9 +201,9 @@ const defaultLoanFilters = (): LoanFilters => ({
   status: '', overdue: '', types: [], outstanding: emptyNum(), principal: emptyNum(), sort: 'newest',
 });
 
-/** How many drawer dimensions are constraining the list (sort excluded). */
-const countLoanFilters = (f: LoanFilters) =>
-  (f.status ? 1 : 0) + (f.overdue ? 1 : 0) + (f.types.length ? 1 : 0) + (numActive(f.outstanding) ? 1 : 0) + (numActive(f.principal) ? 1 : 0);
+/** How many drawer dimensions are constraining the list (sort excluded; status uses tabs). */
+const countLoanFilters = (f: LoanFilters, tab: PortfolioTab) =>
+  (tab === 'active' && f.overdue ? 1 : 0) + (f.types.length ? 1 : 0) + (numActive(f.outstanding) ? 1 : 0) + (numActive(f.principal) ? 1 : 0);
 
 export default function Loans() {
   const d = useData();
@@ -215,10 +217,13 @@ export default function Loans() {
   // Deep links from the Dashboard KPIs (?status=ACTIVE, ?urgency=overdue) so the
   // list opens on EXACTLY the scope the clicked card counted. Read once as the
   // initial state — the user stays free to change filters afterwards.
-  const [searchParams] = useSearchParams();
-  const initialStatus = ((): LoanFilters['status'] => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = ((): PortfolioTab => {
+    const tab = (searchParams.get('tab') ?? '').toLowerCase();
+    if (tab === 'closed') return 'closed';
     const s = (searchParams.get('status') ?? '').toUpperCase();
-    return s === 'ACTIVE' || s === 'CLOSED' ? s : '';
+    if (s === 'CLOSED') return 'closed';
+    return 'active';
   })();
   const initialUrgency = ((): Urgency => {
     const u = (searchParams.get('urgency') ?? '').toLowerCase();
@@ -228,7 +233,8 @@ export default function Loans() {
     const s = (searchParams.get('sort') ?? '').toLowerCase();
     return s === 'urgency' || s === 'amount' || s === 'newest' ? s : 'newest';
   })();
-  const initialFilters = (): LoanFilters => ({ ...defaultLoanFilters(), status: initialStatus, sort: initialSort });
+  const initialFilters = (): LoanFilters => ({ ...defaultLoanFilters(), sort: initialSort });
+  const [portfolioTab, setPortfolioTab] = useState<PortfolioTab>(initialTab);
   // ?ledger=<loanNumber> opens that loan's ledger straight away, so the
   // dashboard's overdue list can link to ONE loan rather than dumping the user
   // on the full list to find it. Runs when the loans finish loading (API mode
@@ -237,8 +243,27 @@ export default function Loans() {
   useEffect(() => {
     if (!ledgerParam) return;
     const match = d.loans.find((l) => l.loanNumber === ledgerParam);
-    if (match) setLedger(match);
+    if (match) {
+      setLedger(match);
+      setPortfolioTab(match.status === 'CLOSED' ? 'closed' : 'active');
+    }
   }, [ledgerParam, d.loans]);
+
+  const setPortfolioTabAndUrl = (tab: PortfolioTab) => {
+    setPortfolioTab(tab);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (tab === 'closed') next.set('tab', 'closed');
+      else next.delete('tab');
+      if (next.get('status') === 'ACTIVE' || next.get('status') === 'CLOSED') next.delete('status');
+      return next;
+    }, { replace: true });
+  };
+
+  useEffect(() => {
+    if (portfolioTab === 'closed') setUrgency('all');
+    setPage(1);
+  }, [portfolioTab]);
   const [urgency, setUrgency] = useState<Urgency>(initialUrgency);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<LoanFilters>(initialFilters);
@@ -413,35 +438,44 @@ export default function Loans() {
    *  genuinely approaching. Overdue still applies to daily loans separately. */
   const countsForSoon = (l: Loan) => !isDailyLoan(l.type) && l.type !== 'DAILY_INTEREST';
 
-  const stats = useMemo(() => ({
-    count: d.loans.length,
-    outstanding: d.loans.reduce((s, l) => s + d.outstandingFor(l), 0),
-    overdue: d.loans.filter((l) => { const dd = dueInDaysOf(l); return dd != null && dd < 0; }).length,
-    soon: d.loans.filter((l) => { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); return dd != null && dd >= 0 && dd <= 3; }).length,
-    // Strictly TODAY — the same set the Dashboard's "Due Today" KPI counts.
-    dueToday: d.loans.filter((l) => dueInDaysOf(l) === 0).length,
-    // Upfront interest kept at disbursal, and the cash borrowers actually
-    // received. cashDisbursedFor() handles every type: only Daily Collection
-    // deducts, so for the rest deduction is ₹0 and given === principal.
-    deduction: d.loans.reduce((s, l) => s + Math.max(0, l.principal - cashDisbursedFor(l)), 0),
-    given: d.loans.reduce((s, l) => s + cashDisbursedFor(l), 0),
+  const activeLoans = useMemo(() => d.loans.filter((l) => l.status === 'ACTIVE'), [d.loans]);
+  const closedLoans = useMemo(() => d.loans.filter((l) => l.status === 'CLOSED'), [d.loans]);
+
+  const activeStats = useMemo(() => ({
+    count: activeLoans.length,
+    outstanding: activeLoans.reduce((s, l) => s + d.outstandingFor(l), 0),
+    overdue: activeLoans.filter((l) => { const dd = dueInDaysOf(l); return dd != null && dd < 0; }).length,
+    soon: activeLoans.filter((l) => { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); return dd != null && dd >= 0 && dd <= 3; }).length,
+    dueToday: activeLoans.filter((l) => dueInDaysOf(l) === 0).length,
+    deduction: activeLoans.reduce((s, l) => s + Math.max(0, l.principal - cashDisbursedFor(l)), 0),
+    given: activeLoans.reduce((s, l) => s + cashDisbursedFor(l), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [d.loans, d.collections]);
+  }), [activeLoans, d.collections]);
+
+  const closedStats = useMemo(() => ({
+    count: closedLoans.length,
+    collected: closedLoans.reduce((s, l) => s + d.collectedFor(l.id), 0),
+    principal: closedLoans.reduce((s, l) => s + l.principal, 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [closedLoans, d.collections]);
 
   /** Does a loan pass the toolbar state (urgency, query) plus a filter set? */
   const loanPasses = (l: Loan, f: LoanFilters): boolean => {
-    if (urgency === 'overdue') { const dd = dueInDaysOf(l); if (dd == null || dd >= 0) return false; }
-    if (urgency === 'today') { const dd = dueInDaysOf(l); if (dd !== 0) return false; }
-    if (urgency === 'soon') { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); if (dd == null || dd < 0 || dd > 3) return false; }
+    const wantActive = portfolioTab === 'active';
+    if (wantActive && l.status !== 'ACTIVE') return false;
+    if (!wantActive && l.status !== 'CLOSED') return false;
+    if (wantActive) {
+      if (urgency === 'overdue') { const dd = dueInDaysOf(l); if (dd == null || dd >= 0) return false; }
+      if (urgency === 'today') { const dd = dueInDaysOf(l); if (dd !== 0) return false; }
+      if (urgency === 'soon') { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); if (dd == null || dd < 0 || dd > 3) return false; }
+    }
     if (query.trim()) {
       const q = query.toLowerCase();
       if (!custName(l.customerId).toLowerCase().includes(q)
         && !l.loanNumber.toLowerCase().includes(q)
         && !LOAN_LABELS[l.type].toLowerCase().includes(q)) return false;
     }
-    if (f.status && l.status !== f.status) return false;
-    // Overdue facet — AND-ed with the toolbar's urgency chip, never replacing it.
-    if (f.overdue) {
+    if (wantActive && f.overdue) {
       const dd = dueInDaysOf(l);
       const isOver = dd != null && dd < 0;
       if (f.overdue === 'overdue' && !isOver) return false;
@@ -460,26 +494,29 @@ export default function Loans() {
     if (filters.sort === 'amount') r.sort((a, b) => d.outstandingFor(b) - d.outstandingFor(a));
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.loans, d.collections, d.customers, filters, urgency, query]);
+  }, [d.loans, d.collections, d.customers, filters, urgency, query, portfolioTab]);
 
   // Pagination (mirrors Customers). Reset to page 1 whenever the result set changes.
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageRows = rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  useEffect(() => { setPage(1); }, [query, urgency, filters, pageSize]);
+  useEffect(() => { setPage(1); }, [query, urgency, filters, pageSize, portfolioTab]);
 
   // Live count of what the drawer draft would match (respects urgency + search).
   const draftMatchCount = useMemo(
     () => d.loans.filter((l) => loanPasses(l, draft)).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [d.loans, d.collections, d.customers, draft, urgency, query],
+    [d.loans, d.collections, d.customers, draft, urgency, query, portfolioTab],
   );
 
-  const activeFilterCount = countLoanFilters(filters);
-  const filtersOn = activeFilterCount > 0 || urgency !== 'all' || !!query;
-  const activeLabel = urgency === 'overdue' ? 'overdue'
-    : urgency === 'today' ? 'due today'
-      : urgency === 'soon' ? 'due soon' : 'loans';
+  const scopeTotal = portfolioTab === 'active' ? activeLoans.length : closedLoans.length;
+  const activeFilterCount = countLoanFilters(filters, portfolioTab);
+  const filtersOn = activeFilterCount > 0 || (portfolioTab === 'active' && urgency !== 'all') || !!query;
+  const activeLabel = portfolioTab === 'closed'
+    ? 'closed loans'
+    : urgency === 'overdue' ? 'overdue'
+      : urgency === 'today' ? 'due today'
+        : urgency === 'soon' ? 'due soon' : 'active loans';
   const openFilters = () => { setDraft(filters); setFilterOpen(true); };
   const applyDraft = () => { setFilters(draft); setFilterOpen(false); };
 
@@ -602,31 +639,75 @@ export default function Loans() {
       <PageHeader
         icon={<Layers size={20} />}
         title="Loans"
-        subtitle={`${stats.count} loans across ${TYPE_OPTS.length} types · automatic interest`}
+        subtitle={
+          portfolioTab === 'active'
+            ? `${activeStats.count} active loans · ${TYPE_OPTS.length} product types`
+            : `${closedStats.count} closed loans · settlement register`
+        }
         actions={canEdit('Loans') ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openCreate}>Create Loan</HeaderPrimaryButton> : undefined}
       />
 
       <div className="flex min-w-0 w-full flex-1 flex-col gap-4 p-3.5 sm:px-5">
-        {/* Stat cards / triage filters */}
-        {/* 7 cards now — Deduction and Given to Borrower were added, so the
-            desktop grid steps to 7 to keep one row and avoid an orphan. */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setPortfolioTabAndUrl('active')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+              portfolioTab === 'active'
+                ? 'bg-gradient-to-r from-blue-700 to-blue-500 text-white shadow-[0_4px_14px_rgba(37,99,235,.35)]'
+                : 'border border-slate-200/90 bg-surface text-muted hover:border-primary/30 dark:border-white/[.07]',
+            )}
+          >
+            <Activity size={14} /> Active
+            <span className={cn(
+              'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+              portfolioTab === 'active' ? 'bg-white/25' : 'bg-slate-100 dark:bg-white/[.08]',
+            )}>
+              {activeLoans.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPortfolioTabAndUrl('closed')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+              portfolioTab === 'closed'
+                ? 'bg-gradient-to-r from-slate-700 to-slate-600 text-white shadow-[0_4px_14px_rgba(51,65,85,.35)]'
+                : 'border border-slate-200/90 bg-surface text-muted hover:border-primary/30 dark:border-white/[.07]',
+            )}
+          >
+            <CheckCircle2 size={14} /> Closed
+            <span className={cn(
+              'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+              portfolioTab === 'closed' ? 'bg-white/25' : 'bg-slate-100 dark:bg-white/[.08]',
+            )}>
+              {closedLoans.length}
+            </span>
+          </button>
+        </div>
+
+        {portfolioTab === 'active' ? (
         <div className="grid grid-cols-2 gap-2.5 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
-          <StatCard label="Total loans" value={String(stats.count)} accent="#6366f1" icon={<Layers size={16} />}
+          <StatCard label="Active loans" value={String(activeStats.count)} accent="#6366f1" icon={<Layers size={16} />}
             active={urgency === 'all'} onClick={() => setUrgency('all')} />
-          <StatCard label="Total outstanding" value={inr(stats.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={stats.outstanding} />
-          {/* Upfront interest kept, and the cash borrowers actually received.
-              Non-daily types deduct nothing, so Deduction reads ₹0 for them and
-              Given equals their principal — correct for every loan type. */}
-          <StatCard label="Deduction" value={inr(stats.deduction)} accent="#f59e0b" icon={<IndianRupee size={16} />} countUp={stats.deduction} />
-          <StatCard label="Given to borrower" value={inr(stats.given)} accent="#0891b2" icon={<Wallet size={16} />} countUp={stats.given} />
-          <StatCard label="Overdue" value={String(stats.overdue)} accent="#ef4444" icon={<AlertTriangle size={16} />}
+          <StatCard label="Total outstanding" value={inr(activeStats.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={activeStats.outstanding} />
+          <StatCard label="Deduction" value={inr(activeStats.deduction)} accent="#f59e0b" icon={<IndianRupee size={16} />} countUp={activeStats.deduction} />
+          <StatCard label="Given to borrower" value={inr(activeStats.given)} accent="#0891b2" icon={<Wallet size={16} />} countUp={activeStats.given} />
+          <StatCard label="Overdue" value={String(activeStats.overdue)} accent="#ef4444" icon={<AlertTriangle size={16} />}
             active={urgency === 'overdue'} onClick={() => setUrgency('overdue')} />
-          {/* Strictly today — the Dashboard's Due Today KPI links here. */}
-          <StatCard label="Due today" value={String(stats.dueToday)} accent="#0ea5e9" icon={<CalendarClock size={16} />}
+          <StatCard label="Due today" value={String(activeStats.dueToday)} accent="#0ea5e9" icon={<CalendarClock size={16} />}
             active={urgency === 'today'} onClick={() => setUrgency('today')} />
-          <StatCard label="Due within 3 days" value={String(stats.soon)} accent="#f59e0b" icon={<CalendarClock size={16} />}
+          <StatCard label="Due within 3 days" value={String(activeStats.soon)} accent="#f59e0b" icon={<CalendarClock size={16} />}
             active={urgency === 'soon'} onClick={() => setUrgency('soon')} />
         </div>
+        ) : (
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3 [&>*]:min-w-0">
+          <StatCard label="Closed loans" value={String(closedStats.count)} accent="#64748b" icon={<CheckCircle2 size={16} />} />
+          <StatCard label="Total collected" value={inr(closedStats.collected)} accent="#10b981" icon={<IndianRupee size={16} />} countUp={closedStats.collected} />
+          <StatCard label="Principal disbursed" value={inr(closedStats.principal)} accent="#6366f1" icon={<Wallet size={16} />} countUp={closedStats.principal} />
+        </div>
+        )}
 
         {/* Toolbar */}
         <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -683,12 +764,18 @@ export default function Loans() {
                 <Layers size={26} />
               </div>
               <h3 className="text-base font-semibold text-ink">
-                {d.loans.length === 0 ? 'No loans disbursed' : 'No matching loans'}
+                {scopeTotal === 0
+                  ? (portfolioTab === 'active' ? 'No active loans' : 'No closed loans')
+                  : 'No matching loans'}
               </h3>
               <p className="mt-1 max-w-xs text-sm text-muted">
-                {d.loans.length === 0 ? 'Create your first loan to get started.' : 'Try a different search or clear the filter.'}
+                {scopeTotal === 0
+                  ? (portfolioTab === 'active'
+                    ? 'Closed loans appear under the Closed tab. Create a loan to start the active book.'
+                    : 'Settled loans will appear here after closure.')
+                  : 'Try a different search or clear the filter.'}
               </p>
-              {d.loans.length === 0 && canEdit('Loans') && (
+              {portfolioTab === 'active' && d.loans.length === 0 && canEdit('Loans') && (
                 <Button onClick={openCreate} className="mt-5 !min-h-[44px]"><Plus size={16} /> Create loan</Button>
               )}
             </div>
@@ -812,7 +899,7 @@ export default function Loans() {
         width="md"
         icon={<SlidersHorizontal size={18} />}
         title="Filter loans"
-        subtitle="Combine type, portfolio and status criteria"
+        subtitle={portfolioTab === 'active' ? 'Refine the active book' : 'Refine the closed register'}
         footer={
           <>
             <Button variant="ghost" onClick={() => setDraft(defaultLoanFilters())}>Clear all</Button>
@@ -823,8 +910,8 @@ export default function Loans() {
         <div className="space-y-5">
           <MatchPreview
             matched={draftMatchCount}
-            total={d.loans.length}
-            activeCount={countLoanFilters(draft)}
+            total={scopeTotal}
+            activeCount={countLoanFilters(draft, portfolioTab)}
             itemLabel="loans"
             onClear={() => setDraft(defaultLoanFilters())}
           />
@@ -874,22 +961,15 @@ export default function Loans() {
             </div>
           </FilterCard>
 
-          {/* Status */}
-          <FilterCard icon={<Activity size={16} />} title="Loan status" color="blue" active={!!draft.status}>
-            <SegGroup>
-              <Seg active={draft.status === ''} onClick={() => setDraft({ ...draft, status: '' })}>All</Seg>
-              <Seg active={draft.status === 'ACTIVE'} onClick={() => setDraft({ ...draft, status: 'ACTIVE' })} tone="emerald">Active</Seg>
-              <Seg active={draft.status === 'CLOSED'} onClick={() => setDraft({ ...draft, status: 'CLOSED' })}>Closed</Seg>
-            </SegGroup>
-          </FilterCard>
-
-          <FilterCard icon={<AlertTriangle size={16} />} title="Repayment" color="amber" active={!!draft.overdue}>
-            <SegGroup>
-              <Seg active={draft.overdue === ''} onClick={() => setDraft({ ...draft, overdue: '' })}>All</Seg>
-              <Seg active={draft.overdue === 'overdue'} onClick={() => setDraft({ ...draft, overdue: 'overdue' })} tone="amber">Overdue</Seg>
-              <Seg active={draft.overdue === 'ontrack'} onClick={() => setDraft({ ...draft, overdue: 'ontrack' })} tone="emerald">On track</Seg>
-            </SegGroup>
-          </FilterCard>
+          {portfolioTab === 'active' && (
+            <FilterCard icon={<AlertTriangle size={16} />} title="Repayment" color="amber" active={!!draft.overdue}>
+              <SegGroup>
+                <Seg active={draft.overdue === ''} onClick={() => setDraft({ ...draft, overdue: '' })}>All</Seg>
+                <Seg active={draft.overdue === 'overdue'} onClick={() => setDraft({ ...draft, overdue: 'overdue' })} tone="amber">Overdue</Seg>
+                <Seg active={draft.overdue === 'ontrack'} onClick={() => setDraft({ ...draft, overdue: 'ontrack' })} tone="emerald">On track</Seg>
+              </SegGroup>
+            </FilterCard>
+          )}
         </div>
       </Drawer>
 
@@ -1181,18 +1261,18 @@ function LoanCard({
         onClick={onStatement}
         className="flex w-full items-start gap-4 border-b border-slate-100/90 bg-gradient-to-b from-slate-50/40 to-transparent px-5 py-4 text-left transition-colors hover:from-slate-50/70 dark:border-white/[.06] dark:from-white/[.02] dark:hover:from-white/[.04]"
       >
-        <div className="relative shrink-0">
-          <div
-            className="grid h-11 w-11 place-items-center rounded-xl border text-[13px] font-bold shadow-sm"
-            style={{ background: typeMeta.bg, borderColor: typeMeta.bd, color: typeMeta.fg }}
-          >
-            {initials(borrowerName)}
-          </div>
+        <CustomerAvatar
+          customerId={loan.customerId}
+          name={borrowerName}
+          className="h-11 w-11 rounded-xl border shadow-sm"
+          textClassName="text-[13px]"
+          fallbackStyle={{ background: typeMeta.bg, borderColor: typeMeta.bd, color: typeMeta.fg, borderWidth: 1, borderStyle: 'solid' }}
+        >
           <span
             className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface"
             style={{ background: typeMeta.dot }}
           />
-        </div>
+        </CustomerAvatar>
 
         <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto] gap-x-2 gap-y-1">
           <h3 className="col-start-1 row-start-1 truncate text-[15px] font-bold leading-tight text-ink group-hover:text-primary">

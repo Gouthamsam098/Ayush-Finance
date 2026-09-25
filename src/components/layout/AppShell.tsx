@@ -61,6 +61,8 @@ export function AppShell() {
   const d = useData();
   const user = useSelector((s: RootState) => s.auth.user);
   const isAdmin = user?.role === 'ADMIN';
+  const isRecoveryAgent = user?.role === 'RECOVERY_AGENT';
+  const isCustomer = user?.role === 'CUSTOMER';
   // Merge UI-only Reports access (backend Modules omit Reports).
   const perms = useMemo(
     () => (user ? withUiModuleAccess(user.id, user.role, user.permissions ?? {}) : {}),
@@ -69,13 +71,15 @@ export function AppShell() {
   // A nav item is visible when: admin (sees all), or the module isn't restricted,
   // or the viewer has view/edit (not 'none') on that module.
   const canSee = (it: NavItem) => {
+    if (isCustomer) return false;
+    if (isRecoveryAgent) return it.to === '/collections';
     if (isAdmin) return true;
     if (it.adminOnly) return false;
     if (!it.module) return true;
     return (perms[it.module] ?? 'none') !== 'none';
   };
   const displayName = user?.fullName?.trim() || user?.username || 'User';
-  const roleLabel = user?.role === 'ADMIN' ? 'Admin' : 'Viewer';
+  const roleLabel = user?.role === 'ADMIN' ? 'Admin' : user?.role === 'RECOVERY_AGENT' ? 'Recovery agent' : user?.role === 'CUSTOMER' ? 'Customer' : 'Viewer';
   const initials = displayName
     .split(/\s+/)
     .filter(Boolean)
@@ -100,7 +104,7 @@ export function AppShell() {
 
   return (
     <OpenSidebarCtx.Provider value={() => setMobileOpen(true)}>
-    <div className="flex h-dvh overflow-hidden bg-slate-50 dark:bg-[#080b14]">
+    <div className="flex min-h-app h-dvh overflow-hidden bg-slate-50 dark:bg-[#080b14]">
       {/* Mobile/tablet overlay — tap to dismiss the off-canvas sidebar */}
       {mobileOpen && (
         <div
@@ -263,7 +267,7 @@ export function AppShell() {
 
       {/* ── Main content ────────────────────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain pb-safe">
           <Outlet />
         </main>
       </div>

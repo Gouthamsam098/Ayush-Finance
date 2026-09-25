@@ -15,11 +15,23 @@ export type Access = 'none' | 'view' | 'edit';
 export function usePermissions() {
   const user = useSelector((s: RootState) => s.auth.user);
   const isAdmin = user?.role === 'ADMIN';
-  const perms = withUiModuleAccess(user?.id ?? 0, user?.role, user?.permissions ?? {});
+  const isRecoveryAgent = user?.role === 'RECOVERY_AGENT';
+  const isCustomer = user?.role === 'CUSTOMER';
+  const perms = withUiModuleAccess(user?.id ?? 0, user?.role as import('@/services/userApi').UserRole | undefined, user?.permissions ?? {});
 
-  const access = (module: string): Access => (isAdmin ? 'edit' : (perms[module] as Access) ?? 'none');
-  const canView = (module: string) => isAdmin || access(module) === 'view' || access(module) === 'edit';
-  const canEdit = (module: string) => isAdmin || access(module) === 'edit';
+  const access = (module: string): Access => {
+    if (isAdmin) return 'edit';
+    if (isCustomer) return 'none';
+    if (isRecoveryAgent) return module === 'Collections' ? 'edit' : 'none';
+    return (perms[module] as Access) ?? 'none';
+  };
+  const canView = (module: string) => !isCustomer && (isAdmin
+    || (isRecoveryAgent && module === 'Collections')
+    || access(module) === 'view'
+    || access(module) === 'edit');
+  const canEdit = (module: string) => !isCustomer && (isAdmin
+    || (isRecoveryAgent && module === 'Collections')
+    || access(module) === 'edit');
 
-  return { isAdmin, access, canView, canEdit };
+  return { isAdmin, isRecoveryAgent, isCustomer, access, canView, canEdit };
 }

@@ -15,8 +15,15 @@ import { fmtDate } from '@/lib/format';
 import { ApiError } from '@/lib/api';
 import { userApi, MODULES, type ManagedUser, type UserRole, type Access, type Permissions } from '@/services/userApi';
 import {
-  listMockUsers, saveMockUser, setMockUserActive, removeMockUser, type MockUser,
+  listMockUsers, saveMockUser, setMockUserActive, removeMockUser, getMockUserLinkedCustomerId,
+  findPortalUserForCustomer, mockUserPasswordIsSet, type MockUser,
 } from '@/lib/mockUsers';
+import { CustomerLinkPicker } from '@/features/customer-portal/components/CustomerLinkPicker';
+import type { AppUserRole } from '@/types/appUser';
+import { useRecovery } from '@/features/recovery/RecoveryContext';
+import { AgentLoanAssignment } from '@/features/recovery/components/AgentLoanAssignment';
+import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
+import { RecoveryAutoAssignScheduleCard } from '@/features/recovery/components/RecoveryAutoAssignScheduleCard';
 import { clearUiReportsAccess, setUiReportsAccess, withUiModuleAccess } from '@/lib/uiModuleAccess';
 import {
   UserPlus, Trash2, Settings as SettingsIcon, Pencil, Plus, Users as UsersIcon, Loader2, ShieldCheck,
@@ -52,22 +59,32 @@ function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean
   );
 }
 
-const ROLE_PILL: Record<UserRole, string> = {
+const ROLE_PILL: Record<AppUserRole, string> = {
   ADMIN: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
   VIEWER: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
+  RECOVERY_AGENT: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300',
+  CUSTOMER: 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300',
 };
-const roleLabel = (r: UserRole) => (r === 'ADMIN' ? 'Admin' : 'Viewer');
+const roleLabel = (r: string) => (
+  r === 'ADMIN' ? 'Admin' : r === 'RECOVERY_AGENT' ? 'Recovery agent' : r === 'CUSTOMER' ? 'Customer portal' : 'Viewer'
+);
 
-interface FormState { id?: number; email: string; fullName: string; password: string; confirm: string; role: UserRole; permissions: Permissions; }
+interface FormState {
+  id?: number; email: string; fullName: string; password: string; confirm: string;
+  role: AppUserRole; permissions: Permissions; assignedLoanIds: number[];
+  linkedCustomerId: number | null;
+}
 const emptyPerms = (): Permissions => Object.fromEntries(MODULES.map((m) => [m, 'none' as Access]));
-const blankForm = (): FormState => ({ email: '', fullName: '', password: '', confirm: '', role: 'VIEWER', permissions: emptyPerms() });
+const blankForm = (): FormState => ({
+  email: '', fullName: '', password: '', confirm: '', role: 'VIEWER', permissions: emptyPerms(), assignedLoanIds: [], linkedCustomerId: null,
+});
 
 function fromMock(u: MockUser): ManagedUser {
   return {
     id: u.id,
     email: u.email,
     fullName: u.fullName,
-    role: u.role,
+    role: u.role as UserRole,
     permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
     isActive: u.isActive,
     createdAt: u.createdAt,
@@ -77,7 +94,7 @@ function fromMock(u: MockUser): ManagedUser {
 export default function Settings() {
   const toast = useToast();
   const me = useSelector((s: RootState) => s.auth.user);
-
+  const recovery = useRecovery();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState | null>(null);
@@ -116,18 +133,52 @@ export default function Settings() {
     fullName: u.fullName,
     password: '',
     confirm: '',
-    role: u.role,
+    role: u.role as AppUserRole,
     permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
+    assignedLoanIds: recovery.getAssignments(u.id),
+    linkedCustomerId: getMockUserLinkedCustomerId(u.id) ?? null,
   });
   const setPerm = (module: string, access: Access) => setForm((f) => (f ? { ...f, permissions: { ...f.permissions, [module]: access } } : f));
+
+  const emailHasComma = (email: string) => email.includes(',');
 
   const save = async () => {
     if (!form) return;
     if (!form.email.trim() || !form.fullName.trim()) { toast('Email and name are required', 'error'); return; }
+    if (emailHasComma(form.email)) {
+      toast('Email cannot contain a comma. Enter one address only.', 'error');
+      return;
+    }
     const creating = form.id == null;
     if (creating || form.password) {
       if (form.password.length < 8) { toast('Password must be at least 8 characters', 'error'); return; }
       if (form.password !== form.confirm) { toast('Passwords do not match', 'error'); return; }
+    }
+    if (form.role === 'RECOVERY_AGENT' && config.useApi) {
+      toast('Recovery agents are available in demo mode until the backend role is released.', 'error');
+      return;
+    }
+    if (form.role === 'CUSTOMER' && config.useApi) {
+      toast('Customer portal accounts are available in demo mode only.', 'error');
+      return;
+    }
+    if (form.role === 'CUSTOMER' && form.linkedCustomerId == null) {
+      toast('Select the customer record for this portal login', 'error');
+      return;
+    }
+    if (form.role === 'CUSTOMER' && findPortalUserForCustomer(form.linkedCustomerId!, form.id)) {
+      toast('Another portal user is already linked to that customer', 'error');
+      return;
+    }
+    if (
+      !config.useApi
+      && form.role === 'CUSTOMER'
+      && form.id != null
+      && !form.password
+      && !mockUserPasswordIsSet(form.id)
+    ) {
+      toast('Set a password for this customer portal login', 'error');
+      return;
     }
     setSaving(true);
     try {
@@ -138,10 +189,16 @@ export default function Settings() {
           email: form.email.trim(),
           fullName: form.fullName.trim(),
           role: form.role,
-          permissions: form.permissions,
+          permissions: form.role === 'RECOVERY_AGENT' || form.role === 'CUSTOMER' ? emptyPerms() : form.permissions,
           password: form.password || undefined,
           isActive: creating ? true : users.find((u) => u.id === form.id)?.isActive,
+          linkedCustomerId: form.role === 'CUSTOMER' ? form.linkedCustomerId : null,
         });
+        if (form.role === 'RECOVERY_AGENT') {
+          recovery.assignLoans(saved.id, form.assignedLoanIds);
+        } else if (form.id != null) {
+          recovery.clearAgent(saved.id);
+        }
         setUiReportsAccess(saved.id, reportsAccess);
         toast(creating ? 'User created' : 'User updated');
         setForm(null);
@@ -149,12 +206,12 @@ export default function Settings() {
         return;
       }
       if (creating) {
-        const created = await userApi.create({ email: form.email.trim(), fullName: form.fullName.trim(), password: form.password, role: form.role, permissions: form.permissions });
+        const created = await userApi.create({ email: form.email.trim(), fullName: form.fullName.trim(), password: form.password, role: form.role as UserRole, permissions: form.permissions });
         setUiReportsAccess(created.id, reportsAccess);
         toast('User created');
       } else {
         const existing = users.find((u) => u.id === form.id)!;
-        await userApi.update(form.id!, { email: form.email.trim(), fullName: form.fullName.trim(), role: form.role, permissions: form.permissions, isActive: existing.isActive, password: form.password || undefined });
+        await userApi.update(form.id!, { email: form.email.trim(), fullName: form.fullName.trim(), role: form.role as UserRole, permissions: form.permissions, isActive: existing.isActive, password: form.password || undefined });
         setUiReportsAccess(form.id!, reportsAccess);
         toast('User updated');
       }
@@ -191,6 +248,7 @@ export default function Settings() {
     try {
       if (!config.useApi) {
         removeMockUser(u.id);
+        recovery.clearAgent(u.id);
         clearUiReportsAccess(u.id);
         toast('User removed', 'info');
         setConfirmDel(null);
@@ -236,6 +294,10 @@ export default function Settings() {
       />
 
       <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
+        {hasActiveRecoveryAgents() && (
+          <RecoveryAutoAssignScheduleCard assignmentVersion={recovery.assignmentVersion} />
+        )}
+
         <Card className="anim-pop">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><UserPlus size={17} className="text-primary" /> User Management</CardTitle>
@@ -281,7 +343,7 @@ export default function Settings() {
                         </td>
                         <td className="px-5 py-4 text-[13px] text-muted">{u.email}</td>
                         <td className="px-5 py-4">
-                          <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold', ROLE_PILL[u.role])}>
+                          <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold', ROLE_PILL[u.role as AppUserRole] ?? ROLE_PILL.VIEWER)}>
                             <span className="h-1.5 w-1.5 rounded-full bg-current opacity-50" />{roleLabel(u.role)}
                           </span>
                         </td>
@@ -315,22 +377,80 @@ export default function Settings() {
         wide
         title={form?.id ? 'Edit user' : 'Add user'}
         subtitle={form?.id ? 'Update details, role or password' : 'Create a new account and assign a role'}
-        footer={<><Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button><Button onClick={save} loading={saving}><UserPlus size={15} /> {form?.id ? 'Save changes' : 'Add user'}</Button></>}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button>
+            <Button
+              onClick={save}
+              loading={saving}
+              disabled={!!form && emailHasComma(form.email)}
+            >
+              <UserPlus size={15} /> {form?.id ? 'Save changes' : 'Add user'}
+            </Button>
+          </>
+        }
       >
         {form && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input label="Full name *" placeholder="e.g. Ramesh Kumar" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} />
-              <Input label="Email *" type="email" placeholder="user@example.com" value={form.email} onChange={(e) => set('email', e.target.value)} />
+              <Input
+                label="Email *"
+                type="email"
+                placeholder="user@example.com"
+                value={form.email}
+                onChange={(e) => set('email', e.target.value)}
+                error={
+                  emailHasComma(form.email)
+                    ? 'Commas are not allowed. Use a single email address (not a list).'
+                    : undefined
+                }
+              />
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Input label={form.id ? 'New password' : 'Password *'} type="password" placeholder={form.id ? 'Leave blank to keep' : 'Min 8 characters'} value={form.password} onChange={(e) => set('password', e.target.value)} />
-              <Input label={form.id ? 'Confirm new password' : 'Confirm password *'} type="password" placeholder="Re-enter password" value={form.confirm} onChange={(e) => set('confirm', e.target.value)} />
+              <Input
+                revealPassword
+                label={form.id ? 'New password' : 'Password *'}
+                placeholder={form.id ? 'Leave blank to keep' : 'Min 8 characters'}
+                value={form.password}
+                onChange={(e) => set('password', e.target.value)}
+              />
+              <Input
+                revealPassword
+                label={form.id ? 'Confirm new password' : 'Confirm password *'}
+                placeholder="Re-enter password"
+                value={form.confirm}
+                onChange={(e) => set('confirm', e.target.value)}
+              />
             </div>
-            <Select label="Role" value={form.role} onChange={(e) => set('role', e.target.value as UserRole)} options={[{ value: 'VIEWER', label: 'Viewer — customise module access' }, { value: 'ADMIN', label: 'Admin — full access + user management' }]} />
+            <Select
+              label="Role"
+              value={form.role}
+              onChange={(e) => set('role', e.target.value as AppUserRole)}
+              options={[
+                { value: 'VIEWER', label: 'Viewer — customise module access' },
+                { value: 'ADMIN', label: 'Admin — full access + user management' },
+                ...(!config.useApi ? [
+                  { value: 'RECOVERY_AGENT', label: 'Recovery agent — collections field access' },
+                  { value: 'CUSTOMER', label: 'Customer — borrower portal (own data only)' },
+                ] : []),
+              ]}
+            />
             {form.id === me?.id && <p className="text-[12px] text-amber-600 dark:text-amber-400">You cannot change your own role or disable yourself.</p>}
 
-            {form.role === 'ADMIN' ? (
+            {form.role === 'RECOVERY_AGENT' ? (
+              <AgentLoanAssignment
+                agentUserId={form.id}
+                selectedLoanIds={form.assignedLoanIds}
+                onChange={(ids) => setForm((f) => (f ? { ...f, assignedLoanIds: ids } : f))}
+              />
+            ) : form.role === 'CUSTOMER' ? (
+              <CustomerLinkPicker
+                portalUserId={form.id}
+                selectedCustomerId={form.linkedCustomerId}
+                onChange={(id) => setForm((f) => (f ? { ...f, linkedCustomerId: id } : f))}
+              />
+            ) : form.role === 'ADMIN' ? (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-[12.5px] text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/[.08] dark:text-emerald-300">
                 Admins have full edit access to every module.
               </div>

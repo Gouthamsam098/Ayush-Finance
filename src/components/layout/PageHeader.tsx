@@ -17,7 +17,7 @@ export function PageHeader({
 }) {
   const openSidebar = useOpenSidebar();
   return (
-    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-blue-50 via-white to-blue-50 px-3.5 py-4 sm:px-5 sm:py-5 dark:border-transparent dark:from-[#0c1220] dark:via-[#111a30] dark:to-[#0c1220]">
+    <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-r from-blue-50 via-white to-blue-50 px-safe pt-safe pb-4 sm:px-5 sm:py-5 dark:border-transparent dark:from-[#0c1220] dark:via-[#111a30] dark:to-[#0c1220]">
       {/* Indigo glow wash + decorative geometry */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <span className="absolute -left-16 top-1/2 h-64 w-64 -translate-y-1/2 rounded-full bg-blue-500/10 blur-3xl dark:bg-blue-600/20" />

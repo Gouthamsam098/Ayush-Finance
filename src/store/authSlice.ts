@@ -1,4 +1,5 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import type { AppUserRole } from '@/types/appUser';
 
 export type AuthStage = 'PASSWORD_CHANGE' | 'TOTP_SETUP' | 'TOTP_REQUIRED' | null;
 
@@ -6,8 +7,10 @@ interface AuthState {
   accessToken: string | null;
   user: {
     id: number; username: string; fullName: string;
-    role: 'ADMIN' | 'VIEWER';
+    role: AppUserRole;
     permissions: Record<string, 'none' | 'view' | 'edit'>;
+    /** Demo portal: borrower record linked in Settings (mock only). */
+    customerId?: number;
   } | null;
   preAuthToken: string | null;
   stage: AuthStage;

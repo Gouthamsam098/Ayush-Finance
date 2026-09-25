@@ -24,3 +24,18 @@ export function ModuleRoute({ module }: { module: string }) {
   if (!canView(module)) return <Navigate to="/" replace />;
   return <Outlet />;
 }
+
+/** Blocks recovery agents from staff-only routes (they use Collections only). */
+export function StaffOnlyRoute() {
+  const role = useSelector((s: RootState) => s.auth.user?.role);
+  if (role === 'RECOVERY_AGENT') return <Navigate to="/collections" replace />;
+  if (role === 'CUSTOMER') return <Navigate to="/portal" replace />;
+  return <Outlet />;
+}
+
+/** Borrower portal — only CUSTOMER role may access /portal. */
+export function CustomerPortalRoute() {
+  const role = useSelector((s: RootState) => s.auth.user?.role);
+  if (role !== 'CUSTOMER') return <Navigate to="/" replace />;
+  return <Outlet />;
+}

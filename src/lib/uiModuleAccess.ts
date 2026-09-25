@@ -43,9 +43,22 @@ export function clearUiReportsAccess(userId: number) {
 /** Merge UI-only Reports access into a permission map for display / RBAC. */
 export function withUiModuleAccess(
   userId: number,
-  role: UserRole | undefined,
+  role: UserRole | 'RECOVERY_AGENT' | 'CUSTOMER' | undefined,
   permissions: Permissions,
 ): Permissions {
   if (role === 'ADMIN') return permissions;
+  if (role === 'CUSTOMER') {
+    return Object.fromEntries(
+      ['Dashboard', 'Customers', 'Loans', 'Collections', 'Expenses', 'Documents', 'Reports', 'Settings'].map((m) => [m, 'none']),
+    ) as Permissions;
+  }
+  if (role === 'RECOVERY_AGENT') {
+    return Object.fromEntries(
+      ['Dashboard', 'Customers', 'Loans', 'Collections', 'Expenses', 'Documents', 'Reports', 'Settings'].map((m) => [
+        m,
+        m === 'Collections' ? 'edit' : 'none',
+      ]),
+    ) as Permissions;
+  }
   return { ...permissions, Reports: getUiReportsAccess(userId) };
 }

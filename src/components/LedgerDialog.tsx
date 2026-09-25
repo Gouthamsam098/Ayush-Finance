@@ -12,7 +12,8 @@ import { ApiError } from '@/lib/api';
 import { usePermissions } from '@/lib/permissions';
 // pdfReport (jsPDF) is imported dynamically inside generateReport — see there.
 import { buildSchedule } from '@/lib/loanSchedule';
-import { inr, fmtDate, todayISO, initials, isoLocal, addDays, addMonths, DAILY_TERM } from '@/lib/format';
+import { inr, fmtDate, todayISO, isoLocal, addDays, addMonths, DAILY_TERM } from '@/lib/format';
+import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { cn } from '@/lib/utils';
 import { whatsappHref, paymentRequestMessage, resolveCustomerMobile } from '@/lib/whatsapp';
 import { Plus, Pencil, Phone, FileDown, Share2, LayoutList, Table2, IndianRupee, Banknote, Smartphone, Landmark, ScrollText, Calendar, CheckCircle2, Wallet } from 'lucide-react';
@@ -1069,7 +1070,12 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
       {/* Customer information */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
         <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-blue-400 to-primary text-sm font-bold text-white">{initials(cust?.name ?? '—')}</div>
+          <CustomerAvatar
+            customerId={cust?.id}
+            name={cust?.name ?? '—'}
+            className="h-11 w-11 rounded-xl text-sm"
+            fallbackStyle={{ background: 'linear-gradient(to bottom right, rgb(96 165 250), rgb(var(--primary)))', color: '#fff' }}
+          />
           <div>
             <div className="font-display text-base font-bold">{cust?.name ?? '—'}</div>
             <div className="flex items-center gap-1.5 text-xs text-muted"><Phone size={12} /> {customerMobile || '—'}</div>

@@ -93,7 +93,7 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
     : 'absolute inset-0 bg-slate-950/60 backdrop-blur-md';
 
   return (
-    <div className={`fixed inset-0 ${shellZ} flex items-center justify-center p-3 sm:p-4 md:p-6`} onClick={onClose}>
+    <div className={`fixed inset-0 ${shellZ} flex items-end justify-center px-safe pb-safe pt-safe sm:items-center sm:p-4 md:p-6`} onClick={onClose}>
       <div className={backdropClass} />
       <div
         ref={panelRef}
@@ -107,7 +107,7 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
         // holds the confirm action — could sit under the browser chrome.
         // min-w-0 + calc width: iPad Air / tablet split-view must not let
         // native date controls blow past the panel and misalign Remarks, etc.
-        className={`relative flex max-h-[90dvh] w-full min-w-0 flex-col overflow-hidden rounded-card border border-slate-200/70 dark:border-white/[.08] bg-white dark:bg-surface shadow-[0_24px_70px_-20px_rgba(0,0,0,.35)] dark:shadow-[0_24px_70px_-20px_rgba(0,0,0,.7)] animate-rise ${xl ? 'max-w-[min(84rem,calc(100vw-1.5rem))]' : wide ? 'max-w-[min(48rem,calc(100vw-1.5rem))]' : 'max-w-[min(32rem,calc(100vw-1.5rem))]'}`}
+        className={`relative flex max-h-[min(90dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem))] w-full min-w-0 flex-col overflow-hidden rounded-t-[1.25rem] border border-slate-200/70 dark:border-white/[.08] bg-white dark:bg-surface shadow-[0_24px_70px_-20px_rgba(0,0,0,.35)] dark:shadow-[0_24px_70px_-20px_rgba(0,0,0,.7)] animate-rise sm:rounded-card ${xl ? 'max-w-[min(84rem,calc(100vw-1.5rem))]' : wide ? 'max-w-[min(48rem,calc(100vw-1.5rem))]' : 'max-w-[min(32rem,calc(100vw-1.5rem))]'}`}
       >
         <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/[.06] px-4 py-4 sm:px-6">
           <div className="min-w-0 pr-3">

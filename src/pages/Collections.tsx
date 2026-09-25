@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { Navigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import type { RootState } from '@/store';
+import { config } from '@/lib/config';
 import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, behavesInterestOnly, isEmiLoan, type LoanType, type Loan } from '@/mock/DataContext';
+import { CollectionsAgentView } from '@/features/recovery/CollectionsAgentView';
+import { RecoveryQueuePanel } from '@/features/recovery/components/RecoveryQueuePanel';
+import { useRecovery } from '@/features/recovery/RecoveryContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { StatCard } from '@/components/ui/stat-card';
@@ -7,9 +14,12 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { LedgerDialog } from '@/components/LedgerDialog';
 import { usePermissions } from '@/lib/permissions';
 import { CollectionProgress } from '@/components/CollectionProgress';
-import { inr, inrShort, fmtDate, todayISO, isoLocal, initials, DAILY_TERM, addDays } from '@/lib/format';
+import { inr, inrShort, fmtDate, todayISO, isoLocal, DAILY_TERM, addDays } from '@/lib/format';
+import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { cn } from '@/lib/utils';
-import { Search, X, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins } from 'lucide-react';
+import { Search, X, ScrollText, Inbox, Layers, Wallet, TrendingUp, CalendarClock, HandCoins, ShieldCheck, UserCheck, ChevronDown } from 'lucide-react';
+import { recoveryAgentNameByLoanId } from '@/features/recovery/agentLookup';
+import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
 
 
 /** Days denominator for the progress bar: daily loans use their term, Flexible uses its chosen days, everything else a 30-day cycle. */
@@ -51,9 +61,18 @@ function endDateLabelFor(l: Loan): string {
 
 
 export default function Collections() {
+  const authUser = useSelector((s: RootState) => s.auth.user);
+  const recovery = useRecovery();
+  /** Demo recovery (assignments, queue, agent login) — works with API loans when agents exist in mockUsers. */
+  const recoveryDemo = !config.useApi || hasActiveRecoveryAgents();
   const d = useData();
   const { canEdit } = usePermissions();
   const canCollect = canEdit('Collections');
+  const isAdmin = authUser?.role === 'ADMIN';
+  const pendingRecovery = recoveryDemo
+    ? recovery.submissions.filter((s) => s.type === 'COLLECTION_CLAIM' && s.status === 'PENDING').length
+    : 0;
+  const [staffTab, setStaffTab] = useState<'portfolio' | 'recovery'>('portfolio');
   const [typeFilter, setTypeFilter] = useState<LoanType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
   const [ledger, setLedger] = useState<Loan | null>(null);
@@ -112,6 +131,14 @@ export default function Collections() {
   // list to 4 loans must not leave the collector staring at an empty page 3.
   useEffect(() => { setPage(1); }, [search, typeFilter, pageSize]);
 
+  const refreshRecoveryQueue = useCallback(() => {
+    if (recoveryDemo) recovery.refresh();
+  }, [recoveryDemo, recovery]);
+
+  useEffect(() => {
+    refreshRecoveryQueue();
+  }, [refreshRecoveryQueue]);
+
   const counts = useMemo(() => {
     const activeLoans = d.loans.filter((l) => l.status === 'ACTIVE');
     const m: Record<string, number> = { ALL: activeLoans.length };
@@ -137,11 +164,18 @@ export default function Collections() {
     };
   }, [d]);
 
+  if (authUser?.role === 'CUSTOMER') {
+    return <Navigate to="/portal" replace />;
+  }
 
+  if (authUser?.role === 'RECOVERY_AGENT') {
+    return <CollectionsAgentView />;
+  }
 
-
-
-
+  const recoveryAgentByLoan = useMemo(
+    () => (recoveryDemo ? recoveryAgentNameByLoanId() : {}),
+    [recoveryDemo, recovery.assignmentVersion],
+  );
 
   return (
     <div className="flex min-h-full min-w-0 w-full flex-col">
@@ -149,10 +183,62 @@ export default function Collections() {
       <PageHeader
         icon={<HandCoins size={20} />}
         title="Collections"
-        subtitle={`${d.collections.length} payments recorded · ${kpis.activeCount} active loans`}
+        subtitle={staffTab === 'recovery' && recoveryDemo
+          ? `${pendingRecovery} pending agent submission${pendingRecovery === 1 ? '' : 's'}`
+          : `${d.collections.length} payments recorded · ${kpis.activeCount} active loans`}
       />
 
       <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      {recoveryDemo && isAdmin && pendingRecovery > 0 && staffTab === 'portfolio' && (
+        <button
+          type="button"
+          onClick={() => setStaffTab('recovery')}
+          className="anim-pop flex w-full items-center justify-between gap-3 rounded-xl border border-warning/35 bg-warning-50/90 px-4 py-3 text-left transition-colors hover:bg-warning-50 dark:border-warning/30 dark:bg-warning/10"
+        >
+          <span className="text-[13px] font-semibold text-ink">
+            <ShieldCheck size={16} className="mr-2 inline text-warning" aria-hidden />
+            {pendingRecovery} recovery payment{pendingRecovery === 1 ? '' : 's'} awaiting your approval
+          </span>
+          <span className="shrink-0 text-[12px] font-bold text-primary">Open queue →</span>
+        </button>
+      )}
+
+      {recoveryDemo && isAdmin && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setStaffTab('portfolio')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+              staffTab === 'portfolio'
+                ? 'bg-gradient-to-r from-blue-700 to-blue-500 text-white shadow-[0_4px_14px_rgba(37,99,235,.35)]'
+                : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
+            )}
+          >
+            <HandCoins size={14} /> Portfolio
+          </button>
+          <button
+            type="button"
+            onClick={() => setStaffTab('recovery')}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+              staffTab === 'recovery'
+                ? 'bg-gradient-to-r from-emerald-700 to-teal-600 text-white shadow-[0_4px_14px_rgba(16,185,129,.35)]'
+                : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
+            )}
+          >
+            <ShieldCheck size={14} /> Recovery queue
+            {pendingRecovery > 0 && (
+              <span className="rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-bold">{pendingRecovery}</span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {staffTab === 'recovery' && recoveryDemo && isAdmin ? (
+        <RecoveryQueuePanel />
+      ) : (
+        <>
       {/* KPI strip — real portfolio metrics */}
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 [&>*]:min-w-0">
         <StatCard label="Active loans" value={String(kpis.activeCount)} accent="#6366f1" icon={<Layers size={16} />} />
@@ -210,7 +296,7 @@ export default function Collections() {
         <EmptyState typed={typeFilter !== 'ALL'} searched={search} onClearSearch={() => setSearch('')} />
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
+          <div className="grid grid-cols-1 items-start gap-3.5 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
             {loansToShow.map((l, idx) => (
               <CollectionCard
                 key={l.id}
@@ -218,14 +304,15 @@ export default function Collections() {
                 d={d}
                 delay={Math.min(idx, 8) * 40}
                 canCollect={canCollect}
+                recoveryAgentName={recoveryAgentByLoan[l.id]}
                 onView={() => openLedger(l)}
                 onPayNow={() => payNow(l)}
               />
             ))}
           </div>
-          <p className="text-center text-[11px] text-muted sm:text-left">
-            Amount Paid is the total collected so far. Overdue matches the ledger report. Tap a card to add, edit, or delete payments.
-          </p>
+        </>
+      )}
+
         </>
       )}
 
@@ -233,7 +320,7 @@ export default function Collections() {
 
       {/* Add / Edit dialog */}
 
-      {ledger && <LedgerDialog loan={ledger} onClose={closeLedger} autoOpenAdd={ledgerAutoAdd} />}
+      {ledger && staffTab === 'portfolio' && <LedgerDialog loan={ledger} onClose={closeLedger} autoOpenAdd={ledgerAutoAdd} />}
     </div>
   );
 }
@@ -245,6 +332,7 @@ function CollectionCard({
   onView,
   onPayNow,
   canCollect,
+  recoveryAgentName,
   delay = 0,
 }: {
   loan: Loan;
@@ -252,6 +340,7 @@ function CollectionCard({
   onView: () => void;
   onPayNow: () => void;
   canCollect: boolean;
+  recoveryAgentName?: string;
   delay?: number;
 }) {
   const cust = d.customers.find((c) => c.id === loan.customerId);
@@ -270,11 +359,12 @@ function CollectionCard({
   const total = totalDaysFor(loan);
   const per = loan.type === 'FLEXIBLE' ? '' : isDailyLoan(loan.type) || loan.type === 'DAILY_INTEREST' ? '/day' : '/mo';
   const showPayNow = canCollect && loan.status === 'ACTIVE' && !!nd;
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
     <article
       className={cn(
-        'anim-pop group relative flex h-full flex-col overflow-hidden rounded-[20px] border bg-surface shadow-[0_1px_0_rgba(255,255,255,.6)_inset,0_12px_40px_-18px_rgba(15,23,42,.12)] transition-[transform,box-shadow] duration-300 dark:shadow-[0_1px_0_rgba(255,255,255,.04)_inset,0_20px_48px_-24px_rgba(0,0,0,.55)]',
+        'anim-pop group relative flex w-full flex-col self-start overflow-hidden rounded-[20px] border bg-surface shadow-[0_1px_0_rgba(255,255,255,.6)_inset,0_12px_40px_-18px_rgba(15,23,42,.12)] transition-[transform,box-shadow] duration-300 dark:shadow-[0_1px_0_rgba(255,255,255,.04)_inset,0_20px_48px_-24px_rgba(0,0,0,.55)]',
         'hover:-translate-y-1 hover:shadow-[0_1px_0_rgba(255,255,255,.6)_inset,0_22px_50px_-20px_rgba(5,56,204,.22)] dark:hover:shadow-[0_1px_0_rgba(255,255,255,.04)_inset,0_24px_56px_-22px_rgba(0,0,0,.65)]',
         scheduleOverdue
           ? 'border-danger/30 dark:border-danger/25'
@@ -291,87 +381,141 @@ function CollectionCard({
         )}
       />
 
-      <button
-        type="button"
-        onClick={onView}
-        aria-label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${loan.loanNumber}`}
-        className="relative flex w-full touch-manipulation items-start gap-4 px-5 pb-3 pt-5 text-left transition-colors"
-      >
-        <div className="relative shrink-0">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-[#022999] via-[#0538cc] to-[#0AA8F8] text-[13px] font-bold text-white shadow-[0_8px_20px_-8px_rgba(5,56,204,.55)] ring-2 ring-white/20 dark:ring-white/10">
-            {initials(cust?.name ?? '—')}
-          </div>
-          {scheduleOverdue && (
-            <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-danger ring-2 ring-surface" aria-hidden />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <h3 className="truncate text-[16px] font-bold tracking-tight text-ink group-hover:text-primary">{cust?.name ?? '—'}</h3>
-            <Badge tone="info" className="shrink-0 shadow-sm">{LOAN_LABELS[loan.type]}</Badge>
-          </div>
-          <p className="mt-0.5 font-mono text-[11px] font-semibold text-muted">{loan.loanNumber}</p>
-          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px]">
-            {nd ? (
-              <>
-                <span className={cn('tabular-nums', scheduleOverdue && 'font-semibold text-danger', dueToday && 'font-semibold text-warning-600 dark:text-warning')}>
-                  {scheduleOverdue && <span className="mr-1 text-[10px] font-bold uppercase tracking-wide text-danger/80">Due since </span>}
-                  {fmtDate(nd)}
+      <div className="relative flex items-start gap-3 px-4 pb-2 pt-4 sm:px-5 sm:pt-5">
+        <button
+          type="button"
+          onClick={onView}
+          aria-label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${loan.loanNumber}`}
+          className="flex min-w-0 flex-1 touch-manipulation items-start gap-3 text-left transition-colors sm:gap-4"
+        >
+          <CustomerAvatar
+            customerId={cust?.id}
+            name={cust?.name ?? '—'}
+            className="h-11 w-11 shrink-0 rounded-2xl shadow-[0_8px_20px_-8px_rgba(5,56,204,.55)] ring-2 ring-white/20 dark:ring-white/10 sm:h-12 sm:w-12"
+            fallbackStyle={{
+              background: 'linear-gradient(to bottom right, #022999, #0538cc, #0AA8F8)',
+              color: '#fff',
+            }}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2 pr-1">
+              <h3 className="truncate text-[15px] font-bold tracking-tight text-ink group-hover:text-primary sm:text-[16px]">
+                {cust?.name ?? '—'}
+              </h3>
+              <Badge tone="info" className="shrink-0 shadow-sm">{LOAN_LABELS[loan.type]}</Badge>
+            </div>
+            <p className="mt-0.5 font-mono text-[11px] font-semibold text-muted">{loan.loanNumber}</p>
+            {recoveryAgentName && (
+              <p className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200 sm:mt-2 sm:px-2.5 sm:py-1 sm:text-[11px]">
+                <UserCheck size={12} className="shrink-0" aria-hidden />
+                <span className="truncate">Recovery · {recoveryAgentName}</span>
+              </p>
+            )}
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+              {nd ? (
+                <>
+                  <span
+                    className={cn(
+                      'tabular-nums',
+                      scheduleOverdue && 'font-semibold text-danger',
+                      dueToday && 'font-semibold text-warning-600 dark:text-warning',
+                    )}
+                  >
+                    {scheduleOverdue && (
+                      <span className="mr-1 text-[10px] font-bold uppercase tracking-wide text-danger/80">Due since </span>
+                    )}
+                    {fmtDate(nd)}
+                  </span>
+                  {scheduleOverdue ? <Badge tone="err">Overdue</Badge> : dueToday ? <Badge tone="warn">Today</Badge> : null}
+                </>
+              ) : (
+                <span className="text-muted">Fully collected</span>
+              )}
+            </div>
+            {!detailsOpen && (
+              <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11px] text-muted">
+                <span>
+                  Paid{' '}
+                  <span className="font-semibold tabular-nums text-success">{inr(collected)}</span>
                 </span>
-                {scheduleOverdue ? <Badge tone="err">Overdue</Badge> : dueToday ? <Badge tone="warn">Today</Badge> : null}
-              </>
-            ) : (
-              <span className="text-muted">Fully collected</span>
+                <span>
+                  Outstanding{' '}
+                  <span className="font-semibold tabular-nums text-ink">{inr(outstanding)}</span>
+                </span>
+                {overdueAmt > 0 && (
+                  <span>
+                    Due now{' '}
+                    <span className="font-semibold tabular-nums text-danger">{inr(overdueAmt)}</span>
+                  </span>
+                )}
+              </div>
             )}
           </div>
-        </div>
-      </button>
+        </button>
+        <button
+          type="button"
+          onClick={() => setDetailsOpen((o) => !o)}
+          aria-expanded={detailsOpen}
+          aria-label={detailsOpen ? 'Collapse loan details' : 'Expand loan details'}
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-200/80 bg-surface/90 text-muted transition-colors hover:border-primary/30 hover:bg-primary/[.04] hover:text-primary dark:border-white/[.08] dark:hover:bg-white/[.04]"
+        >
+          <ChevronDown
+            size={18}
+            className={cn('transition-transform duration-200', detailsOpen && 'rotate-180')}
+            aria-hidden
+          />
+        </button>
+      </div>
 
-      {hasTerm && (
-        <div className="relative border-y border-slate-100/80 px-5 py-3 dark:border-white/[.06]">
-          <CollectionProgress compact paid={paid} total={total} />
-        </div>
-      )}
-
-      <div className="relative mx-4 mt-1 rounded-2xl border border-slate-200/60 bg-gradient-to-br from-slate-50/90 via-surface to-slate-50/50 px-4 py-4 dark:border-white/[.08] dark:from-white/[.04] dark:via-surface dark:to-white/[.02]">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Amount paid</p>
-            <p className="mt-1 font-display text-[30px] font-bold leading-none tracking-tight tabular-nums text-success">
-              {inr(collected)}
-            </p>
-          </div>
-          {overdueAmt > 0 && (
-            <div className="rounded-xl border border-danger/20 bg-danger/[.06] px-3 py-2 text-right dark:bg-danger/[.08]">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-danger/80">Due now</p>
-              <p className="mt-0.5 text-[15px] font-bold tabular-nums text-danger">{inr(overdueAmt)}</p>
+      {detailsOpen && (
+        <>
+          {hasTerm && (
+            <div className="relative border-y border-slate-100/80 px-5 py-3 dark:border-white/[.06]">
+              <CollectionProgress compact paid={paid} total={total} />
             </div>
           )}
-        </div>
-      </div>
 
-      <div className="grid grid-cols-2 gap-2.5 px-4 py-4 sm:grid-cols-3">
-        <CollStatCell label="Loan date" value={fmtDate(loan.loanDate)} variant="date" />
-        <CollStatCell label="End date" value={endLabel} variant="date" />
-        <CollStatCell label="Next due" value={nd ? fmtDate(nd) : '—'} variant="date" emphasize={!!nd} />
-        <CollStatCell label="Outstanding" value={inr(outstanding)} variant="money" emphasize={outstanding > 0} />
-        <CollStatCell
-          label="Instalment"
-          value={loan.dailyAmount ? inr(loan.dailyAmount) : '—'}
-          hint={loan.dailyAmount ? per : undefined}
-          variant="money"
-        />
-        <CollStatCell
-          label="Overdue"
-          value={overdueAmt > 0 ? inr(overdueAmt) : '—'}
-          variant="money"
-          tone={overdueAmt > 0 ? 'danger' : undefined}
-        />
-      </div>
+          <div className="relative mx-4 mt-1 rounded-2xl border border-slate-200/60 bg-gradient-to-br from-slate-50/90 via-surface to-slate-50/50 px-4 py-3.5 dark:border-white/[.08] dark:from-white/[.04] dark:via-surface dark:to-white/[.02] sm:py-4">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Amount paid</p>
+                <p className="mt-1 font-display text-[26px] font-bold leading-none tracking-tight tabular-nums text-success sm:text-[30px]">
+                  {inr(collected)}
+                </p>
+              </div>
+              {overdueAmt > 0 && (
+                <div className="rounded-xl border border-danger/20 bg-danger/[.06] px-3 py-2 text-right dark:bg-danger/[.08]">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-danger/80">Due now</p>
+                  <p className="mt-0.5 text-[15px] font-bold tabular-nums text-danger">{inr(overdueAmt)}</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 px-4 py-3 sm:grid-cols-3 sm:gap-2.5 sm:py-4">
+            <CollStatCell label="Loan date" value={fmtDate(loan.loanDate)} variant="date" />
+            <CollStatCell label="End date" value={endLabel} variant="date" />
+            <CollStatCell label="Next due" value={nd ? fmtDate(nd) : '—'} variant="date" emphasize={!!nd} />
+            <CollStatCell label="Outstanding" value={inr(outstanding)} variant="money" emphasize={outstanding > 0} />
+            <CollStatCell
+              label="Instalment"
+              value={loan.dailyAmount ? inr(loan.dailyAmount) : '—'}
+              hint={loan.dailyAmount ? per : undefined}
+              variant="money"
+            />
+            <CollStatCell
+              label="Overdue"
+              value={overdueAmt > 0 ? inr(overdueAmt) : '—'}
+              variant="money"
+              tone={overdueAmt > 0 ? 'danger' : undefined}
+            />
+          </div>
+        </>
+      )}
 
       <div
         className={cn(
-          'mt-auto grid min-w-0 border-t border-slate-100 dark:border-white/[.06]',
+          'grid min-w-0 border-t border-slate-100 dark:border-white/[.06]',
           showPayNow ? 'grid-cols-2' : 'grid-cols-1',
         )}
       >

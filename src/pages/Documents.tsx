@@ -9,7 +9,9 @@ import { Dialog } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { usePermissions } from '@/lib/permissions';
-import { fmtDate, todayISO, initials } from '@/lib/format';
+import { fmtDate, todayISO } from '@/lib/format';
+import { CustomerAvatar } from '@/components/CustomerAvatar';
+import { bumpCustomerPhotoCache, cacheCustomerPhotoDataUrl } from '@/lib/customerPhoto';
 import { cn } from '@/lib/utils';
 import { config } from '@/lib/config';
 import { documentApi, type DocumentType, type CustomerDocument } from '@/services/documentApi';
@@ -151,6 +153,9 @@ export default function Documents() {
     const custId = Number(customerId);
     setUploading(true);
     try {
+      if (docType === 'PHOTO' && file.dataUrl.startsWith('data:image/')) {
+        cacheCustomerPhotoDataUrl(custId, file.dataUrl);
+      }
       if (config.useApi) {
         await documentApi.upload(custId, docType, file.raw);
         await reloadApiDocs();
@@ -159,6 +164,7 @@ export default function Documents() {
       }
       setExpanded((s) => ({ ...s, [custId]: true }));
       toast('Document uploaded');
+      if (docType === 'PHOTO') bumpCustomerPhotoCache();
       resetUpload();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Failed to upload document', 'error');
@@ -289,7 +295,7 @@ export default function Documents() {
                   className="group flex w-full items-center gap-3 px-4 py-3.5 text-left sm:px-5"
                 >
                   <ChevronRight size={16} className={cn('shrink-0 text-blue-500 transition-transform', isOpen && 'rotate-90')} />
-                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-blue-500 to-violet-500 text-[13px] font-bold text-white shadow-sm">{initials(custName(cid))}</div>
+                  <CustomerAvatar customerId={cid} name={custName(cid)} className="h-10 w-10 rounded-xl shadow-sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-semibold text-ink">{custName(cid)}</span>

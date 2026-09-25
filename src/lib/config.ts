@@ -14,4 +14,7 @@ export const config = {
   apiBaseUrl: (import.meta.env.VITE_API_BASE_URL as string) || '/api/v1',
   /** Optional public URL for statement links in WhatsApp payment requests. */
   statementPortalUrl: (import.meta.env.VITE_STATEMENT_PORTAL_URL as string) || '',
+  /** Public merchant UPI VPA shown in customer portal Pay flow (not a secret). */
+  merchantUpiVpa: (import.meta.env.VITE_MERCHANT_UPI_VPA as string) || '6361999127@ybl',
+  merchantPayeeName: (import.meta.env.VITE_MERCHANT_PAYEE_NAME as string) || 'Anush Finserv',
 };
