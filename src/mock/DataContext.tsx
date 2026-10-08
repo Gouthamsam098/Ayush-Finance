@@ -145,7 +145,23 @@ export type CollectionKind = 'INTEREST' | 'PRINCIPAL';
  *  slot's own due date. The ledger needs the entry day to tell "cleared behind
  *  schedule" from "paid on the day it fell due"; without it a backdated clear
  *  looks identical to an on-time payment. Read-only, never sent back. */
-export interface Collection { id: number; receiptNo: string; loanId: number; date: string; amount: number; mode: PayMode; kind?: CollectionKind; remarks?: string; targetDate?: string; recordedOn?: string; }
+export interface Collection {
+  id: number;
+  receiptNo: string;
+  loanId: number;
+  date: string;
+  amount: number;
+  mode: PayMode;
+  kind?: CollectionKind;
+  remarks?: string;
+  targetDate?: string;
+  recordedOn?: string;
+  /** UI / future API: who received the money (reporting). */
+  collectorType?: 'ADMIN' | 'STAFF' | 'RECOVERY_AGENT' | 'CUSTOMER' | 'UNKNOWN';
+  collectorName?: string;
+  /** Audit: LMS user who posted the receipt (API posted_by). */
+  postedByUserId?: number;
+}
 export interface Expense { id: number; date: string; category: string; subCategory?: string; name: string; amount: number; mode: PayMode; remarks?: string; }
 export interface DocItem { id: number; customerId: number; type: string; fileName: string; size: string; dataUrl: string | null; mime: string | null; date: string; }
 

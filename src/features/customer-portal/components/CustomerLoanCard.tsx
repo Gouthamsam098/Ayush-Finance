@@ -1,11 +1,79 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LOAN_LABELS, behavesInterestOnly, type Loan } from '@/mock/DataContext';
 import { inr, fmtDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { LoanPortalSummary, PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
-import { CalendarClock, ChevronRight, FileText, Landmark, Sparkles, Wallet } from 'lucide-react';
+import {
+  CalendarClock, ChevronRight, CircleCheck, FileText, Landmark, Percent, SlidersHorizontal, Smartphone, Wallet,
+} from 'lucide-react';
 import { PaymentProofUpload } from '@/features/customer-portal/components/PaymentProofUpload';
+
+const PAY_OPTION_ICON: Record<PortalPayPurpose, ReactNode> = {
+  INTEREST: <Percent size={18} strokeWidth={2.25} />,
+  FULL_SETTLEMENT: <CircleCheck size={18} strokeWidth={2.25} />,
+  OUTSTANDING: <Wallet size={18} strokeWidth={2.25} />,
+  CUSTOM: <SlidersHorizontal size={18} strokeWidth={2.25} />,
+};
+
+function PayOptionRow({
+  active,
+  title,
+  hint,
+  amountLabel,
+  icon,
+  onSelect,
+}: {
+  active: boolean;
+  title: string;
+  hint: string;
+  amountLabel: string;
+  icon: ReactNode;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onSelect}
+      className={cn(
+        'relative flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-left transition-all sm:px-4 sm:py-4',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+        active
+          ? 'bg-primary/[.06] shadow-[inset_0_0_0_1px_rgba(79,70,229,.22)] dark:bg-primary/10'
+          : 'hover:bg-slate-50/90 dark:hover:bg-white/[.04]',
+      )}
+    >
+      <span
+        className={cn(
+          'grid h-11 w-11 shrink-0 place-items-center rounded-xl transition-colors',
+          active
+            ? 'bg-gradient-to-br from-primary to-violet-600 text-white shadow-[0_6px_16px_-6px_rgba(79,70,229,.55)]'
+            : 'bg-slate-100 text-slate-600 dark:bg-white/[.06] dark:text-slate-300',
+        )}
+      >
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-display text-[14px] font-bold leading-snug text-ink sm:text-[15px]">{title}</span>
+        <span className="mt-0.5 block text-[11px] leading-relaxed text-muted sm:text-[12px]">{hint}</span>
+      </span>
+      <span className="flex shrink-0 flex-col items-end gap-2 pl-1">
+        <span className="font-display text-[14px] font-bold tabular-nums text-ink sm:text-[15px]">{amountLabel}</span>
+        <span
+          className={cn(
+            'grid h-[18px] w-[18px] place-items-center rounded-full border-2 transition-all',
+            active ? 'border-primary bg-primary' : 'border-slate-300/90 dark:border-white/20',
+          )}
+          aria-hidden
+        >
+          {active && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+        </span>
+      </span>
+    </button>
+  );
+}
 
 function Metric({
   label,
@@ -87,13 +155,48 @@ export function CustomerLoanCard({
         accent: 'from-emerald-600 via-emerald-500 to-teal-500',
       });
     }
+    if (canPay && summary.fullSettlementAmount > 0) {
+      opts.push({
+        id: 'CUSTOM',
+        title: 'Custom amount',
+        hint: `Enter any amount up to ${inr(summary.fullSettlementAmount)}`,
+        amount: 0,
+        accent: 'from-slate-600 via-slate-500 to-slate-600',
+      });
+    }
     return opts;
   }, [summary, canPay]);
 
   const [selected, setSelected] = useState<PortalPayPurpose>(() => payOptions[0]?.id ?? 'OUTSTANDING');
+  const [customAmount, setCustomAmount] = useState('');
 
   const activeOption = payOptions.find((o) => o.id === selected) ?? payOptions[0];
-  const payAmount = activeOption?.amount ?? 0;
+  const maxPay = summary.fullSettlementAmount;
+  const customParsed = Math.round(Number(customAmount.replace(/[^\d.]/g, '')) || 0);
+  const payAmount = selected === 'CUSTOM' ? customParsed : (activeOption?.amount ?? 0);
+  const customError = selected === 'CUSTOM' && customAmount.trim() && (customParsed <= 0 || customParsed > maxPay)
+    ? (customParsed <= 0 ? 'Enter a valid amount' : `Maximum ${inr(maxPay)}`)
+    : undefined;
+  const payValid = payAmount > 0 && payAmount <= maxPay;
+
+  const presetOptions = useMemo(() => payOptions.filter((o) => o.id !== 'CUSTOM'), [payOptions]);
+  const hasCustomOption = payOptions.some((o) => o.id === 'CUSTOM');
+
+  const quickAmountChips = useMemo(() => {
+    const seen = new Set<number>();
+    const chips: { label: string; value: number }[] = [];
+    const add = (label: string, value: number) => {
+      const v = Math.round(value);
+      if (v > 0 && v <= maxPay && !seen.has(v)) {
+        seen.add(v);
+        chips.push({ label, value: v });
+      }
+    };
+    if (summary.interestPayAmount > 0) add('Interest due', summary.interestPayAmount);
+    if (summary.scheduleDue && summary.scheduleDue > 0) add('Due now', summary.scheduleDue);
+    add('Full balance', maxPay);
+    return chips;
+  }, [summary.interestPayAmount, summary.scheduleDue, maxPay]);
 
   return (
     <motion.article
@@ -160,116 +263,152 @@ export function CustomerLoanCard({
         </div>
 
         {canPay && payOptions.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="rounded-2xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[.06] via-surface to-violet-500/[.04] p-3.5 sm:p-4 lg:p-5 dark:from-emerald-500/10 dark:to-violet-500/5"
+          <motion.section
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.18, duration: 0.4 }}
+            className="overflow-hidden rounded-2xl border border-slate-200/90 bg-surface shadow-card dark:border-white/[.08]"
+            aria-label="Make a payment"
           >
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-                <span className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/15">
-                  <Sparkles size={14} />
-                </span>
-                Choose payment
-              </div>
-              <div className="flex items-center gap-1 text-[10px] font-medium text-muted sm:text-[11px]">
-                <CalendarClock size={12} className="opacity-70" />
-                PhonePe · GPay
+            <div className="border-b border-slate-200/80 bg-gradient-to-r from-primary/[.04] via-surface to-violet-500/[.05] px-4 py-4 sm:px-5 dark:border-white/[.06]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-display text-[16px] font-bold tracking-tight text-ink sm:text-[17px]">Make a payment</h3>
+                  <p className="mt-1 max-w-md text-[12px] leading-relaxed text-muted sm:text-[13px]">
+                    Choose an amount. Your UPI app opens with the total pre-filled — no manual entry on our side.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-surface/80 px-2.5 py-1 dark:border-white/[.08]">
+                  <Smartphone size={12} className="text-primary" aria-hidden />
+                  <span className="text-[10px] font-semibold text-muted">PhonePe</span>
+                  <span className="text-muted/40" aria-hidden>·</span>
+                  <span className="text-[10px] font-semibold text-muted">GPay</span>
+                </div>
               </div>
             </div>
 
-            <div
-              className={cn(
-                'grid gap-2 sm:gap-2.5',
-                payOptions.length > 1 ? 'md:grid-cols-2' : 'md:max-w-xl',
-              )}
-            >
-              {payOptions.map((opt) => {
-                const active = selected === opt.id;
-                return (
-                  <motion.button
-                    key={opt.id}
-                    type="button"
-                    layout
-                    onClick={() => setSelected(opt.id)}
-                    whileTap={{ scale: 0.99 }}
-                    className={cn(
-                      'relative w-full overflow-hidden rounded-xl border px-3 py-2.5 text-left transition-all sm:px-3.5 sm:py-3 md:py-2.5',
-                      'max-md:min-h-[3.25rem] md:min-h-0',
-                      active
-                        ? 'border-primary/35 bg-primary/[.05] shadow-[0_4px_20px_-10px_rgba(79,70,229,.4)] ring-1 ring-primary/20 dark:bg-primary/10'
-                        : 'border-slate-200/90 bg-surface/90 hover:border-slate-300/90 dark:border-white/[.08] dark:hover:border-white/15',
-                    )}
-                  >
-                    {active && (
-                      <motion.span
-                        layoutId={`pay-glow-${loan.id}`}
-                        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/[.04] to-violet-500/[.06]"
-                        transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-                      />
-                    )}
-                    <div className="relative flex items-start justify-between gap-2 sm:items-center sm:gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-display text-[13px] font-bold leading-snug text-ink sm:text-[14px]">{opt.title}</p>
-                        <p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-muted sm:text-[11px]">{opt.hint}</p>
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
-                        <span className="font-display text-[13px] font-bold tabular-nums text-ink sm:text-[14px]">{inr(opt.amount)}</span>
-                        <span
-                          className={cn(
-                            'grid h-4 w-4 place-items-center rounded-full border-2 transition-colors sm:h-[18px] sm:w-[18px]',
-                            active ? 'border-primary bg-primary' : 'border-slate-300 dark:border-white/25',
+            <div className="space-y-1 p-2 sm:p-2.5" role="radiogroup" aria-label="Payment amount">
+              {presetOptions.map((opt) => (
+                <PayOptionRow
+                  key={opt.id}
+                  active={selected === opt.id}
+                  title={opt.title}
+                  hint={opt.hint}
+                  amountLabel={inr(opt.amount)}
+                  icon={PAY_OPTION_ICON[opt.id]}
+                  onSelect={() => {
+                    setSelected(opt.id);
+                    setCustomAmount('');
+                  }}
+                />
+              ))}
+
+              {hasCustomOption && (
+                <>
+                  <PayOptionRow
+                    active={selected === 'CUSTOM'}
+                    title="Custom amount"
+                    hint={`Any amount up to ${inr(maxPay)}`}
+                    amountLabel={selected === 'CUSTOM' && customParsed > 0 ? inr(customParsed) : 'You choose'}
+                    icon={PAY_OPTION_ICON.CUSTOM}
+                    onSelect={() => setSelected('CUSTOM')}
+                  />
+                  <AnimatePresence initial={false}>
+                    {selected === 'CUSTOM' && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <div className="mx-1 mb-1 rounded-xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-white/[.08] dark:bg-white/[.03]">
+                          <label className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted" htmlFor={`custom-amt-${loan.id}`}>
+                            Enter amount
+                          </label>
+                          <div className="mt-2 flex items-baseline gap-1 border-b border-slate-200/90 pb-2 dark:border-white/[.08]">
+                            <span className="font-display text-2xl font-bold text-muted">₹</span>
+                            <input
+                              id={`custom-amt-${loan.id}`}
+                              inputMode="numeric"
+                              autoComplete="off"
+                              placeholder="0"
+                              value={customAmount}
+                              onChange={(e) => setCustomAmount(e.target.value.replace(/[^\d]/g, ''))}
+                              className="min-w-0 flex-1 bg-transparent font-display text-3xl font-bold tabular-nums text-ink outline-none placeholder:text-slate-300 dark:placeholder:text-white/20"
+                            />
+                          </div>
+                          {customError && (
+                            <p className="mt-2 text-[12px] font-medium text-danger">{customError}</p>
                           )}
-                        >
-                          {active && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
-                        </span>
-                      </div>
-                    </div>
-                  </motion.button>
-                );
-              })}
+                          <p className="mt-1 text-[11px] text-muted">Maximum {inr(maxPay)}</p>
+                          {quickAmountChips.length > 0 && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {quickAmountChips.map((chip) => (
+                                <button
+                                  key={chip.value}
+                                  type="button"
+                                  onClick={() => setCustomAmount(String(chip.value))}
+                                  className={cn(
+                                    'rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors',
+                                    customParsed === chip.value
+                                      ? 'border-primary/40 bg-primary/10 text-primary'
+                                      : 'border-slate-200/90 bg-surface text-muted hover:border-primary/25 hover:text-ink dark:border-white/[.1]',
+                                  )}
+                                >
+                                  {chip.label} · {inr(chip.value)}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </>
+              )}
             </div>
 
-            <div className="mt-3 border-t border-slate-200/60 pt-3 dark:border-white/[.06] sm:mt-4 sm:pt-4">
-              <AnimatePresence mode="wait">
-                <motion.button
-                  key={activeOption?.id}
-                  type="button"
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -2 }}
-                  transition={{ duration: 0.2 }}
-                  onClick={() => onPay(payAmount, activeOption?.id ?? 'OUTSTANDING')}
-                  className={cn(
-                    'group relative mx-auto flex w-full max-w-md items-center justify-center gap-2 overflow-hidden rounded-xl',
-                    'bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 px-4 py-2.5',
-                    'text-[13px] font-bold text-white shadow-[0_8px_24px_-12px_rgba(16,185,129,.45)]',
-                    'transition-all active:scale-[.99] hover:shadow-[0_10px_26px_-10px_rgba(16,185,129,.55)]',
-                    'min-h-11 md:min-h-10 md:max-w-sm',
-                  )}
-                >
-                  <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-                  <Wallet size={16} className="relative shrink-0 opacity-95" />
-                  <span className="relative">Pay with UPI</span>
-                  <span className="relative tabular-nums">{inr(payAmount)}</span>
-                  <ChevronRight size={16} className="relative shrink-0 opacity-80" />
-                </motion.button>
-              </AnimatePresence>
-              <p className="mt-2 text-center text-[10px] text-muted sm:text-[11px]">
-                PhonePe or GPay opens with this amount pre-filled
+            <div className="border-t border-slate-200/80 bg-slate-50/50 px-4 py-4 dark:border-white/[.06] dark:bg-white/[.02] sm:px-5">
+              <div className="mb-3 flex items-center justify-between gap-3 text-[12px]">
+                <span className="font-medium text-muted">You pay</span>
+                <span className="font-display text-lg font-bold tabular-nums text-ink">
+                  {payValid ? inr(payAmount) : '—'}
+                </span>
+              </div>
+              <motion.button
+                type="button"
+                layout
+                disabled={!payValid}
+                onClick={() => onPay(payAmount, selected === 'CUSTOM' ? 'CUSTOM' : (activeOption?.id ?? 'OUTSTANDING'))}
+                className={cn(
+                  'group relative flex w-full items-center justify-center gap-2.5 overflow-hidden rounded-xl px-4 py-3.5',
+                  'bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 text-[14px] font-bold text-white',
+                  'shadow-[0_10px_28px_-12px_rgba(16,185,129,.5)] transition-all',
+                  'hover:shadow-[0_14px_32px_-10px_rgba(16,185,129,.55)] active:scale-[.995]',
+                  !payValid && 'cursor-not-allowed opacity-45 shadow-none hover:shadow-none',
+                )}
+              >
+                <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/12 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                <Wallet size={18} className="relative shrink-0" />
+                <span className="relative">Continue to UPI</span>
+                <ChevronRight size={18} className="relative shrink-0 opacity-90" />
+              </motion.button>
+              <p className="mt-2.5 flex items-center justify-center gap-1.5 text-center text-[11px] text-muted">
+                <CalendarClock size={12} className="shrink-0 opacity-70" />
+                Amount is copied into PhonePe or Google Pay automatically
               </p>
             </div>
-          </motion.div>
+          </motion.section>
         )}
 
-        {canPay && payAmount > 0 && (
+        {canPay && payValid && (
           <PaymentProofUpload
             customerId={customerId}
             loanId={loan.id}
             loanNumber={loan.loanNumber}
             amountRupees={payAmount}
-            purpose={activeOption?.id ?? 'OUTSTANDING'}
+            purpose={selected}
           />
         )}
 

@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
+import type { RootState } from '@/store';
+import { staffCollectorFields } from '@/lib/collectionCollector';
 import { useData, LOAN_LABELS, isDailyLoan, isInstalmentLoan, behavesEmi, behavesInterestOnly, cadenceDaysForLoan, upfrontDeduction, type Loan, type PayMode, type CollectionKind } from '@/mock/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +41,13 @@ const fmtDayMon = (s: string) => {
 export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, autoOpenAdd = false }: { loan: Loan; onClose: () => void; statementOnly?: boolean; /** Opens the Add-collection dialog on the first collectable slot (same as ledger Add). */ autoOpenAdd?: boolean }) {
   const d = useData();
   const toast = useToast();
+  const authUser = useSelector((s: RootState) => s.auth.user);
+  const collectorMeta = useMemo(
+    () => (authUser
+      ? staffCollectorFields({ id: authUser.id, fullName: authUser.fullName, role: authUser.role })
+      : {}),
+    [authUser],
+  );
   // RBAC: every mutation in this dialog is a Collections write. View-only users
   // get the full read-only ledger — no Add / edit / Clear Overdue / Foreclose.
   // The backend rejects unauthorized writes regardless; this keeps the UI honest.
@@ -720,10 +730,10 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
         const interestPart = Math.min(total, flexInterestDue);
         const principalPart = total - interestPart;
         if (interestPart > 0) {
-          await d.addCollection({ loanId: loan.id, date, amount: interestPart, mode, kind: 'INTEREST', remarks: (remarks || 'Full settlement') + ' — interest' });
+          await d.addCollection({ loanId: loan.id, date, amount: interestPart, mode, kind: 'INTEREST', remarks: (remarks || 'Full settlement') + ' — interest', ...collectorMeta });
         }
         if (principalPart > 0) {
-          await d.addCollection({ loanId: loan.id, date, amount: principalPart, mode, kind: 'PRINCIPAL', remarks: (remarks || 'Full settlement') + ' — principal' });
+          await d.addCollection({ loanId: loan.id, date, amount: principalPart, mode, kind: 'PRINCIPAL', remarks: (remarks || 'Full settlement') + ' — principal', ...collectorMeta });
         }
         toast('Loan settled — interest + principal cleared');
       } else if (editDay) {
@@ -749,7 +759,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
           toast('Day updated — newest receipts reduced');
         } else if (delta > 0) {
           const rd = todayISO() < minPaymentDate ? minPaymentDate : todayISO();
-          await d.addCollection({ loanId: loan.id, date: rd, amount: delta, mode, kind: k, remarks: remarks || undefined, targetDate: editDay.target });
+          await d.addCollection({ loanId: loan.id, date: rd, amount: delta, mode, kind: k, remarks: remarks || undefined, targetDate: editDay.target, ...collectorMeta });
           toast('Day updated — difference recorded as a new receipt');
         } else {
           toast('No change — amount already matches this day');
@@ -846,7 +856,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
           await d.replaceCollections(
             loan.id,
             [...replacing],
-            parts.map((p) => ({ loanId: loan.id, date, amount: p.amount, mode, kind: k, remarks: remarks || undefined, targetDate: p.target })),
+            parts.map((p) => ({ loanId: loan.id, date, amount: p.amount, mode, kind: k, remarks: remarks || undefined, targetDate: p.target, ...collectorMeta })),
           );
         } else {
           // RE-KEY GUARD (last line of defence before money is written).
@@ -880,7 +890,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
             if (!ok) return; // the finally below releases `saving`
           }
           for (const p of parts) {
-            await d.addCollection({ loanId: loan.id, date, amount: p.amount, mode, kind: k, remarks: remarks || undefined, targetDate: p.target });
+            await d.addCollection({ loanId: loan.id, date, amount: p.amount, mode, kind: k, remarks: remarks || undefined, targetDate: p.target, ...collectorMeta });
           }
         }
         toast(replacing

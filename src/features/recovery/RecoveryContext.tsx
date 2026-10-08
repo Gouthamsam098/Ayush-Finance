@@ -229,6 +229,8 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       mode: row.mode,
       date: row.receiptDate,
       remarks: row.note ? `Recovery: ${row.note}` : 'Recovery agent collection (approved)',
+      collectorType: 'RECOVERY_AGENT',
+      collectorName: row.agentName,
     }));
     const collectionId = created && typeof created === 'object' && 'id' in created
       ? (created as { id: number }).id

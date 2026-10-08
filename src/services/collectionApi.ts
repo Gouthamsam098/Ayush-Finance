@@ -51,8 +51,8 @@ function toCollection(w: CollectionWire): Collection {
     kind: w.kind,
     remarks: w.remarks,
     targetDate: w.target_due_date ? w.target_due_date.slice(0, 10) : undefined,
-    // Entry day (server clock), not the receipt day — see Collection.recordedOn.
     recordedOn: w.created_at ? w.created_at.slice(0, 10) : undefined,
+    postedByUserId: w.posted_by,
   };
 }
 

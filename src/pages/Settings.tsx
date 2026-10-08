@@ -24,6 +24,7 @@ import { useRecovery } from '@/features/recovery/RecoveryContext';
 import { AgentLoanAssignment } from '@/features/recovery/components/AgentLoanAssignment';
 import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
 import { RecoveryAutoAssignScheduleCard } from '@/features/recovery/components/RecoveryAutoAssignScheduleCard';
+import { TwoFactorSettingsCard } from '@/features/settings/TwoFactorSettingsCard';
 import { clearUiReportsAccess, setUiReportsAccess, withUiModuleAccess } from '@/lib/uiModuleAccess';
 import {
   UserPlus, Trash2, Settings as SettingsIcon, Pencil, Plus, Users as UsersIcon, Loader2, ShieldCheck,
@@ -110,10 +111,15 @@ export default function Settings() {
         return;
       }
       const rows = await userApi.list();
-      setUsers(rows.map((u) => ({
+      const apiUsers = rows.map((u) => ({
         ...u,
         permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
-      })));
+      }));
+      const apiEmails = new Set(apiUsers.map((u) => u.email.toLowerCase()));
+      const portalFromMock = listMockUsers()
+        .filter((u) => u.role === 'CUSTOMER' && !apiEmails.has(u.email.toLowerCase()))
+        .map(fromMock);
+      setUsers([...apiUsers, ...portalFromMock]);
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Failed to load users', 'error');
     } finally {
@@ -294,6 +300,10 @@ export default function Settings() {
       />
 
       <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
+        {me && (
+          <TwoFactorSettingsCard userEmail={me.username} userName={me.fullName} />
+        )}
+
         {hasActiveRecoveryAgents() && (
           <RecoveryAutoAssignScheduleCard assignmentVersion={recovery.assignmentVersion} />
         )}

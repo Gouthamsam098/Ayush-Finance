@@ -26,8 +26,16 @@ import { expenseApi } from '@/services/expenseApi';
 import {
   Download, FileSpreadsheet, FileText, Users, Receipt, Wallet, Search,
   Layers, IndianRupee, TrendingUp, Loader2, SlidersHorizontal,
-  CalendarRange, Activity, Tag,
+  CalendarRange, Activity, Tag, UserCircle2, ShieldCheck, Smartphone,
 } from 'lucide-react';
+import {
+  collectorBadgeTone,
+  collectorMatchesFilter,
+  resolveCollector,
+  loanCollectorDisplay,
+  type CollectorFilter,
+} from '@/lib/collectionCollector';
+import { scheduleShortfall } from '@/features/recovery/recoveryDue';
 
 type ReportKey = 'loans' | 'customers' | 'collections' | 'expenses';
 type Period = 'THIS_MONTH' | 'LAST_6M' | 'LAST_1Y' | 'ALL';
@@ -39,6 +47,14 @@ const thisMonthStartISO = () => { const d = new Date(); d.setDate(1); return iso
 /** Lower-bound ISO date for a period ('' = no bound / all time). */
 const periodSince = (p: Period): string =>
   p === 'THIS_MONTH' ? thisMonthStartISO() : p === 'LAST_6M' ? monthsAgoISO(6) : p === 'LAST_1Y' ? yearsAgoISO(1) : '';
+
+const COLLECTION_KPI_VISUAL: Record<string, { accent: string; icon: typeof Receipt }> = {
+  Payments: { accent: '#6366f1', icon: Receipt },
+  'Total Collected': { accent: '#10b981', icon: TrendingUp },
+  'Via agents': { accent: '#059669', icon: ShieldCheck },
+  'Via staff': { accent: '#3b82f6', icon: UserCircle2 },
+  'Via customer': { accent: '#8b5cf6', icon: Smartphone },
+};
 
 const PERIODS: { key: Period; label: string }[] = [
   { key: 'THIS_MONTH', label: 'This Month' },
@@ -76,20 +92,36 @@ const expenseReportCell = (ci: number, extra?: string) => {
 };
 
 // ── the applied filter state (draft is edited in the drawer, applied on button) ──
-interface ReportFilters { period: Period; loanStatus: 'ALL' | 'ACTIVE' | 'CLOSED'; loanType: 'ALL' | LoanType; expenseCat: 'ALL' | string; }
-const defaultFilters = (): ReportFilters => ({ period: 'ALL', loanStatus: 'ALL', loanType: 'ALL', expenseCat: 'ALL' });
+interface ReportFilters {
+  period: Period;
+  loanStatus: 'ALL' | 'ACTIVE' | 'CLOSED';
+  loanType: 'ALL' | LoanType;
+  expenseCat: 'ALL' | string;
+  collector: CollectorFilter;
+}
+const defaultFilters = (): ReportFilters => ({
+  period: 'ALL', loanStatus: 'ALL', loanType: 'ALL', expenseCat: 'ALL', collector: 'ALL',
+});
 /** How many non-default filter facets are active (excludes search, which lives in the toolbar). */
 function countActive(tab: ReportKey, f: ReportFilters): number {
   let n = 0;
   if (f.period !== 'ALL') n++;
   if (tab === 'loans') { if (f.loanStatus !== 'ALL') n++; if (f.loanType !== 'ALL') n++; }
   if (tab === 'expenses' && f.expenseCat !== 'ALL') n++;
+  if (tab === 'collections' && f.collector !== 'ALL') n++;
   return n;
 }
 
 // Complete dataset the report is built from (in-memory for preview, fetched for export).
 interface Dataset { customers: Customer[]; loans: Loan[]; collections: Collection[]; expenses: Expense[]; }
-interface BuildArgs { since: string; q: string; loanStatus: 'ALL' | 'ACTIVE' | 'CLOSED'; loanType: 'ALL' | LoanType; expenseCat: 'ALL' | string; }
+interface BuildArgs {
+  since: string;
+  q: string;
+  loanStatus: 'ALL' | 'ACTIVE' | 'CLOSED';
+  loanType: 'ALL' | LoanType;
+  expenseCat: 'ALL' | string;
+  collector: CollectorFilter;
+}
 interface BuiltReport {
   head: string[];
   body: (string | number)[][];
@@ -169,22 +201,45 @@ function buildReport(tab: ReportKey, data: Dataset, f: BuildArgs): BuiltReport {
   if (tab === 'collections') {
     let rows = data.collections;
     if (f.since) rows = rows.filter((c) => c.date >= f.since);
+    if (f.collector !== 'ALL') rows = rows.filter((c) => collectorMatchesFilter(c, f.collector));
     if (q) rows = rows.filter((c) => {
       const loan = loanById.get(c.loanId);
-      return c.receiptNo.toLowerCase().includes(q) || (loan ? custName(loan.customerId).toLowerCase().includes(q) : false);
+      const who = resolveCollector(c);
+      return c.receiptNo.toLowerCase().includes(q)
+        || (loan ? custName(loan.customerId).toLowerCase().includes(q) : false)
+        || who.name.toLowerCase().includes(q)
+        || who.roleLabel.toLowerCase().includes(q);
     });
     const total = rows.reduce((s, c) => s + c.amount, 0);
+    const agentTotal = rows.filter((c) => resolveCollector(c).type === 'RECOVERY_AGENT').reduce((s, c) => s + c.amount, 0);
+    const staffTotal = rows.filter((c) => {
+      const t = resolveCollector(c).type;
+      return t === 'STAFF' || t === 'ADMIN';
+    }).reduce((s, c) => s + c.amount, 0);
+    const customerTotal = rows.filter((c) => resolveCollector(c).type === 'CUSTOMER').reduce((s, c) => s + c.amount, 0);
     return {
-      head: ['Receipt', 'Customer', 'Loan #', 'Amount', 'Mode', 'Date'],
+      head: ['Receipt', 'Customer', 'Loan #', 'Amount', 'Mode', 'Date', 'Collected by', 'Role'],
       body: rows.map((c) => {
         const loan = loanById.get(c.loanId);
-        return [c.receiptNo, loan ? custName(loan.customerId) : '—', loan?.loanNumber ?? '—', inr(c.amount), c.mode, fmtDate(c.date)];
+        const who = resolveCollector(c);
+        return [
+          c.receiptNo,
+          loan ? custName(loan.customerId) : '—',
+          loan?.loanNumber ?? '—',
+          inr(c.amount),
+          c.mode,
+          fmtDate(c.date),
+          who.name,
+          who.roleLabel,
+        ];
       }),
       rightAlignCols: [3],
       kpis: [
         { label: 'Payments', value: String(rows.length) },
         { label: 'Total Collected', value: inr(total) },
-        { label: 'Avg Payment', value: rows.length ? inr(Math.round(total / rows.length)) : '—' },
+        ...(agentTotal > 0 ? [{ label: 'Via agents', value: inr(agentTotal) }] : []),
+        ...(staffTotal > 0 ? [{ label: 'Via staff', value: inr(staffTotal) }] : []),
+        ...(customerTotal > 0 ? [{ label: 'Via customer', value: inr(customerTotal) }] : []),
       ],
     };
   }
@@ -218,6 +273,7 @@ interface LoanCollectionGroup {
   interest: number;    // profit portion — see the recognition rules below
   principal: number;   // collected − interest
   lastDate: string;    // most recent receipt in range
+  totalDue: number;    // schedule shortfall today (not loan outstanding)
 }
 
 /** Group the in-range receipts by loan, with the interest/principal split.
@@ -225,7 +281,12 @@ interface LoanCollectionGroup {
  *  truth for profit) so the two screens can never disagree:
  *   • interest-only behaviour → every non-PRINCIPAL payment is interest;
  *   • upfront/EMI → profit-last: the band (disbursed, disbursed + margin]. */
-function groupCollectionsByLoan(rows: Collection[], loans: Loan[], customers: Customer[]): LoanCollectionGroup[] {
+function groupCollectionsByLoan(
+  rows: Collection[],
+  loans: Loan[],
+  customers: Customer[],
+  dueForLoan: (loan: Loan) => number,
+): LoanCollectionGroup[] {
   const nameById = new Map(customers.map((c) => [c.id, c.name] as const));
   const loanById = new Map(loans.map((l) => [l.id, l] as const));
   const byLoan = new Map<number, Collection[]>();
@@ -261,6 +322,7 @@ function groupCollectionsByLoan(rows: Collection[], loans: Loan[], customers: Cu
       interest,
       principal: Math.max(0, collected - interest),
       lastDate: ordered[ordered.length - 1]?.date ?? '',
+      totalDue: loan.status === 'CLOSED' ? 0 : dueForLoan(loan),
     });
   }
   // Most recently active loan first.
@@ -300,7 +362,9 @@ export default function Reports() {
 
   const since = periodSince(filters.period);
   const q = query.trim().toLowerCase();
-  const buildArgs: BuildArgs = { since, q, loanStatus: filters.loanStatus, loanType: filters.loanType, expenseCat: filters.expenseCat };
+  const buildArgs: BuildArgs = {
+    since, q, loanStatus: filters.loanStatus, loanType: filters.loanType, expenseCat: filters.expenseCat, collector: filters.collector,
+  };
 
   // Preview report — client-side over loaded lists (instant, no fetch).
   const report = useMemo(
@@ -315,18 +379,22 @@ export default function Reports() {
     if (tab !== 'collections') return [];
     let rows = d.collections;
     if (since) rows = rows.filter((c) => c.date >= since);
+    if (filters.collector !== 'ALL') rows = rows.filter((c) => collectorMatchesFilter(c, filters.collector));
     if (q) {
       const loanById = new Map(d.loans.map((l) => [l.id, l] as const));
       const nameById = new Map(d.customers.map((c) => [c.id, c.name] as const));
       rows = rows.filter((c) => {
         const loan = loanById.get(c.loanId);
+        const who = resolveCollector(c);
         return c.receiptNo.toLowerCase().includes(q)
           || (loan ? (nameById.get(loan.customerId) ?? '').toLowerCase().includes(q) : false)
-          || (loan?.loanNumber.toLowerCase().includes(q) ?? false);
+          || (loan?.loanNumber.toLowerCase().includes(q) ?? false)
+          || who.name.toLowerCase().includes(q)
+          || who.roleLabel.toLowerCase().includes(q);
       });
     }
-    return groupCollectionsByLoan(rows, d.loans, d.customers);
-  }, [tab, since, q, d]);
+    return groupCollectionsByLoan(rows, d.loans, d.customers, (loan) => scheduleShortfall(d, loan));
+  }, [tab, since, q, filters.collector, d]);
 
   const meta = REPORTS.find((r) => r.key === tab)!;
   const periodLabel = PERIODS.find((p) => p.key === filters.period)!.label;
@@ -341,7 +409,9 @@ export default function Reports() {
   const tabTotal = tab === 'loans' ? d.loans.length : tab === 'customers' ? d.customers.length : tab === 'collections' ? d.collections.length : d.expenses.length;
   const draftMatched = useMemo(
     () => buildReport(tab, { customers: d.customers, loans: d.loans, collections: d.collections, expenses: d.expenses },
-      { since: periodSince(draft.period), q, loanStatus: draft.loanStatus, loanType: draft.loanType, expenseCat: draft.expenseCat }).body.length,
+      {
+        since: periodSince(draft.period), q, loanStatus: draft.loanStatus, loanType: draft.loanType, expenseCat: draft.expenseCat, collector: draft.collector,
+      }).body.length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tab, draft, query, d],
   );
@@ -484,8 +554,45 @@ export default function Reports() {
           </div>
         </div>
 
+        {tab === 'collections' && report.body.length > 0 && (
+          <div className="px-3.5 pb-1 pt-2 sm:px-6">
+            <div className="rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50/90 via-surface to-emerald-500/[.04] p-4 shadow-soft dark:border-white/[.08] dark:from-white/[.03] dark:to-emerald-500/[.06] sm:p-5">
+              <div className="mb-3.5 flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Collection summary</p>
+                  <p className="mt-0.5 text-[12px] text-muted">Totals for the selected period and filters</p>
+                </div>
+                {report.kpis.some((k) => k.label.startsWith('Via ')) && (
+                  <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-200">
+                    By collector
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(10.5rem,1fr))] [&>*]:min-w-0">
+                {report.kpis.map((k) => {
+                  const vis = COLLECTION_KPI_VISUAL[k.label] ?? { accent: '#6366f1', icon: Receipt };
+                  const Icon = vis.icon;
+                  return (
+                    <StatCard
+                      key={k.label}
+                      label={k.label}
+                      value={k.value}
+                      accent={vis.accent}
+                      icon={<Icon size={16} />}
+                      active={k.label === 'Total Collected'}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* preview table */}
-        <div className="overflow-x-auto px-3.5 pb-6 sm:px-6">
+        <div className={cn(
+          'px-3.5 pb-6 sm:px-6',
+          tab === 'collections' && report.body.length > 0 ? 'pt-4' : 'pt-0',
+        )}>
           {report.body.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
               <FileText size={30} className="text-slate-300 dark:text-white/20" />
@@ -493,9 +600,8 @@ export default function Reports() {
               <p className="text-[12px] text-muted/70">Try a wider period or clear the filters.</p>
             </div>
           ) : tab === 'collections' ? (
-            /* Collections preview: ONE ROW PER LOAN with its totals — click to see
-               the individual receipts. The flat receipt list still backs both
-               exports, so CSV/PDF output is unchanged. */
+            /* Collections preview: ONE ROW PER LOAN — click for receipts incl. collector. */
+            <div className="overflow-hidden rounded-2xl border border-slate-200/90 shadow-card dark:border-white/[.08]">
             <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead>
                 <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
@@ -503,10 +609,18 @@ export default function Reports() {
                   <th className="h-14 whitespace-nowrap px-6 align-middle">Loan</th>
                   <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Principal</th>
                   <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Collected</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">
+                    <span className="block">Total due</span>
+                    <span className="mt-0.5 block text-[10px] font-semibold normal-case tracking-normal text-white/75">On schedule</span>
+                  </th>
                   <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Interest</th>
                   <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Outstanding</th>
                   <th className="h-14 whitespace-nowrap px-6 align-middle">Payments</th>
-                  <th className="h-14 whitespace-nowrap px-6 align-middle">Last / Closed</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">Collected by</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">
+                    <span className="block">Last payment</span>
+                    <span className="mt-0.5 block text-[10px] font-semibold normal-case tracking-normal text-white/75">Loan status</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -529,13 +643,27 @@ export default function Reports() {
                       </td>
                       <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle tabular-nums text-ink/80">{inr(g.loan.principal)}</td>
                       <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{inr(g.collected)}</td>
+                      <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle font-semibold tabular-nums text-amber-700 dark:text-amber-300">
+                        {closed ? '—' : inr(g.totalDue)}
+                      </td>
                       <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle tabular-nums text-ink/80">{inr(g.interest)}</td>
                       <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle font-semibold tabular-nums text-ink">{closed ? inr(0) : inr(d.outstandingFor(g.loan))}</td>
                       <td className="h-[60px] whitespace-nowrap px-6 align-middle text-ink/80">{g.receipts.length}</td>
+                      <td className="h-[60px] max-w-[12rem] px-6 align-middle">
+                        {(() => {
+                          const col = loanCollectorDisplay(g.receipts);
+                          if (!col) return <span className="text-[12px] text-muted">—</span>;
+                          return (
+                            <div className="min-w-0">
+                              <p className="truncate text-[13px] font-semibold text-ink">{col.name}</p>
+                              <p className="text-[10px] font-medium text-muted">{col.roleLine}</p>
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="h-[60px] whitespace-nowrap px-6 align-middle">
-                        <div className="flex items-center gap-2">
-                          <span className="text-ink/80">{g.lastDate ? fmtDate(g.lastDate) : '—'}</span>
-                          {/* Green = settled and closed, blue = still running. */}
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                          <span className="text-[13px] font-medium tabular-nums text-ink">{g.lastDate ? fmtDate(g.lastDate) : '—'}</span>
                           <Badge tone={closed ? 'ok' : 'info'}>{closed ? 'Closed' : 'Active'}</Badge>
                         </div>
                       </td>
@@ -544,6 +672,7 @@ export default function Reports() {
                 })}
               </tbody>
             </table>
+            </div>
           ) : (
             <table className={cn(
               'w-full border-collapse text-sm',
@@ -720,10 +849,11 @@ export default function Reports() {
             </div>
 
             {/* Money summary */}
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
               {[
                 { k: 'Principal', v: inr(detail.loan.principal) },
-                { k: 'Collected', v: inr(detail.collected), tone: 'text-emerald-600 dark:text-emerald-400' },
+                { k: 'Collected (period)', v: inr(detail.collected), tone: 'text-emerald-600 dark:text-emerald-400' },
+                { k: 'Total due', v: detail.loan.status === 'CLOSED' ? '—' : inr(detail.totalDue), tone: 'text-amber-700 dark:text-amber-300' },
                 { k: 'Interest', v: inr(detail.interest) },
                 { k: detail.loan.status === 'CLOSED' ? 'Closed on' : 'Outstanding', v: detail.loan.status === 'CLOSED' ? fmtDate(detail.lastDate) : inr(d.outstandingFor(detail.loan)) },
               ].map((s) => (
@@ -743,25 +873,32 @@ export default function Reports() {
                 <table className="w-full min-w-[520px] text-sm">
                   <thead>
                     <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
-                      <th>Receipt</th><th>Date</th><th className="text-right">Amount</th><th>Mode</th><th>Remarks</th>
+                      <th>Receipt</th><th>Date</th><th className="text-right">Amount</th><th>Mode</th><th>Collected by</th><th>Role</th><th>Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {detail.receipts.map((c) => (
+                    {detail.receipts.map((c) => {
+                      const who = resolveCollector(c);
+                      return (
                       <tr key={c.id} className="border-t border-slate-100 transition-colors hover:bg-slate-50/70 dark:border-white/[.06] dark:hover:bg-white/[.03]">
                         <td className="px-3 py-2 font-mono text-xs text-ink">{c.receiptNo}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-ink/80">{fmtDate(c.date)}</td>
                         <td className="px-3 py-2 text-right font-semibold tabular-nums text-ink">{inr(c.amount)}</td>
                         <td className="px-3 py-2"><Badge tone="neutral">{c.mode}</Badge></td>
+                        <td className="px-3 py-2 text-[12px] font-medium text-ink">{who.name}</td>
+                        <td className="px-3 py-2">
+                          <Badge tone={collectorBadgeTone(who.type)}>{who.roleLabel}</Badge>
+                        </td>
                         <td className="px-3 py-2 text-muted">{c.remarks ?? '—'}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
                       <td className="px-3 py-2.5 text-[12px] font-bold uppercase tracking-wide text-muted" colSpan={2}>Total</td>
                       <td className="px-3 py-2.5 text-right font-display text-[14px] font-bold tabular-nums text-ink">{inr(detail.collected)}</td>
-                      <td colSpan={2} />
+                      <td colSpan={3} />
                     </tr>
                   </tfoot>
                 </table>
@@ -838,6 +975,17 @@ export default function Reports() {
           )}
 
           {/* Expense-only: category */}
+          {tab === 'collections' && (
+            <FilterCard icon={<UserCircle2 size={16} />} title="Collected by" color="violet" active={draft.collector !== 'ALL'}>
+              <SegGroup>
+                <Seg active={draft.collector === 'ALL'} onClick={() => setDraft({ ...draft, collector: 'ALL' })}>All</Seg>
+                <Seg active={draft.collector === 'RECOVERY_AGENT'} onClick={() => setDraft({ ...draft, collector: 'RECOVERY_AGENT' })} tone="emerald">Recovery agent</Seg>
+                <Seg active={draft.collector === 'STAFF'} onClick={() => setDraft({ ...draft, collector: 'STAFF' })}>Staff</Seg>
+                <Seg active={draft.collector === 'CUSTOMER'} onClick={() => setDraft({ ...draft, collector: 'CUSTOMER' })}>Customer</Seg>
+              </SegGroup>
+            </FilterCard>
+          )}
+
           {tab === 'expenses' && (
             <FilterCard icon={<Tag size={16} />} title="Category" color="emerald" active={draft.expenseCat !== 'ALL'}>
               <div className="flex flex-wrap gap-2">
@@ -849,8 +997,13 @@ export default function Reports() {
             </FilterCard>
           )}
 
-          {(tab === 'customers' || tab === 'collections') && (
-            <p className="px-1 text-[12px] text-muted">Use the search box and period to scope this report. Additional filters apply to Loans and Expenses.</p>
+          {tab === 'customers' && (
+            <p className="px-1 text-[12px] text-muted">Use the search box and period to scope this report.</p>
+          )}
+          {tab === 'collections' && (
+            <p className="px-1 text-[12px] text-muted">
+              Filter by who received the payment. Only receipts recorded with collector details (ledger or approved recovery) show a name; others appear as Unknown.
+            </p>
           )}
         </div>
       </Drawer>

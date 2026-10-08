@@ -1,7 +1,7 @@
 import type { Loan } from '@/mock/DataContext';
 import { behavesEmi, behavesInterestOnly, isInstalmentLoan } from '@/mock/DataContext';
 
-export type PortalPayPurpose = 'INTEREST' | 'FULL_SETTLEMENT' | 'OUTSTANDING';
+export type PortalPayPurpose = 'INTEREST' | 'FULL_SETTLEMENT' | 'OUTSTANDING' | 'CUSTOM';
 
 export interface LoanPortalSummary {
   paidTillDate: number;
@@ -84,6 +84,8 @@ export function payPurposeTitle(purpose: PortalPayPurpose): string {
       return 'Interest payment';
     case 'FULL_SETTLEMENT':
       return 'Full loan closure';
+    case 'CUSTOM':
+      return 'Custom payment';
     default:
       return 'Outstanding payment';
   }
@@ -95,6 +97,8 @@ export function payPurposeSubtitle(purpose: PortalPayPurpose): string {
       return 'Pays accrued interest due — principal remains until full closure.';
     case 'FULL_SETTLEMENT':
       return 'Principal plus all pending interest — closes the loan when recorded by your lender.';
+    case 'CUSTOM':
+      return 'Partial or other amount — your lender will allocate when the payment is recorded.';
     default:
       return 'Pays the balance currently due on your account.';
   }

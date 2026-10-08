@@ -260,7 +260,7 @@ export function RecoveryAssignmentCard({
             'text-success hover:bg-success/[.06] disabled:cursor-not-allowed disabled:opacity-45',
           )}
         >
-          <HandCoins size={16} /> Paid
+          <HandCoins size={16} /> Collect
         </button>
         <button
           type="button"

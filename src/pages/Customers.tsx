@@ -18,6 +18,10 @@ import { validateCustomerForm, INDIAN_STATES, type FieldErrors } from '@/lib/cus
 import { customerApi } from '@/services/customerApi';
 import { documentApi, type DocumentType } from '@/services/documentApi';
 import { ApiError } from '@/lib/api';
+import {
+  portalCredentialErrors,
+  provisionCustomerPortalUser,
+} from '@/lib/provisionCustomerPortalUser';
 import { downloadCSV } from '@/lib/export';
 import type { LoanType } from '@/mock/DataContext';
 import { LOAN_LABELS as LOAN_TYPE_LABELS } from '@/mock/DataContext';
@@ -141,6 +145,8 @@ export default function Customers() {
   const [errors, setErrors] = useState<FieldErrors>({});
   // Which required document tiles are missing (highlighted red on save attempt).
   const [docErrors, setDocErrors] = useState<DocumentType[]>([]);
+  const [portalPassword, setPortalPassword] = useState('');
+  const [portalConfirm, setPortalConfirm] = useState('');
 
   const cities = useMemo(
     () => Array.from(new Set(d.customers.map((c) => c.city).filter(Boolean))).sort() as string[],
@@ -194,7 +200,17 @@ export default function Customers() {
   // Open the drawer, seeding the draft from the currently-applied filters.
   const openFilters = () => { setDraft(filters); setFilterOpen(true); };
 
-  const openAdd = () => { setEditId(null); setKycKind('AADHAAR'); setLoanType('DAILY_COLLECTION'); setPendingDocs({}); setErrors({}); setDocErrors([]); setForm({ ...empty }); };
+  const openAdd = () => {
+    setEditId(null);
+    setKycKind('AADHAAR');
+    setLoanType('DAILY_COLLECTION');
+    setPendingDocs({});
+    setErrors({});
+    setDocErrors([]);
+    setPortalPassword('');
+    setPortalConfirm('');
+    setForm({ ...empty });
+  };
   const openEdit = (c: Customer) => {
     setEditId(c.id);
     setKycKind(c.hasPan && !c.hasAadhaar ? 'PAN' : 'AADHAAR');
@@ -319,8 +335,34 @@ export default function Customers() {
       );
       return;
     }
+    const emailForPortal = (payload.email ?? '').trim();
+    const portalErrors = !editId && emailForPortal
+      ? portalCredentialErrors(emailForPortal, portalPassword, portalConfirm)
+      : {};
+    if (Object.keys(portalErrors).length > 0) {
+      setErrors((prev) => ({ ...prev, ...portalErrors }));
+      toast('Set a portal password for this email', 'error');
+      return;
+    }
+
     setErrors({});
     setDocErrors([]);
+
+    const attachPortalLogin = (created: Customer) => {
+      if (editId || !emailForPortal || !portalPassword) return;
+      try {
+        provisionCustomerPortalUser({
+          customerId: created.id,
+          email: emailForPortal,
+          fullName: created.name,
+          password: portalPassword,
+        });
+      } catch (e) {
+        toast(e instanceof Error ? e.message : 'Portal login could not be created', 'error');
+        return false;
+      }
+      return true;
+    };
 
     // UI guard: block a mobile number that already belongs to another customer,
     // with an instant, clear message. The backend still enforces uniqueness.
@@ -362,7 +404,8 @@ export default function Customers() {
         const created = await customerApi.create(payload);
         await uploadPendingDocs(created.id);
         d.addCustomerRecord(created); // reflect in list without a refetch
-        toast('Customer added');
+        const portalOk = attachPortalLogin(created);
+        toast(portalOk === false ? 'Customer added (portal login failed)' : portalOk ? 'Customer added · portal login created' : 'Customer added');
       } catch (e) {
         const conflict = conflictField(e);
         if (conflict) {
@@ -376,9 +419,16 @@ export default function Customers() {
       }
     } else {
       const created = d.addCustomer(payload as Omit<Customer, 'id' | 'code' | 'createdAt'>);
-      if (created) await uploadPendingDocs(created.id);
-      toast('Customer added');
+      if (created) {
+        await uploadPendingDocs(created.id);
+        const portalOk = attachPortalLogin(created);
+        toast(portalOk === false ? 'Customer added (portal login failed)' : portalOk ? 'Customer added · portal login created' : 'Customer added');
+      } else {
+        toast('Customer added');
+      }
     }
+    setPortalPassword('');
+    setPortalConfirm('');
     setForm(null);
   };
 
@@ -648,7 +698,7 @@ export default function Customers() {
       {/* Add / Edit — right-side slide-over */}
       <Drawer
         open={!!form}
-        onClose={() => setForm(null)}
+        onClose={() => { setPortalPassword(''); setPortalConfirm(''); setForm(null); }}
         width="xl"
         icon={<User size={18} />}
         title={editId ? 'Edit Customer' : 'Add New Customer'}
@@ -672,6 +722,40 @@ export default function Customers() {
                 <Input label="Mobile Number *" placeholder="Enter mobile number" inputMode="numeric" maxLength={10} value={form.mobile ?? ''} onChange={(e) => setMobile('mobile', e.target.value)} error={errors.mobile} />
                 <Input label="Alternate Mobile" placeholder="Enter alternate number" inputMode="numeric" maxLength={10} value={form.altMobile ?? ''} onChange={(e) => setMobile('altMobile', e.target.value)} error={errors.altMobile} />
                 <Input label="Email" type="email" placeholder="Enter email address" value={form.email ?? ''} onChange={(e) => set('email', e.target.value)} error={errors.email} />
+                {!editId && (form.email ?? '').trim() && (
+                  <div className="sm:col-span-2 rounded-card border border-primary/20 bg-primary/5 p-4 dark:border-primary/30 dark:bg-primary/10">
+                    <p className="text-[13px] font-semibold text-ink">Customer portal login</p>
+                    <p className="mt-0.5 text-[11px] text-muted">
+                      Creates a Settings → Users entry with role <span className="font-medium text-ink">Customer portal</span> so the borrower can sign in.
+                    </p>
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <Input
+                        label="Portal password *"
+                        placeholder="At least 8 characters"
+                        revealPassword
+                        value={portalPassword}
+                        onChange={(e) => {
+                          setPortalPassword(e.target.value);
+                          setErrors((prev) => ({ ...prev, portalPassword: undefined, portalConfirm: undefined }));
+                        }}
+                        error={errors.portalPassword}
+                        autoComplete="new-password"
+                      />
+                      <Input
+                        label="Confirm password *"
+                        placeholder="Re-enter password"
+                        revealPassword
+                        value={portalConfirm}
+                        onChange={(e) => {
+                          setPortalConfirm(e.target.value);
+                          setErrors((prev) => ({ ...prev, portalConfirm: undefined }));
+                        }}
+                        error={errors.portalConfirm}
+                        autoComplete="new-password"
+                      />
+                    </div>
+                  </div>
+                )}
                 <Input label="Occupation" placeholder="Enter occupation" value={form.occupation ?? ''} onChange={(e) => set('occupation', e.target.value)} error={errors.occupation} />
                 <Input label="Monthly Income" type="number" placeholder="Enter monthly income" value={form.monthlyIncome ?? ''} onChange={(e) => set('monthlyIncome', e.target.value)} error={errors.monthlyIncome} />
                 <DatePicker label="Date of Birth" value={form.dateOfBirth ?? ''} onChange={(e) => set('dateOfBirth', e.target.value)} error={errors.dateOfBirth} />

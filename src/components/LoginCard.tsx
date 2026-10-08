@@ -8,25 +8,14 @@ interface LoginCardProps {
   onSubmit: (username: string, password: string) => void;
   loading?: boolean;
   error?: string | null;
+  /** When true, only the inner sign-in body is rendered (parent supplies the card chrome). */
+  embedded?: boolean;
 }
 
-export default function LoginCard({ onSubmit, loading = false, error = null }: LoginCardProps) {
+export default function LoginCard({ onSubmit, loading = false, error = null, embedded = false }: LoginCardProps) {
   const [mode, setMode] = useState<AuthMode>('signin');
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, x: 60 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-      className="w-full max-w-[min(100%,28rem)]"
-    >
-      <motion.div
-        animate={{ y: [0, -5, 0] }}
-        transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }}
-        className="relative rounded-[22px] border border-white/[.08] bg-[#022999]/75 p-5 backdrop-blur-2xl sm:rounded-[28px] sm:p-8 md:p-10 shadow-[0_32px_90px_-20px_rgba(0,0,0,.7),0_0_0_1px_rgba(255,255,255,.05),inset_0_1px_0_rgba(255,255,255,.06)]"
-      >
-        <div className="pointer-events-none absolute -top-20 left-1/2 h-40 w-80 -translate-x-1/2 rounded-full bg-[#0538cc]/35 blur-3xl" />
-
+  const body = (
         <div className="relative z-10">
           <div className="mb-6 flex flex-col items-center text-center">
             {/* The official logo as one lockup — mark, divider and wordmark
@@ -70,6 +59,24 @@ export default function LoginCard({ onSubmit, loading = false, error = null }: L
             <LoginForm onSubmit={onSubmit} loading={loading} mode={mode} onModeChange={setMode} />
           </motion.div>
         </div>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 60 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+      className="w-full max-w-[min(100%,28rem)]"
+    >
+      <motion.div
+        animate={{ y: [0, -5, 0] }}
+        transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }}
+        className="relative rounded-[22px] border border-white/[.08] bg-[#022999]/75 p-5 backdrop-blur-2xl sm:rounded-[28px] sm:p-8 md:p-10 shadow-[0_32px_90px_-20px_rgba(0,0,0,.7),0_0_0_1px_rgba(255,255,255,.05),inset_0_1px_0_rgba(255,255,255,.06)]"
+      >
+        <div className="pointer-events-none absolute -top-20 left-1/2 h-40 w-80 -translate-x-1/2 rounded-full bg-[#0538cc]/35 blur-3xl" />
+        {body}
       </motion.div>
     </motion.div>
   );

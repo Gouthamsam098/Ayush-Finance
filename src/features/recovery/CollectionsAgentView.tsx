@@ -170,7 +170,7 @@ export function CollectionsAgentView() {
             </p>
             <p className="mt-2 text-[13px] text-muted">
               {listFilter === 'pending'
-                ? 'Payments you send with Paid will appear here until admin approves.'
+                ? 'Payments you send with Collect will appear here until admin approves.'
                 : 'Try another search term.'}
             </p>
             {listFilter === 'pending' && (
