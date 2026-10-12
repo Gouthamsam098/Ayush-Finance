@@ -38,11 +38,11 @@ function PayOptionRow({
       aria-checked={active}
       onClick={onSelect}
       className={cn(
-        'relative flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-left transition-all sm:px-4 sm:py-4',
+        'relative flex w-full items-center gap-3 rounded-2xl border px-3 py-3.5 text-left transition-all sm:px-4 sm:py-4',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
         active
-          ? 'bg-primary/[.06] shadow-[inset_0_0_0_1px_rgba(79,70,229,.22)] dark:bg-primary/10'
-          : 'hover:bg-slate-50/90 dark:hover:bg-white/[.04]',
+          ? 'border-primary/25 bg-primary/[.05] shadow-[0_8px_20px_-14px_rgba(79,70,229,.35)] dark:bg-primary/10'
+          : 'border-transparent hover:border-slate-200/80 hover:bg-slate-50/80 dark:hover:border-white/[.06] dark:hover:bg-white/[.03]',
       )}
     >
       <span
@@ -81,22 +81,33 @@ function Metric({
   sub,
   highlight,
   delay,
+  featured,
 }: {
   label: string;
   value: string;
   sub?: string;
   highlight?: boolean;
   delay: number;
+  featured?: boolean;
 }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay }}
-      className="flex min-h-[72px] flex-col justify-center rounded-xl border border-slate-200/80 bg-slate-50/60 px-3 py-2.5 md:min-h-[64px] md:py-2 dark:border-white/[.06] dark:bg-white/[.03]"
+      className={cn(
+        'flex min-h-[72px] flex-col items-center justify-center rounded-2xl border px-3.5 py-3 text-center md:min-h-[68px]',
+        featured
+          ? 'border-primary/20 bg-gradient-to-br from-primary/[.08] via-surface to-violet-500/[.06] shadow-[0_8px_24px_-16px_rgba(79,70,229,.25)] dark:border-primary/25'
+          : 'border-slate-200/80 bg-slate-50/50 dark:border-white/[.06] dark:bg-white/[.03]',
+      )}
     >
-      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted">{label}</p>
-      <p className={cn('mt-1 font-display text-[15px] font-bold tabular-nums leading-tight', highlight ? 'text-danger' : 'text-ink')}>
+      <p className="w-full text-[10px] font-bold uppercase tracking-[0.12em] text-muted">{label}</p>
+      <p className={cn(
+        'mt-1 font-display font-bold tabular-nums leading-tight',
+        featured ? 'text-[1.35rem] sm:text-[1.5rem]' : 'text-[15px]',
+        highlight ? 'text-danger' : 'text-ink',
+      )}>
         {value}
       </p>
       {sub && <p className="mt-0.5 text-[10px] font-medium text-muted">{sub}</p>}
@@ -203,40 +214,50 @@ export function CustomerLoanCard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45, delay: Math.min(index, 4) * 0.07, ease: [0.22, 1, 0.36, 1] }}
-      className="overflow-hidden rounded-card border border-slate-200/80 bg-surface shadow-card dark:border-white/[.08]"
+      className="overflow-hidden rounded-[22px] border border-slate-200/80 bg-surface shadow-[0_20px_50px_-28px_rgba(30,39,64,.18)] ring-1 ring-slate-200/50 dark:border-white/[.08] dark:ring-white/[.06]"
     >
-      <div className="relative overflow-hidden bg-gradient-to-r from-[#1e3a8a] via-[#4f46e5] to-[#7c3aed] px-5 py-4 sm:px-6">
+      <div className="relative overflow-hidden bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#7c3aed] px-5 py-5 sm:px-6 sm:py-5">
         <motion.div
-          className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl"
-          animate={{ scale: [1, 1.08, 1], opacity: [0.5, 0.75, 0.5] }}
+          className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/12 blur-3xl"
+          animate={{ scale: [1, 1.06, 1], opacity: [0.45, 0.7, 0.45] }}
           transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
         />
         <div className="relative flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-white/70">Loan account</p>
-            <p className="font-display text-xl font-bold text-white">{loan.loanNumber}</p>
-            <p className="mt-0.5 text-[13px] text-white/85">{LOAN_LABELS[loan.type]}</p>
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/15 text-white ring-1 ring-white/25 backdrop-blur-sm">
+              <Landmark size={20} strokeWidth={2} />
+            </span>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/65">Loan account</p>
+              <p className="font-display text-[1.35rem] font-bold leading-tight text-white sm:text-2xl">{loan.loanNumber}</p>
+              <p className="mt-0.5 text-[13px] font-medium text-white/85">{LOAN_LABELS[loan.type]}</p>
+            </div>
           </div>
           <span
             className={cn(
-              'rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide',
+              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ring-1',
               loan.status === 'CLOSED'
-                ? 'bg-white/15 text-white/90'
+                ? 'bg-white/15 text-white/90 ring-white/20'
                 : overdue
-                  ? 'bg-danger/90 text-white shadow-[0_4px_14px_rgba(225,29,72,.4)]'
-                  : 'bg-emerald-400/25 text-emerald-50 ring-1 ring-emerald-300/40',
+                  ? 'bg-danger text-white shadow-[0_6px_18px_-6px_rgba(225,29,72,.55)] ring-danger/30'
+                  : 'bg-emerald-400/22 text-emerald-50 ring-emerald-200/35',
             )}
           >
+            <span className={cn('h-1.5 w-1.5 rounded-full', overdue ? 'bg-white' : 'bg-emerald-200 shadow-[0_0_8px_rgba(167,243,208,.9)]')} aria-hidden />
             {loan.status === 'CLOSED' ? 'Closed' : overdue ? 'Overdue' : 'Active'}
           </span>
         </div>
       </div>
 
-      <div className="space-y-4 p-4 sm:space-y-5 sm:p-6">
-        <div className="grid grid-cols-1 gap-2.5 min-[380px]:grid-cols-2 lg:grid-cols-3">
-          <Metric label="Principal" value={inr(loan.principal)} delay={0.05} />
-          <Metric label="Outstanding" value={inr(summary.outstanding)} highlight={overdue} delay={0.1} />
-          <Metric label="Paid till date" value={inr(summary.paidTillDate)} delay={0.15} />
+      <div className="space-y-5 p-4 sm:space-y-6 sm:p-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+          <Metric label="Outstanding" value={inr(summary.outstanding)} highlight={overdue} delay={0.05} featured />
+          <Metric label="Next due" value={nextDue ? fmtDate(nextDue) : '—'} delay={0.08} featured />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5 min-[400px]:grid-cols-3 lg:grid-cols-3">
+          <Metric label="Principal" value={inr(loan.principal)} delay={0.1} />
+          <Metric label="Paid till date" value={inr(summary.paidTillDate)} delay={0.12} />
           {summary.interestPerPeriod != null && (
             <Metric
               label="Interest"
@@ -259,7 +280,6 @@ export function CustomerLoanCard({
           {summary.scheduleDue != null && (
             <Metric label="Schedule due now" value={inr(summary.scheduleDue)} highlight delay={0.3} />
           )}
-          <Metric label="Next due" value={nextDue ? fmtDate(nextDue) : '—'} delay={0.32} />
         </div>
 
         {canPay && payOptions.length > 0 && (
@@ -267,27 +287,26 @@ export function CustomerLoanCard({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.18, duration: 0.4 }}
-            className="overflow-hidden rounded-2xl border border-slate-200/90 bg-surface shadow-card dark:border-white/[.08]"
+            className="overflow-hidden rounded-[20px] border border-slate-200/90 bg-surface shadow-[0_16px_40px_-24px_rgba(79,70,229,.2)] ring-1 ring-primary/[.08] dark:border-white/[.08] dark:ring-primary/15"
             aria-label="Make a payment"
           >
-            <div className="border-b border-slate-200/80 bg-gradient-to-r from-primary/[.04] via-surface to-violet-500/[.05] px-4 py-4 sm:px-5 dark:border-white/[.06]">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="relative overflow-hidden border-b border-slate-200/80 px-4 py-4 sm:px-5 sm:py-5 dark:border-white/[.06]">
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/[.06] via-transparent to-violet-500/[.08]" />
+              <div className="relative flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className="font-display text-[16px] font-bold tracking-tight text-ink sm:text-[17px]">Make a payment</h3>
+                  <h3 className="font-display text-[17px] font-bold tracking-tight text-ink">Make a payment</h3>
                   <p className="mt-1 max-w-md text-[12px] leading-relaxed text-muted sm:text-[13px]">
-                    Choose an amount. Your UPI app opens with the total pre-filled — no manual entry on our side.
+                    Pick what you want to pay. We open your UPI app with the amount ready.
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-surface/80 px-2.5 py-1 dark:border-white/[.08]">
-                  <Smartphone size={12} className="text-primary" aria-hidden />
-                  <span className="text-[10px] font-semibold text-muted">PhonePe</span>
-                  <span className="text-muted/40" aria-hidden>·</span>
-                  <span className="text-[10px] font-semibold text-muted">GPay</span>
+                <div className="flex items-center gap-2 rounded-full border border-slate-200/90 bg-surface/90 px-3 py-1.5 shadow-sm dark:border-white/[.08]">
+                  <Smartphone size={14} className="text-primary" aria-hidden />
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-muted">UPI</span>
                 </div>
               </div>
             </div>
 
-            <div className="space-y-1 p-2 sm:p-2.5" role="radiogroup" aria-label="Payment amount">
+            <div className="space-y-1.5 p-2.5 sm:p-3" role="radiogroup" aria-label="Payment amount">
               {presetOptions.map((opt) => (
                 <PayOptionRow
                   key={opt.id}
@@ -369,10 +388,10 @@ export function CustomerLoanCard({
               )}
             </div>
 
-            <div className="border-t border-slate-200/80 bg-slate-50/50 px-4 py-4 dark:border-white/[.06] dark:bg-white/[.02] sm:px-5">
-              <div className="mb-3 flex items-center justify-between gap-3 text-[12px]">
-                <span className="font-medium text-muted">You pay</span>
-                <span className="font-display text-lg font-bold tabular-nums text-ink">
+            <div className="border-t border-slate-200/80 bg-gradient-to-b from-slate-50/60 to-surface px-4 py-4 dark:border-white/[.06] dark:from-white/[.02] sm:px-5 sm:py-5">
+              <div className="mb-4 flex flex-col items-center justify-center gap-1 rounded-2xl border border-slate-200/80 bg-surface px-4 py-4 text-center dark:border-white/[.08]">
+                <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted">You pay</span>
+                <span className="font-display text-2xl font-bold tabular-nums text-ink">
                   {payValid ? inr(payAmount) : '—'}
                 </span>
               </div>
@@ -382,10 +401,10 @@ export function CustomerLoanCard({
                 disabled={!payValid}
                 onClick={() => onPay(payAmount, selected === 'CUSTOM' ? 'CUSTOM' : (activeOption?.id ?? 'OUTSTANDING'))}
                 className={cn(
-                  'group relative flex w-full items-center justify-center gap-2.5 overflow-hidden rounded-xl px-4 py-3.5',
-                  'bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 text-[14px] font-bold text-white',
-                  'shadow-[0_10px_28px_-12px_rgba(16,185,129,.5)] transition-all',
-                  'hover:shadow-[0_14px_32px_-10px_rgba(16,185,129,.55)] active:scale-[.995]',
+                  'group relative flex w-full items-center justify-center gap-2.5 overflow-hidden rounded-2xl px-4 py-4',
+                  'bg-gradient-to-r from-[#022999] via-[#4f46e5] to-[#7c3aed] text-[15px] font-bold text-white',
+                  'shadow-[0_14px_32px_-12px_rgba(79,70,229,.55)] transition-all',
+                  'hover:shadow-[0_18px_40px_-10px_rgba(79,70,229,.6)] active:scale-[.995]',
                   !payValid && 'cursor-not-allowed opacity-45 shadow-none hover:shadow-none',
                 )}
               >
@@ -417,7 +436,7 @@ export function CustomerLoanCard({
           whileHover={{ y: -1 }}
           whileTap={{ scale: 0.99 }}
           onClick={onStatement}
-          className="flex w-full min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200/90 bg-surface py-2.5 text-[13px] font-semibold text-ink transition-colors hover:border-primary/30 hover:bg-primary/[.04] md:mx-auto md:max-w-md md:min-h-10 dark:border-white/[.08] dark:hover:bg-white/[.03]"
+          className="flex w-full min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200/90 bg-surface py-3 text-[13px] font-semibold text-ink shadow-sm transition-all hover:border-primary/30 hover:bg-primary/[.04] hover:shadow-md md:mx-auto md:max-w-md dark:border-white/[.08] dark:hover:bg-white/[.03]"
         >
           <FileText size={16} className="text-primary" />
           View loan statement

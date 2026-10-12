@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Eye, ImageIcon, Smartphone } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { motion } from 'framer-motion';
+import { CalendarClock, Check, Eye, ImageIcon, Smartphone, X } from 'lucide-react';
 import { useData } from '@/mock/DataContext';
 import { inr, fmtDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -7,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/toast';
+import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { payPurposeTitle } from '@/features/customer-portal/loanPortalSummary';
 import {
   listPaymentProofs,
@@ -18,6 +20,189 @@ import {
 interface Props {
   canReview: boolean;
   onOpenLoan?: (loanId: number) => void;
+}
+
+function ProofStatusBadge({ status }: { status: PaymentProofRecord['status'] }) {
+  if (status === 'pending') {
+    return (
+      <Badge className="shrink-0 bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+        Pending
+      </Badge>
+    );
+  }
+  if (status === 'rejected') {
+    return (
+      <Badge className="shrink-0 bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200">
+        Rejected
+      </Badge>
+    );
+  }
+  return (
+    <Badge className="shrink-0 bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">
+      Accepted
+    </Badge>
+  );
+}
+
+function ProofMeta({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-xl border border-slate-200/70 bg-slate-50/50 px-3 py-2 dark:border-white/[.06] dark:bg-white/[.03]">
+      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-muted">{label}</p>
+      <div className="mt-0.5 truncate text-[13px] font-semibold text-ink">{children}</div>
+    </div>
+  );
+}
+
+function PaymentProofCard({
+  proof,
+  customerName,
+  customerId,
+  canReview,
+  onOpenLoan,
+  onView,
+  onReject,
+  onAccept,
+  index,
+}: {
+  proof: PaymentProofRecord;
+  customerName: string;
+  customerId: number;
+  canReview: boolean;
+  onOpenLoan?: (loanId: number) => void;
+  onView: () => void;
+  onReject: () => void;
+  onAccept: () => void;
+  index: number;
+}) {
+  const pending = proof.status === 'pending';
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: index * 0.05 }}
+      className={cn(
+        'overflow-hidden rounded-[18px] border bg-surface shadow-card transition-shadow hover:shadow-soft dark:border-white/[.08]',
+        pending ? 'border-amber-300/40 dark:border-amber-500/25' : 'border-slate-200/80',
+      )}
+    >
+      <div
+        className={cn(
+          'h-1 w-full',
+          pending
+            ? 'bg-gradient-to-r from-amber-400 via-amber-500 to-orange-400'
+            : proof.status === 'verified'
+              ? 'bg-gradient-to-r from-emerald-400 to-emerald-600'
+              : 'bg-gradient-to-r from-rose-400 to-rose-600',
+        )}
+        aria-hidden
+      />
+
+      <div className="p-4 sm:p-5">
+        <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:gap-4">
+          <button
+            type="button"
+            onClick={onView}
+            className="group/thumb relative mx-auto shrink-0 overflow-hidden rounded-2xl ring-1 ring-slate-200/80 transition-all hover:ring-primary/40 min-[420px]:mx-0 dark:ring-white/10"
+            aria-label={`View payment screenshot for ${proof.loanNumber}`}
+          >
+            <img
+              src={proof.dataUrl}
+              alt=""
+              className="h-[88px] w-[88px] object-cover transition-transform duration-300 group-hover/thumb:scale-[1.03] sm:h-[96px] sm:w-[96px]"
+            />
+            <span className="absolute inset-0 flex items-center justify-center bg-ink/0 transition-colors group-hover/thumb:bg-ink/25">
+              <span className="grid h-9 w-9 scale-90 place-items-center rounded-full bg-surface/95 text-primary opacity-0 shadow-soft transition-all group-hover/thumb:scale-100 group-hover/thumb:opacity-100">
+                <Eye size={16} aria-hidden />
+              </span>
+            </span>
+          </button>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <CustomerAvatar
+                  customerId={customerId}
+                  name={customerName}
+                  className="h-10 w-10 shrink-0 rounded-xl shadow-[0_6px_16px_-8px_rgba(79,70,229,.45)]"
+                />
+                <div className="min-w-0">
+                  <h3 className="truncate font-display text-[15px] font-bold text-ink sm:text-[16px]">
+                    {customerName}
+                  </h3>
+                  <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted">
+                    <CalendarClock size={12} className="shrink-0 opacity-70" aria-hidden />
+                    {fmtDate(proof.submittedAt.slice(0, 10))}
+                  </p>
+                </div>
+              </div>
+              <ProofStatusBadge status={proof.status} />
+            </div>
+
+            <p className="mt-3 font-display text-[22px] font-bold leading-none tabular-nums text-ink sm:text-[24px]">
+              {inr(proof.amountRupees)}
+            </p>
+            <p className="mt-1 text-[12px] text-muted">{payPurposeTitle(proof.purpose)}</p>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <ProofMeta label="Loan">
+                {onOpenLoan ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenLoan(proof.loanId)}
+                    className="truncate text-primary hover:underline"
+                  >
+                    {proof.loanNumber}
+                  </button>
+                ) : (
+                  <span className="truncate">{proof.loanNumber}</span>
+                )}
+              </ProofMeta>
+              <ProofMeta label="File">
+                <span className="truncate font-medium text-muted">{proof.fileName}</span>
+              </ProofMeta>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className={cn(
+          'border-t border-slate-100 dark:border-white/[.06]',
+          canReview && pending && 'action-bar-3',
+        )}
+      >
+        <button
+          type="button"
+          onClick={onView}
+          className="flex min-h-11 items-center justify-center gap-1.5 py-3 text-[12px] font-semibold text-primary transition-colors hover:bg-primary/[.05] sm:text-[13px]"
+        >
+          <Eye size={15} aria-hidden />
+          View
+        </button>
+        {canReview && pending && (
+          <>
+            <button
+              type="button"
+              onClick={onReject}
+              className="flex min-h-11 items-center justify-center gap-1.5 py-3 text-[12px] font-semibold text-danger transition-colors hover:bg-danger/[.06] sm:text-[13px]"
+            >
+              <X size={15} aria-hidden />
+              Reject
+            </button>
+            <button
+              type="button"
+              onClick={onAccept}
+              className="flex min-h-11 items-center justify-center gap-1.5 bg-success/[.04] py-3 text-[12px] font-semibold text-success transition-colors hover:bg-success/[.10] sm:text-[13px]"
+            >
+              <Check size={15} aria-hidden />
+              Accept
+            </button>
+          </>
+        )}
+      </div>
+    </motion.article>
+  );
 }
 
 export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
@@ -40,14 +225,15 @@ export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
   const customerName = (customerId: number) =>
     d.customers.find((c) => c.id === customerId)?.name ?? `Customer #${customerId}`;
 
-  const markReviewed = (id: string) => {
-    const updated = setPaymentProofStatus(id, 'verified');
+  const setStatus = (id: string, status: 'verified' | 'rejected', closeViewer?: boolean) => {
+    const updated = setPaymentProofStatus(id, status);
     if (!updated) {
       toast('Could not update proof status', 'error');
       return;
     }
-    toast('Marked as reviewed', 'success');
+    toast(status === 'verified' ? 'Payment proof accepted' : 'Payment proof rejected', status === 'verified' ? 'success' : 'error');
     refresh();
+    if (closeViewer) setViewer(null);
   };
 
   if (proofs.length === 0) {
@@ -96,74 +282,21 @@ export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left">
-            <thead>
-              <tr className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-wider text-muted dark:border-white/[.06]">
-                <th className="px-4 py-2.5 sm:px-5">Submitted</th>
-                <th className="px-4 py-2.5">Customer</th>
-                <th className="px-4 py-2.5">Loan</th>
-                <th className="px-4 py-2.5">Amount</th>
-                <th className="px-4 py-2.5">Purpose</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5 text-right sm:px-5">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-white/[.05]">
-              {proofs.map((p) => (
-                <tr key={p.id} className="text-[13px] text-ink">
-                  <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted sm:px-5">
-                    {fmtDate(p.submittedAt.slice(0, 10))}
-                  </td>
-                  <td className="max-w-[10rem] truncate px-4 py-3 font-medium">{customerName(p.customerId)}</td>
-                  <td className="px-4 py-3">
-                    {onOpenLoan ? (
-                      <button
-                        type="button"
-                        onClick={() => onOpenLoan(p.loanId)}
-                        className="font-semibold text-primary hover:underline"
-                      >
-                        {p.loanNumber}
-                      </button>
-                    ) : (
-                      <span className="font-semibold">{p.loanNumber}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-semibold tabular-nums">{inr(p.amountRupees)}</td>
-                  <td className="px-4 py-3 text-muted">{payPurposeTitle(p.purpose)}</td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      className={cn(
-                        p.status === 'pending'
-                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200'
-                          : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200',
-                      )}
-                    >
-                      {p.status === 'pending' ? 'Pending' : 'Reviewed'}
-                    </Badge>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right sm:px-5">
-                    <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
-                      <Button type="button" variant="ghost" className="h-8 px-2.5 text-[12px]" onClick={() => setViewer(p)}>
-                        <Eye size={14} />
-                        View
-                      </Button>
-                      {canReview && p.status === 'pending' && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="h-8 px-2.5 text-[12px] text-success"
-                          onClick={() => markReviewed(p.id)}
-                        >
-                          Mark reviewed
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-2">
+          {proofs.map((p, i) => (
+            <PaymentProofCard
+              key={p.id}
+              proof={p}
+              customerId={p.customerId}
+              customerName={customerName(p.customerId)}
+              canReview={canReview}
+              onOpenLoan={onOpenLoan}
+              onView={() => setViewer(p)}
+              onReject={() => setStatus(p.id, 'rejected')}
+              onAccept={() => setStatus(p.id, 'verified')}
+              index={i}
+            />
+          ))}
         </div>
       </section>
 
@@ -182,9 +315,20 @@ export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
             <>
               <Button variant="ghost" onClick={() => setViewer(null)}>Close</Button>
               {canReview && viewer.status === 'pending' && (
-                <Button onClick={() => { markReviewed(viewer.id); setViewer(null); }}>
-                  Mark reviewed
-                </Button>
+                <>
+                  <Button
+                    variant="ghost"
+                    className="text-danger hover:border-danger/30 hover:bg-danger/5"
+                    onClick={() => setStatus(viewer.id, 'rejected', true)}
+                  >
+                    <X size={15} />
+                    Reject
+                  </Button>
+                  <Button variant="success" onClick={() => setStatus(viewer.id, 'verified', true)}>
+                    <Check size={15} />
+                    Accept
+                  </Button>
+                </>
               )}
             </>
           )

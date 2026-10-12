@@ -109,7 +109,7 @@ export default function Expenses() {
         subtitle={filter === 'ALL' ? `${d.expenses.length} entries` : `${rows.length} shown · ${d.expenses.length} total`}
         actions={editable ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={() => setForm(blank())}>Add Expense</HeaderPrimaryButton> : undefined}
       />
-      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="page-content-shell flex min-w-0 w-full flex-1 flex-col gap-5">
 
       {/* current + previous 2 months — click a card to list that month's rows */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

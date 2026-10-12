@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle2, ImagePlus, ShieldCheck, Upload, X } from 'lucide-react';
+import { CheckCircle2, CircleX, Clock, ImagePlus, ShieldCheck, Sparkles, Upload, X } from 'lucide-react';
 import { inr, fmtDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import {
   persistPaymentProof,
   PAYMENT_PROOF_ACCEPT,
   PAYMENT_PROOF_MAX_BYTES,
+  PAYMENT_PROOF_STORAGE_KEY,
   PAYMENT_PROOF_SUBMITTED_EVENT,
   type PaymentProofRecord,
 } from '@/features/customer-portal/paymentProofStore';
@@ -25,6 +26,92 @@ interface Props {
 
 type PickedFile = { name: string; mime: string; dataUrl: string; sizeLabel: string };
 
+function PaymentThankYouModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open, onClose]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="payment-thank-you-title"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          <motion.button
+            type="button"
+            aria-label="Close"
+            className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+          />
+          <motion.div
+            className="relative z-10 w-full max-w-sm overflow-hidden rounded-card border border-slate-200/80 bg-surface shadow-glow dark:border-white/[.08]"
+            initial={{ opacity: 0, scale: 0.88, y: 24 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 12 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+          >
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-br from-primary/15 via-violet-500/10 to-transparent" />
+            <div className="relative px-6 pb-6 pt-8 text-center">
+              <motion.div
+                className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-gradient-to-br from-primary to-violet-600 text-white shadow-[0_12px_28px_-10px_rgba(79,70,229,.55)]"
+                initial={{ scale: 0, rotate: -12 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ type: 'spring', stiffness: 420, damping: 18, delay: 0.08 }}
+              >
+                <CheckCircle2 size={32} strokeWidth={2.25} aria-hidden />
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15, duration: 0.35 }}
+              >
+                <p id="payment-thank-you-title" className="font-display text-lg font-bold text-ink sm:text-xl">
+                  Thank you!
+                </p>
+                <p className="mt-2 text-[13px] leading-relaxed text-muted sm:text-[14px]">
+                  Your payment will be confirmed once admin approves.
+                </p>
+                <p className="mt-3 inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-primary">
+                  <Sparkles size={12} aria-hidden />
+                  We&apos;ll notify you after verification
+                </p>
+              </motion.div>
+              <motion.div
+                className="mt-6"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.28, duration: 0.3 }}
+              >
+                <Button type="button" className="w-full sm:w-auto sm:min-w-[140px]" onClick={onClose}>
+                  Got it
+                </Button>
+              </motion.div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export function PaymentProofUpload({
   customerId, loanId, loanNumber, amountRupees, purpose,
 }: Props) {
@@ -33,6 +120,7 @@ export function PaymentProofUpload({
   const [dragOver, setDragOver] = useState(false);
   const [picked, setPicked] = useState<PickedFile | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [thankYouOpen, setThankYouOpen] = useState(false);
   const [latest, setLatest] = useState<PaymentProofRecord | null>(() => getLatestPaymentProof(loanId));
 
   const refreshLatest = useCallback(() => {
@@ -45,8 +133,20 @@ export function PaymentProofUpload({
       const detail = (e as CustomEvent<PaymentProofRecord>).detail;
       if (detail?.loanId === loanId) refreshLatest();
     };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PAYMENT_PROOF_STORAGE_KEY) refreshLatest();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshLatest();
+    };
     window.addEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, onSubmitted);
-    return () => window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, onSubmitted);
+    window.addEventListener('storage', onStorage);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, onSubmitted);
+      window.removeEventListener('storage', onStorage);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [loanId, refreshLatest]);
 
   const ingestFile = (file: File | undefined) => {
@@ -88,22 +188,30 @@ export function PaymentProofUpload({
       });
       setPicked(null);
       if (inputRef.current) inputRef.current.value = '';
-      toast('Payment proof submitted. Your lender will verify it shortly.', 'success');
       refreshLatest();
+      setThankYouOpen(true);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const pending = latest?.status === 'pending';
+  const status = latest?.status;
+  const pending = status === 'pending';
+  const rejected = status === 'rejected';
+  const accepted = status === 'verified';
 
   return (
+    <>
+    <PaymentThankYouModal open={thankYouOpen} onClose={() => setThankYouOpen(false)} />
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: 0.2 }}
       className={cn(
-        'rounded-xl border border-violet-200/60 bg-surface/90 px-3 py-2.5 shadow-soft dark:border-violet-500/15 dark:bg-surface',
+        'rounded-xl border bg-surface/90 px-3 py-2.5 shadow-soft dark:bg-surface',
+        rejected
+          ? 'border-rose-300/55 dark:border-rose-500/25'
+          : 'border-violet-200/60 dark:border-violet-500/15',
         dragOver && 'ring-2 ring-primary/20',
       )}
       onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -122,25 +230,55 @@ export function PaymentProofUpload({
         onChange={(e) => ingestFile(e.target.files?.[0])}
       />
 
-      <div className="flex items-center gap-2.5">
+      <div className="flex flex-col gap-2 xs:flex-row xs:items-center xs:gap-2.5">
+        <div className="flex min-w-0 flex-1 items-start gap-2.5">
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-500/12 text-violet-600 dark:text-violet-300">
           <ShieldCheck size={16} strokeWidth={2} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <p className="font-display text-[12px] font-bold text-ink sm:text-[13px]">Payment screenshot</p>
-            {pending && latest && (
+            {latest && pending && (
               <span className="rounded-full bg-amber-500/12 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-800 dark:text-amber-200">
-                Pending
+                Pending review
+              </span>
+            )}
+            {latest && rejected && (
+              <span className="rounded-full bg-rose-500/12 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-rose-800 dark:text-rose-200">
+                Rejected
+              </span>
+            )}
+            {latest && accepted && (
+              <span className="rounded-full bg-emerald-500/12 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-200">
+                Accepted
               </span>
             )}
           </div>
           {latest && !picked && (
-            <p className="mt-0.5 truncate text-[10px] text-muted">
-              <CheckCircle2 size={10} className="mr-0.5 inline text-success" aria-hidden />
-              {fmtDate(latest.submittedAt.slice(0, 10))} · {inr(latest.amountRupees)}
+            <p className="mt-0.5 text-[10px] leading-relaxed text-muted">
+              {rejected ? (
+                <>
+                  <CircleX size={10} className="mr-0.5 inline text-danger" aria-hidden />
+                  Admin could not verify your screenshot. Please upload again.
+                </>
+              ) : pending ? (
+                <>
+                  <Clock size={10} className="mr-0.5 inline text-amber-600 dark:text-amber-400" aria-hidden />
+                  <span className="truncate">
+                    Submitted {fmtDate(latest.submittedAt.slice(0, 10))} · {inr(latest.amountRupees)} — awaiting approval
+                  </span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={10} className="mr-0.5 inline text-success" aria-hidden />
+                  <span className="truncate">
+                    {fmtDate(latest.submittedAt.slice(0, 10))} · {inr(latest.amountRupees)} — payment confirmed
+                  </span>
+                </>
+              )}
             </p>
           )}
+        </div>
         </div>
 
         <AnimatePresence mode="wait">
@@ -153,13 +291,13 @@ export function PaymentProofUpload({
               exit={{ opacity: 0 }}
               onClick={() => inputRef.current?.click()}
               className={cn(
-                'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-semibold transition-colors',
+                'inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-[11px] font-semibold transition-colors xs:h-9 xs:w-auto',
                 'border-violet-300/45 bg-violet-500/[.06] text-violet-800 hover:bg-violet-500/12',
                 'dark:border-violet-500/30 dark:text-violet-200 dark:hover:bg-violet-500/15',
               )}
             >
               <ImagePlus size={14} aria-hidden />
-              Add
+              {rejected ? 'Upload again' : 'Add'}
             </motion.button>
           ) : null}
         </AnimatePresence>
@@ -174,7 +312,7 @@ export function PaymentProofUpload({
             exit={{ opacity: 0, height: 0 }}
             className="overflow-hidden"
           >
-            <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-slate-200/80 bg-slate-50/50 p-2 dark:border-white/[.06] dark:bg-white/[.03]">
+            <div className="mt-2.5 flex flex-col gap-2 rounded-lg border border-slate-200/80 bg-slate-50/50 p-2 min-[400px]:flex-row min-[400px]:items-center dark:border-white/[.06] dark:bg-white/[.03]">
               <img
                 src={picked.dataUrl}
                 alt=""
@@ -211,5 +349,6 @@ export function PaymentProofUpload({
         )}
       </AnimatePresence>
     </motion.div>
+    </>
   );
 }

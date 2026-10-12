@@ -412,7 +412,7 @@ export default function Investments() {
         actions={editable ? <HeaderPrimaryButton onClick={openCreate} icon={<Plus size={16} />}>Add Investor</HeaderPrimaryButton> : undefined}
       />
 
-      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="page-content-shell flex min-w-0 w-full flex-1 flex-col gap-5">
         {/* ── Hero: the one number that matters (capital deployed) plus the
             cost of carrying it, on the brand gradient. */}
         {items.length > 0 && (

@@ -1,13 +1,15 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { inr } from '@/lib/format';
 import { config } from '@/lib/config';
 import { openUpiApp, upiAmountString } from '@/lib/upiPay';
+import { cn } from '@/lib/utils';
 import type { Loan } from '@/mock/DataContext';
 import type { PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 import { payPurposeSubtitle, payPurposeTitle } from '@/features/customer-portal/loanPortalSummary';
-import { ArrowRight, Lock, Smartphone } from 'lucide-react';
+import { ArrowRight, Lock, ShieldCheck, Smartphone } from 'lucide-react';
 
 function PhonePeIcon({ className }: { className?: string }) {
   return (
@@ -42,6 +44,7 @@ interface Props {
 }
 
 export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 'OUTSTANDING' }: Props) {
+  const [focusApp, setFocusApp] = useState<'phonepe' | 'gpay' | null>(null);
   const note = `Loan ${loan.loanNumber} ${payPurposeTitle(purpose)}`;
   const canPay = amountRupees > 0 && loan.status === 'ACTIVE';
 
@@ -57,72 +60,117 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
       wide
       title={payPurposeTitle(purpose)}
       subtitle={`${loan.loanNumber} · Secure UPI`}
-      footer={<Button variant="ghost" onClick={onClose}>Cancel</Button>}
+      footer={
+        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="ghost" onClick={onClose} className="w-full sm:w-auto">Cancel</Button>
+        </div>
+      }
     >
-      <div className="space-y-6">
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#0f172a] via-[#1e3a8a] to-[#4f46e5] px-6 py-7 text-center shadow-[0_20px_50px_-20px_rgba(37,99,235,.55)]">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,.15),transparent_50%)]" />
-          <p className="relative text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">{payPurposeTitle(purpose)}</p>
-          <p className="relative mx-auto mt-2 max-w-sm text-[12px] leading-relaxed text-white/75">{payPurposeSubtitle(purpose)}</p>
-          <p className="relative mt-4 text-[11px] font-bold uppercase tracking-[0.14em] text-white/50">Amount</p>
-          <p className="relative mt-2 font-display text-3xl font-bold tabular-nums tracking-tight text-white sm:text-[2.75rem]">
-            {inr(amountRupees)}
-          </p>
-          <p className="relative mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[11px] font-medium text-white/85">
-            <Lock size={12} /> {config.merchantUpiVpa}
-          </p>
-          {!canPay && (
-            <p className="relative mt-3 text-[12px] text-red-200">No payment due on this loan.</p>
-          )}
+      <div className="space-y-7">
+        <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-[#022999] via-[#4f46e5] to-[#a855f7] px-6 py-8 text-center shadow-[0_24px_60px_-24px_rgba(79,70,229,.65)]">
+          <motion.div
+            className="pointer-events-none absolute -left-12 top-0 h-40 w-40 rounded-full bg-white/15 blur-3xl"
+            animate={{ opacity: [0.4, 0.7, 0.4], scale: [1, 1.08, 1] }}
+            transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <motion.div
+            className="pointer-events-none absolute -right-8 bottom-0 h-36 w-36 rounded-full bg-fuchsia-400/25 blur-3xl"
+            animate={{ opacity: [0.3, 0.55, 0.3] }}
+            transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut', delay: 0.5 }}
+          />
+          <div className="relative">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/12 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white/90 ring-1 ring-white/20">
+              <ShieldCheck size={12} /> {payPurposeTitle(purpose)}
+            </span>
+            <p className="mx-auto mt-3 max-w-sm text-[13px] leading-relaxed text-white/80">
+              {payPurposeSubtitle(purpose)}
+            </p>
+            <p className="mt-6 text-[11px] font-bold uppercase tracking-[0.2em] text-white/55">Amount to pay</p>
+            <p className="mt-2 font-display text-[2.5rem] font-bold leading-none tabular-nums tracking-tight text-white sm:text-[3rem]">
+              {inr(amountRupees)}
+            </p>
+            <p className="mt-4 inline-flex max-w-full items-center gap-2 rounded-full bg-black/20 px-4 py-2 text-[12px] font-medium text-white/90 ring-1 ring-white/15 backdrop-blur-sm">
+              <Lock size={13} className="shrink-0 opacity-90" />
+              <span className="truncate font-mono">{config.merchantUpiVpa}</span>
+            </p>
+            {!canPay && (
+              <p className="mt-4 text-[13px] font-medium text-rose-200">No payment due on this loan.</p>
+            )}
+          </div>
         </div>
 
         <div>
-          <div className="mb-3 flex items-center gap-2">
-            <Smartphone size={16} className="text-primary" />
-            <p className="text-[13px] font-semibold text-ink">Choose payment app</p>
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary">
+                <Smartphone size={17} />
+              </span>
+              <div>
+                <p className="font-display text-[15px] font-bold text-ink">Choose payment app</p>
+                <p className="text-[12px] text-muted">Amount is pre-filled — tap to open</p>
+              </div>
+            </div>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <motion.button
-              type="button"
-              disabled={!canPay}
-              whileHover={canPay ? { y: -2 } : undefined}
-              whileTap={canPay ? { scale: 0.98 } : undefined}
-              onClick={() => pay('phonepe')}
-              className="touch-target group relative flex min-h-[7.5rem] flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border border-[#5f259f]/30 bg-gradient-to-b from-[#5f259f]/[.12] to-[#5f259f]/[.04] p-5 text-center transition-shadow active:scale-[.99] sm:p-6 sm:hover:shadow-[0_16px_40px_-16px_rgba(95,37,159,.5)] disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <PhonePeIcon className="h-14 w-14 shadow-[0_8px_24px_rgba(95,37,159,.4)]" />
-              <div>
-                <p className="font-display text-lg font-bold text-[#5f259f] dark:text-[#d4b8f0]">PhonePe</p>
-                <p className="mt-0.5 text-[12px] text-muted">Opens PhonePe with amount filled</p>
-              </div>
-              <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#5f259f] opacity-0 transition-opacity group-hover:opacity-100">
-                Continue <ArrowRight size={14} />
-              </span>
-            </motion.button>
 
-            <motion.button
-              type="button"
-              disabled={!canPay}
-              whileHover={canPay ? { y: -2 } : undefined}
-              whileTap={canPay ? { scale: 0.98 } : undefined}
-              onClick={() => pay('gpay')}
-              className="touch-target group relative flex min-h-[7.5rem] flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border border-slate-200/90 bg-surface p-5 text-center shadow-soft transition-shadow active:scale-[.99] sm:p-6 sm:hover:border-slate-300 sm:hover:shadow-[0_16px_40px_-18px_rgba(30,39,64,.2)] disabled:cursor-not-allowed disabled:opacity-45 dark:border-white/[.1] dark:sm:hover:border-white/20"
-            >
-              <GooglePayIcon className="h-14 w-14" />
-              <div>
-                <p className="font-display text-lg font-bold text-ink">Google Pay</p>
-                <p className="mt-0.5 text-[12px] text-muted">Opens GPay with amount filled</p>
-              </div>
-              <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-primary opacity-0 transition-opacity group-hover:opacity-100">
-                Continue <ArrowRight size={14} />
-              </span>
-            </motion.button>
+          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+            {(['phonepe', 'gpay'] as const).map((app) => {
+              const isPhonePe = app === 'phonepe';
+              const active = focusApp === app;
+              return (
+                <motion.button
+                  key={app}
+                  type="button"
+                  disabled={!canPay}
+                  onFocus={() => setFocusApp(app)}
+                  onBlur={() => setFocusApp(null)}
+                  whileHover={canPay ? { y: -3 } : undefined}
+                  whileTap={canPay ? { scale: 0.985 } : undefined}
+                  onClick={() => pay(app)}
+                  className={cn(
+                    'group relative flex min-h-[10.5rem] flex-col items-center justify-between gap-3 overflow-hidden rounded-[20px] border p-5 text-center transition-all sm:min-h-[11rem] sm:p-6',
+                    'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/25',
+                    isPhonePe
+                      ? 'border-[#5f259f]/35 bg-gradient-to-b from-[#5f259f]/14 via-[#5f259f]/[.06] to-surface shadow-[0_12px_32px_-16px_rgba(95,37,159,.45)]'
+                      : 'border-slate-200/90 bg-gradient-to-b from-slate-50/90 to-surface dark:border-white/[.1] dark:from-white/[.04]',
+                    active && isPhonePe && 'ring-2 ring-[#5f259f]/40',
+                    active && !isPhonePe && 'ring-2 ring-primary/30',
+                    !canPay && 'cursor-not-allowed opacity-45',
+                  )}
+                >
+                  {isPhonePe ? (
+                    <PhonePeIcon className="h-[3.25rem] w-[3.25rem] shadow-[0_10px_28px_rgba(95,37,159,.45)]" />
+                  ) : (
+                    <GooglePayIcon className="h-[3.25rem] w-[3.25rem]" />
+                  )}
+                  <div>
+                    <p className={cn('font-display text-lg font-bold', isPhonePe ? 'text-[#5f259f] dark:text-[#d4b8f0]' : 'text-ink')}>
+                      {isPhonePe ? 'PhonePe' : 'Google Pay'}
+                    </p>
+                    <p className="mt-1 text-[12px] leading-snug text-muted">
+                      {isPhonePe ? 'Opens PhonePe with amount filled' : 'Opens GPay with amount filled'}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-bold transition-all',
+                      isPhonePe
+                        ? 'bg-[#5f259f] text-white shadow-[0_6px_16px_-6px_rgba(95,37,159,.55)] group-hover:shadow-[0_8px_20px_-6px_rgba(95,37,159,.6)]'
+                        : 'bg-slate-900 text-white dark:bg-white dark:text-slate-900',
+                      'opacity-100 sm:opacity-90 sm:group-hover:opacity-100',
+                    )}
+                  >
+                    Continue <ArrowRight size={14} />
+                  </span>
+                </motion.button>
+              );
+            })}
           </div>
         </div>
 
-        <p className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-center text-[11px] leading-relaxed text-muted dark:border-white/[.06] dark:bg-white/[.02]">
-          Amount ₹{upiAmountString(amountRupees)} will be sent to <span className="font-semibold text-ink">{config.merchantPayeeName}</span>.
-          Your lender updates the ledger after they receive payment.
+        <p className="rounded-2xl border border-slate-200/80 bg-gradient-to-r from-slate-50/90 via-surface to-primary/[.03] px-4 py-3.5 text-center text-[11.5px] leading-relaxed text-muted dark:border-white/[.08] dark:from-white/[.03]">
+          <span className="font-semibold text-ink">₹{upiAmountString(amountRupees)}</span> will be sent to{' '}
+          <span className="font-semibold text-ink">{config.merchantPayeeName}</span>.
+          Your lender updates the ledger after payment is received.
         </p>
       </div>
     </Dialog>

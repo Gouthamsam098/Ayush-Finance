@@ -211,7 +211,7 @@ export default function Collections() {
         }
       />
 
-      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="page-content-shell">
       {showRecoveryTab && pendingRecovery > 0 && staffTab === 'portfolio' && (
         <button
           type="button"
@@ -240,12 +240,12 @@ export default function Collections() {
         </button>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="-mx-0.5 flex gap-2 overflow-x-auto pb-1 scrollbar-none sm:mx-0 sm:flex-wrap sm:overflow-visible sm:pb-0">
         <button
           type="button"
           onClick={() => setStaffTab('portfolio')}
           className={cn(
-            'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+            'inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
             staffTab === 'portfolio'
               ? 'bg-gradient-to-r from-blue-700 to-blue-500 text-white shadow-[0_4px_14px_rgba(37,99,235,.35)]'
               : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
@@ -258,7 +258,7 @@ export default function Collections() {
             type="button"
             onClick={() => setStaffTab('recovery')}
             className={cn(
-              'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+              'inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
               staffTab === 'recovery'
                 ? 'bg-gradient-to-r from-emerald-700 to-teal-600 text-white shadow-[0_4px_14px_rgba(16,185,129,.35)]'
                 : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
@@ -274,7 +274,7 @@ export default function Collections() {
           type="button"
           onClick={() => setStaffTab('portal-proofs')}
           className={cn(
-            'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+            'inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
             staffTab === 'portal-proofs'
               ? 'bg-gradient-to-r from-violet-700 to-indigo-600 text-white shadow-[0_4px_14px_rgba(109,40,217,.35)]'
               : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
@@ -341,12 +341,12 @@ export default function Collections() {
       </div>
 
       {/* Loan type filter chips */}
-      <div className="flex flex-wrap gap-2">
+      <div className="-mx-0.5 flex gap-2 overflow-x-auto pb-1 scrollbar-none sm:mx-0 sm:flex-wrap sm:overflow-visible sm:pb-0">
         {([['ALL', 'All'], ...(Object.keys(LOAN_LABELS) as LoanType[]).map((t) => [t, LOAN_LABELS[t]] as const)] as [string, string][]).map(([val, label]) => {
           const on = typeFilter === val;
           return (
             <button key={val} onClick={() => setTypeFilter(val as LoanType | 'ALL')}
-              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
+              className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all ${
                 on
                   ? 'bg-gradient-to-r from-blue-700 to-blue-500 text-white shadow-[0_4px_14px_rgba(37,99,235,.35)]'
                   : 'border border-slate-200/90 bg-white text-muted hover:border-primary/40 hover:text-primary dark:border-white/[.07] dark:bg-surface dark:hover:bg-white/[.05]'

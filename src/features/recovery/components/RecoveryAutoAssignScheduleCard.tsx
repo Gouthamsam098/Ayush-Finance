@@ -27,9 +27,11 @@ function formatLastRun(key: string | null): string {
 interface Props {
   /** Bumps when assignments change so “last run” refreshes. */
   assignmentVersion: number;
+  /** Inside Settings collapsible — hides duplicate hero header. */
+  embedded?: boolean;
 }
 
-export function RecoveryAutoAssignScheduleCard({ assignmentVersion }: Props) {
+export function RecoveryAutoAssignScheduleCard({ assignmentVersion, embedded }: Props) {
   const toast = useToast();
   const [draftTime, setDraftTime] = useState(() => readTestAutoAssignTime() ?? '00:00');
   const [scheduleTick, setScheduleTick] = useState(0);
@@ -82,32 +84,36 @@ export function RecoveryAutoAssignScheduleCard({ assignmentVersion }: Props) {
   return (
     <section
       className={cn(
-        'anim-pop overflow-hidden rounded-[18px] border border-slate-200/90 bg-surface shadow-card',
-        'dark:border-white/[.08]',
+        'overflow-hidden',
+        embedded
+          ? 'bg-transparent'
+          : 'anim-pop rounded-[18px] border border-slate-200/90 bg-surface shadow-card dark:border-white/[.08]',
       )}
     >
-      <div className="relative overflow-hidden bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-5 py-4 sm:px-6 sm:py-5">
-        <div className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
-        <div className="relative flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/15 text-white shadow-[0_8px_24px_-8px_rgba(0,0,0,.35)] ring-1 ring-white/20">
-              <CalendarClock size={22} strokeWidth={2} />
-            </span>
-            <div>
-              <h3 className="font-display text-[17px] font-bold tracking-tight text-white sm:text-[18px]">
-                Recovery auto-assign
-              </h3>
-              <p className="mt-1 max-w-xl text-[12px] leading-relaxed text-white/85 sm:text-[13px]">
-                Overdue active loans are balanced across recovery agents once per day. Existing agent assignments stay in place while a loan remains overdue.
-              </p>
+      {!embedded && (
+        <div className="relative overflow-hidden bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-5 py-4 sm:px-6 sm:py-5">
+          <div className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+          <div className="relative flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/15 text-white shadow-[0_8px_24px_-8px_rgba(0,0,0,.35)] ring-1 ring-white/20">
+                <CalendarClock size={22} strokeWidth={2} />
+              </span>
+              <div>
+                <h3 className="font-display text-[17px] font-bold tracking-tight text-white sm:text-[18px]">
+                  Recovery auto-assign
+                </h3>
+                <p className="mt-1 max-w-xl text-[12px] leading-relaxed text-white/85 sm:text-[13px]">
+                  Overdue active loans are balanced across recovery agents once per day. Existing agent assignments stay in place while a loan remains overdue.
+                </p>
+              </div>
             </div>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/20 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-emerald-50 ring-1 ring-emerald-200/30">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,.8)]" aria-hidden />
+              Scheduled
+            </span>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/20 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-emerald-50 ring-1 ring-emerald-200/30">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,.8)]" aria-hidden />
-            Scheduled
-          </span>
         </div>
-      </div>
+      )}
 
       <div className="grid gap-3 border-b border-slate-100/80 p-4 sm:grid-cols-3 sm:p-5 dark:border-white/[.06]">
         <div className="rounded-xl border border-primary/15 bg-primary/[.04] px-4 py-3 dark:border-primary/25 dark:bg-primary/[.08]">

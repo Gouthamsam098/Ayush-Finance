@@ -16,6 +16,8 @@ import {
 interface Props {
   userEmail: string;
   userName: string;
+  /** Inside Settings collapsible — hides duplicate hero header. */
+  embedded?: boolean;
 }
 
 function TotpDigits({
@@ -136,7 +138,7 @@ const bodyMotion = {
   transition: { duration: 0.38, ease: [0.16, 1, 0.3, 1] as const },
 };
 
-export function TwoFactorSettingsCard({ userEmail }: Props) {
+export function TwoFactorSettingsCard({ userEmail, embedded }: Props) {
   const toast = useToast();
   const [storeTick, setStoreTick] = useState(0);
   const enabled = useMemo(() => isTotpEnabled(userEmail), [userEmail, storeTick]);
@@ -249,8 +251,10 @@ export function TwoFactorSettingsCard({ userEmail }: Props) {
   return (
     <section
       className={cn(
-        'anim-pop relative overflow-hidden rounded-[18px] border border-slate-200/90 bg-surface shadow-card',
-        'dark:border-white/[.08]',
+        'relative overflow-hidden',
+        embedded
+          ? 'bg-transparent'
+          : 'anim-pop rounded-[18px] border border-slate-200/90 bg-surface shadow-card dark:border-white/[.08]',
       )}
     >
       <AnimatePresence>
@@ -280,7 +284,10 @@ export function TwoFactorSettingsCard({ userEmail }: Props) {
         {celebration && (
           <motion.div
             key="celebration-icon"
-            className="pointer-events-none absolute inset-x-0 top-[4.5rem] z-30 flex justify-center"
+            className={cn(
+              'pointer-events-none absolute inset-x-0 z-30 flex justify-center',
+              embedded ? 'top-6' : 'top-[4.5rem]',
+            )}
             initial={{ opacity: 0, scale: 0.5, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.85, y: -12 }}
@@ -303,49 +310,51 @@ export function TwoFactorSettingsCard({ userEmail }: Props) {
           </motion.div>
         )}
       </AnimatePresence>
-      <div className="relative overflow-hidden bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-5 py-4 sm:px-6 sm:py-5">
-        <div className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
-        <div className="relative flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/15 text-white shadow-[0_8px_24px_-8px_rgba(0,0,0,.35)] ring-1 ring-white/20">
-              <ShieldCheck size={22} strokeWidth={2} />
-            </span>
-            <h3 className="font-display text-[17px] font-bold tracking-tight text-white sm:text-[18px]">
-              Two-factor authentication
-            </h3>
-          </div>
-          <motion.span
-            layout
-            animate={
-              celebration === 'enabled'
-                ? { scale: [1, 1.12, 1] }
-                : celebration === 'disabled'
-                  ? { scale: [1, 0.92, 1] }
-                  : { scale: 1 }
-            }
-            transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ring-1',
-              enabled
-                ? 'bg-emerald-400/20 text-emerald-50 ring-emerald-200/30'
-                : 'bg-white/15 text-white/90 ring-white/25',
-            )}
-          >
-            <span
+      {!embedded && (
+        <div className="relative overflow-hidden bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-5 py-4 sm:px-6 sm:py-5">
+          <div className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+          <div className="relative flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/15 text-white shadow-[0_8px_24px_-8px_rgba(0,0,0,.35)] ring-1 ring-white/20">
+                <ShieldCheck size={22} strokeWidth={2} />
+              </span>
+              <h3 className="font-display text-[17px] font-bold tracking-tight text-white sm:text-[18px]">
+                Two-factor authentication
+              </h3>
+            </div>
+            <motion.span
+              layout
+              animate={
+                celebration === 'enabled'
+                  ? { scale: [1, 1.12, 1] }
+                  : celebration === 'disabled'
+                    ? { scale: [1, 0.92, 1] }
+                    : { scale: 1 }
+              }
+              transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
               className={cn(
-                'h-1.5 w-1.5 rounded-full',
+                'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ring-1',
                 enabled
-                  ? 'bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,.8)]'
-                  : 'bg-white/70',
+                  ? 'bg-emerald-400/20 text-emerald-50 ring-emerald-200/30'
+                  : 'bg-white/15 text-white/90 ring-white/25',
               )}
-              aria-hidden
-            />
-            {enabled ? 'Protected' : 'Not enabled'}
-          </motion.span>
+            >
+              <span
+                className={cn(
+                  'h-1.5 w-1.5 rounded-full',
+                  enabled
+                    ? 'bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,.8)]'
+                    : 'bg-white/70',
+                )}
+                aria-hidden
+              />
+              {enabled ? 'Protected' : 'Not enabled'}
+            </motion.span>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="space-y-5 p-4 sm:p-5">
+      <div className={cn('space-y-5', embedded ? 'p-4 sm:p-5' : 'p-4 sm:p-5')}>
         <AnimatePresence mode="wait">
           <motion.div key={contentKey} className="space-y-5" {...bodyMotion}>
         {enabled && !inSetup && (

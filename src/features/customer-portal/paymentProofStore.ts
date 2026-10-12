@@ -5,13 +5,13 @@
 
 import type { PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 
-const STORAGE_KEY = 'anush.portal.paymentProofs';
+export const PAYMENT_PROOF_STORAGE_KEY = 'anush.portal.paymentProofs';
 
 export const PAYMENT_PROOF_SUBMITTED_EVENT = 'anush:payment-proof-submitted';
 export const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
 export const PAYMENT_PROOF_ACCEPT = 'image/jpeg,image/png,image/webp';
 
-export type PaymentProofStatus = 'pending' | 'verified';
+export type PaymentProofStatus = 'pending' | 'verified' | 'rejected';
 
 export interface PaymentProofRecord {
   id: string;
@@ -30,7 +30,7 @@ export interface PaymentProofRecord {
 
 function readAll(): PaymentProofRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(PAYMENT_PROOF_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as PaymentProofRecord[];
     return Array.isArray(parsed) ? parsed : [];
@@ -40,7 +40,7 @@ function readAll(): PaymentProofRecord[] {
 }
 
 function writeAll(rows: PaymentProofRecord[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+  localStorage.setItem(PAYMENT_PROOF_STORAGE_KEY, JSON.stringify(rows));
 }
 
 export function listPaymentProofs(): PaymentProofRecord[] {

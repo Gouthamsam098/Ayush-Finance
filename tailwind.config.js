@@ -4,6 +4,10 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      screens: {
+        xs: '380px',
+        fold: '320px',
+      },
       colors: {
         primary: { DEFAULT: '#2563EB', 600: '#1D4ED8', 500: '#2563EB', 400: '#3B82F6', 50: '#EFF6FF', 100: '#DBEAFE' },
         success: { DEFAULT: '#10B981', 600: '#059669', 50: '#ECFDF5' },

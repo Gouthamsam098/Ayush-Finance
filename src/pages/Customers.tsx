@@ -509,7 +509,7 @@ export default function Customers() {
       />
 
       {/* Body */}
-      <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-3 p-3.5 sm:px-4">
+      <div className="page-content-shell flex min-h-0 min-w-0 flex-1 flex-col gap-3">
         {/* Toolbar — result count + chips on the left, search/filter on the right */}
         <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           {/* Left: count + real chips */}

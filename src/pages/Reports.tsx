@@ -6,6 +6,7 @@ import {
 } from '@/mock/DataContext';
 import { cashDisbursedFor } from '@/lib/funds';
 import { StatCard } from '@/components/ui/stat-card';
+import { ResponsiveTableFrame } from '@/components/ui/responsive-table';
 import { Button } from '@/components/ui/button';
 import { Drawer } from '@/components/ui/drawer';
 import { Dialog } from '@/components/ui/dialog';
@@ -36,8 +37,13 @@ import {
   type CollectorFilter,
 } from '@/lib/collectionCollector';
 import { scheduleShortfall } from '@/features/recovery/recoveryDue';
+import {
+  buildAgentCollectionReport,
+  filterAgentCollections,
+  type AgentCollectionSummary,
+} from '@/lib/agentCollectionReport';
 
-type ReportKey = 'loans' | 'customers' | 'collections' | 'expenses';
+type ReportKey = 'loans' | 'customers' | 'collections' | 'agents' | 'expenses';
 type Period = 'THIS_MONTH' | 'LAST_6M' | 'LAST_1Y' | 'ALL';
 
 // ── date helpers (local-calendar, matching the app-wide convention) ──
@@ -63,16 +69,27 @@ const PERIODS: { key: Period; label: string }[] = [
   { key: 'ALL', label: 'All Time' },
 ];
 
+const AGENT_KPI_VISUAL: Record<string, { accent: string; icon: typeof Receipt }> = {
+  Agents: { accent: '#059669', icon: ShieldCheck },
+  Payments: { accent: '#6366f1', icon: Receipt },
+  'Total collected': { accent: '#10b981', icon: TrendingUp },
+  'Top collector': { accent: '#0d9488', icon: UserCircle2 },
+};
+
 const REPORTS: { key: ReportKey; label: string; icon: typeof Users; accent: string }[] = [
   { key: 'loans', label: 'Loans', icon: Layers, accent: '#6366f1' },
   { key: 'customers', label: 'Customers', icon: Users, accent: '#8b5cf6' },
   { key: 'collections', label: 'Collections', icon: Receipt, accent: '#10b981' },
+  { key: 'agents', label: 'Agents', icon: ShieldCheck, accent: '#059669' },
   { key: 'expenses', label: 'Expenses', icon: Wallet, accent: '#f59e0b' },
 ];
 
 const REPORT_CELL = 'box-border px-5 py-3.5 align-middle';
 const REPORT_CELL_NAME = 'box-border py-3.5 pl-5 pr-1 align-middle text-left';
 const REPORT_CELL_AMOUNT = 'box-border py-3.5 pl-1 pr-4 align-middle text-left font-display tabular-nums tracking-normal whitespace-nowrap';
+/** Customers report — fixed widths so “Monthly Income” is not a wide right-aligned gap. */
+const CUSTOMER_REPORT_COL_WIDTHS = ['11%', '18%', '12%', '11%', '15%', '13%', '12%'];
+
 const EXPENSE_REPORT_COLS = [
   { width: '12%', align: 'left' as const, id: 'date' },
   { width: '13%', align: 'left' as const, id: 'category' },
@@ -189,7 +206,7 @@ function buildReport(tab: ReportKey, data: Dataset, f: BuildArgs): BuiltReport {
     return {
       head: ['Code', 'Name', 'Mobile', 'City', 'Occupation', 'Monthly Income', 'Joined'],
       body: rows.map((c) => [c.code, c.name, c.mobile, c.city ?? '—', c.occupation ?? '—', c.monthlyIncome ? inr(c.monthlyIncome) : '—', c.createdAt ? fmtDate(c.createdAt) : '—']),
-      rightAlignCols: [5],
+      rightAlignCols: [],
       kpis: [
         { label: 'Customers', value: String(rows.length) },
         { label: 'With Loans', value: String(rows.filter((c) => withLoans.has(c.id)).length) },
@@ -241,6 +258,16 @@ function buildReport(tab: ReportKey, data: Dataset, f: BuildArgs): BuiltReport {
         ...(staffTotal > 0 ? [{ label: 'Via staff', value: inr(staffTotal) }] : []),
         ...(customerTotal > 0 ? [{ label: 'Via customer', value: inr(customerTotal) }] : []),
       ],
+    };
+  }
+
+  if (tab === 'agents') {
+    const built = buildAgentCollectionReport(data.collections, data.loans, data.customers, f.since, f.q);
+    return {
+      head: built.head,
+      body: built.body,
+      rightAlignCols: built.rightAlignCols,
+      kpis: built.kpis,
     };
   }
 
@@ -348,6 +375,7 @@ export default function Reports() {
   const [exporting, setExporting] = useState<'' | 'csv' | 'pdf'>('');
   // Collections drill-down: the loan whose receipts are being inspected.
   const [detail, setDetail] = useState<LoanCollectionGroup | null>(null);
+  const [agentDetail, setAgentDetail] = useState<AgentCollectionSummary | null>(null);
 
   // Portfolio KPI band — real figures, no fabricated trends.
   const portfolio = useMemo(() => {
@@ -396,6 +424,18 @@ export default function Reports() {
     return groupCollectionsByLoan(rows, d.loans, d.customers, (loan) => scheduleShortfall(d, loan));
   }, [tab, since, q, filters.collector, d]);
 
+  const agentSummaries = useMemo(() => {
+    if (tab !== 'agents') return [];
+    return buildAgentCollectionReport(
+      d.collections, d.loans, d.customers, since, q,
+    ).summaries;
+  }, [tab, since, q, d]);
+
+  const agentReceiptCount = useMemo(() => {
+    if (tab !== 'agents') return 0;
+    return filterAgentCollections(d.collections, d.loans, d.customers, since, q).length;
+  }, [tab, since, q, d]);
+
   const meta = REPORTS.find((r) => r.key === tab)!;
   const periodLabel = PERIODS.find((p) => p.key === filters.period)!.label;
   const activeCount = countActive(tab, filters);
@@ -406,7 +446,11 @@ export default function Reports() {
   const clearAll = () => { setFilters(defaultFilters()); setQuery(''); };
 
   // Live match count for the drawer's MatchPreview (reflects the DRAFT filters).
-  const tabTotal = tab === 'loans' ? d.loans.length : tab === 'customers' ? d.customers.length : tab === 'collections' ? d.collections.length : d.expenses.length;
+  const tabTotal = tab === 'loans' ? d.loans.length
+    : tab === 'customers' ? d.customers.length
+      : tab === 'collections' ? d.collections.length
+        : tab === 'agents' ? agentSummaries.length
+          : d.expenses.length;
   const draftMatched = useMemo(
     () => buildReport(tab, { customers: d.customers, loans: d.loans, collections: d.collections, expenses: d.expenses },
       {
@@ -433,6 +477,10 @@ export default function Reports() {
     if (tab === 'collections') {
       const collections = await collectionApi.fetchAllInRange({ from, to });
       return buildReport('collections', { customers: d.customers, loans: d.loans, collections, expenses: [] }, { ...buildArgs, since: '' });
+    }
+    if (tab === 'agents') {
+      const collections = await collectionApi.fetchAllInRange({ from, to });
+      return buildReport('agents', { customers: d.customers, loans: d.loans, collections, expenses: [] }, { ...buildArgs, since: '' });
     }
     const expenses = await expenseApi.fetchAll({ from, to, category: filters.expenseCat === 'ALL' ? undefined : filters.expenseCat, search: q || undefined });
     return buildReport('expenses', { customers: [], loans: [], collections: [], expenses }, { ...buildArgs, since: '', expenseCat: 'ALL' });
@@ -479,7 +527,7 @@ export default function Reports() {
           </HeaderGhostButton>
         }
       />
-      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
+      <div className="page-content-shell">
 
       {/* Portfolio KPI band */}
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4 [&>*]:min-w-0">
@@ -499,7 +547,7 @@ export default function Reports() {
             return (
               <button
                 key={r.key}
-                onClick={() => { setTab(r.key); setQuery(''); }}
+                onClick={() => { setTab(r.key); setQuery(''); setDetail(null); setAgentDetail(null); }}
                 className={cn(
                   'inline-flex min-w-0 w-full items-center justify-center gap-1.5 rounded-xl border-[0.5px] px-2.5 py-2 text-[12px] font-semibold transition-all sm:w-auto sm:justify-start sm:gap-2 sm:px-4 sm:text-[13.5px]',
                   active ? 'text-white shadow-sm' : 'border-slate-200/80 bg-white text-ink/75 hover:bg-slate-50 dark:border-white/[.08] dark:bg-surface dark:hover:bg-white/[.03]',
@@ -520,6 +568,11 @@ export default function Reports() {
               <>
                 <span className="font-semibold text-ink">{collectionGroups.length}</span>
                 <span className="text-muted">{collectionGroups.length === 1 ? 'loan' : 'loans'} · {report.body.length} {report.body.length === 1 ? 'payment' : 'payments'}</span>
+              </>
+            ) : tab === 'agents' ? (
+              <>
+                <span className="font-semibold text-ink">{agentSummaries.length}</span>
+                <span className="text-muted">{agentSummaries.length === 1 ? 'agent' : 'agents'} · {agentReceiptCount} {agentReceiptCount === 1 ? 'payment' : 'payments'}</span>
               </>
             ) : (
               <>
@@ -588,10 +641,37 @@ export default function Reports() {
           </div>
         )}
 
+        {tab === 'agents' && report.body.length > 0 && (
+          <div className="px-3.5 pb-1 pt-2 sm:px-6">
+            <div className="rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50/90 via-surface to-emerald-500/[.04] p-4 shadow-soft dark:border-white/[.08] dark:from-white/[.03] dark:to-emerald-500/[.06] sm:p-5">
+              <div className="mb-3.5">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted">Recovery agents</p>
+                <p className="mt-0.5 text-[12px] text-muted">Collections credited to recovery agents in this period</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4 [&>*]:min-w-0">
+                {report.kpis.map((k) => {
+                  const vis = AGENT_KPI_VISUAL[k.label] ?? { accent: '#059669', icon: ShieldCheck };
+                  const Icon = vis.icon;
+                  return (
+                    <StatCard
+                      key={k.label}
+                      label={k.label}
+                      value={k.value}
+                      accent={vis.accent}
+                      icon={<Icon size={16} />}
+                      active={k.label === 'Total collected'}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* preview table */}
         <div className={cn(
           'px-3.5 pb-6 sm:px-6',
-          tab === 'collections' && report.body.length > 0 ? 'pt-4' : 'pt-0',
+          (tab === 'collections' || tab === 'agents') && report.body.length > 0 ? 'pt-4' : 'pt-0',
         )}>
           {report.body.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
@@ -599,9 +679,52 @@ export default function Reports() {
               <p className="text-sm font-medium text-muted">No {meta.label.toLowerCase()} match this filter.</p>
               <p className="text-[12px] text-muted/70">Try a wider period or clear the filters.</p>
             </div>
+          ) : tab === 'agents' ? (
+            <ResponsiveTableFrame>
+            <table className="w-full min-w-[880px] border-collapse text-sm">
+              <thead>
+                <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">Agent</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">Status</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Payments</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Total collected</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Loans</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle">Last collection</th>
+                  <th className="h-14 whitespace-nowrap px-6 align-middle text-right">Avg receipt</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agentSummaries.slice(0, 50).map((a) => (
+                  <tr
+                    key={a.key}
+                    onClick={() => setAgentDetail(a)}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${a.name} — view ${a.payments} payments`}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAgentDetail(a); } }}
+                    className="group cursor-pointer border-t border-[#EEF2F7] transition-colors odd:bg-slate-50/30 hover:bg-blue-50/50 focus:outline-none focus-visible:bg-blue-50/60 dark:border-white/[.05] dark:odd:bg-white/[.015] dark:hover:bg-blue-500/[.06]"
+                  >
+                    <td className="h-[60px] whitespace-nowrap px-6 align-middle font-semibold text-ink">{a.name}</td>
+                    <td className="h-[60px] whitespace-nowrap px-6 align-middle">
+                      <Badge tone={a.unattributed ? 'neutral' : a.inactive ? 'warn' : 'ok'}>
+                        {a.unattributed ? 'Unattributed' : a.inactive ? 'Inactive' : 'Active'}
+                      </Badge>
+                    </td>
+                    <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle tabular-nums text-ink/80">{a.payments}</td>
+                    <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{inr(a.totalCollected)}</td>
+                    <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle tabular-nums text-ink/80">{a.loansTouched}</td>
+                    <td className="h-[60px] whitespace-nowrap px-6 align-middle text-[13px] font-medium tabular-nums text-ink">{a.lastDate ? fmtDate(a.lastDate) : '—'}</td>
+                    <td className="h-[60px] whitespace-nowrap px-6 text-right align-middle tabular-nums text-ink/80">
+                      {a.payments ? inr(Math.round(a.totalCollected / a.payments)) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </ResponsiveTableFrame>
           ) : tab === 'collections' ? (
             /* Collections preview: ONE ROW PER LOAN — click for receipts incl. collector. */
-            <div className="overflow-hidden rounded-2xl border border-slate-200/90 shadow-card dark:border-white/[.08]">
+            <ResponsiveTableFrame>
             <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead>
                 <tr className="bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] text-left text-[12px] font-bold uppercase tracking-[0.06em] text-white">
@@ -672,8 +795,9 @@ export default function Reports() {
                 })}
               </tbody>
             </table>
-            </div>
+            </ResponsiveTableFrame>
           ) : (
+            <ResponsiveTableFrame>
             <table className={cn(
               'w-full border-collapse text-sm',
               tab === 'expenses' ? 'min-w-[820px] table-fixed' : 'min-w-[900px] table-fixed',
@@ -682,6 +806,13 @@ export default function Reports() {
                 <colgroup>
                   {EXPENSE_REPORT_COLS.map((col, i) => (
                     <col key={i} style={{ width: col.width }} />
+                  ))}
+                </colgroup>
+              )}
+              {tab === 'customers' && (
+                <colgroup>
+                  {CUSTOMER_REPORT_COL_WIDTHS.map((width, i) => (
+                    <col key={i} style={{ width }} />
                   ))}
                 </colgroup>
               )}
@@ -783,11 +914,18 @@ export default function Reports() {
                 </tfoot>
               )}
             </table>
+            </ResponsiveTableFrame>
           )}
           {tab === 'collections' ? (
             collectionGroups.length > 50 && (
               <div className="border-t border-[#EEF2F7] px-6 py-3 text-center text-[12px] text-muted dark:border-white/[.06]">
                 Preview shows first 50 of {collectionGroups.length} loans · export includes all {report.body.length} payments
+              </div>
+            )
+          ) : tab === 'agents' ? (
+            agentSummaries.length > 50 && (
+              <div className="border-t border-[#EEF2F7] px-6 py-3 text-center text-[12px] text-muted dark:border-white/[.06]">
+                Preview shows first 50 of {agentSummaries.length} agents · export includes all {agentReceiptCount} payments
               </div>
             )
           ) : report.body.length > 50 && (
@@ -798,6 +936,65 @@ export default function Reports() {
         </div>
       </div>
       </div>
+
+      <Dialog
+        wide
+        open={!!agentDetail}
+        onClose={() => setAgentDetail(null)}
+        title={agentDetail ? agentDetail.name : ''}
+        subtitle={agentDetail ? `${agentDetail.payments} ${agentDetail.payments === 1 ? 'payment' : 'payments'} · ${periodLabel}` : ''}
+        footer={<Button variant="ghost" onClick={() => setAgentDetail(null)}>Close</Button>}
+      >
+        {agentDetail && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              {[
+                { k: 'Total collected', v: inr(agentDetail.totalCollected), tone: 'text-emerald-600 dark:text-emerald-400' },
+                { k: 'Loans touched', v: String(agentDetail.loansTouched) },
+                { k: 'Last collection', v: agentDetail.lastDate ? fmtDate(agentDetail.lastDate) : '—' },
+                { k: 'Avg receipt', v: agentDetail.payments ? inr(Math.round(agentDetail.totalCollected / agentDetail.payments)) : '—' },
+              ].map((s) => (
+                <div key={s.k} className="rounded-xl border-[0.5px] border-slate-200/80 bg-slate-50/60 px-3 py-2.5 dark:border-white/[.08] dark:bg-white/[.02]">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{s.k}</div>
+                  <div className={cn('mt-0.5 font-display text-[15px] font-bold tabular-nums text-ink', s.tone)}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+            <div className="max-h-80 overflow-auto rounded-xl border-[0.5px] border-slate-200/80 dark:border-white/[.08]">
+              <table className="w-full min-w-[520px] text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
+                    <th>Receipt</th><th>Date</th><th>Customer</th><th>Loan #</th><th className="text-right">Amount</th><th>Mode</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {agentDetail.receipts.map((c) => {
+                    const loan = d.loans.find((l) => l.id === c.loanId);
+                    const customer = loan ? d.customers.find((x) => x.id === loan.customerId)?.name ?? '—' : '—';
+                    return (
+                      <tr key={c.id} className="border-t border-slate-100 dark:border-white/[.06]">
+                        <td className="px-3 py-2 font-mono text-xs text-ink">{c.receiptNo}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-ink/80">{fmtDate(c.date)}</td>
+                        <td className="px-3 py-2 text-ink">{customer}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-ink">{loan?.loanNumber ?? '—'}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums text-ink">{inr(c.amount)}</td>
+                        <td className="px-3 py-2"><Badge tone="neutral">{c.mode}</Badge></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
+                    <td className="px-3 py-2.5 text-[12px] font-bold uppercase tracking-wide text-muted" colSpan={4}>Total</td>
+                    <td className="px-3 py-2.5 text-right font-display text-[14px] font-bold tabular-nums text-ink">{inr(agentDetail.totalCollected)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
+      </Dialog>
 
       {/* Collections drill-down: the selected loan's own receipts. Read-only —
           money is edited in the loan's Collection Ledger, never from a report. */}
@@ -1003,6 +1200,11 @@ export default function Reports() {
           {tab === 'collections' && (
             <p className="px-1 text-[12px] text-muted">
               Filter by who received the payment. Only receipts recorded with collector details (ledger or approved recovery) show a name; others appear as Unknown.
+            </p>
+          )}
+          {tab === 'agents' && (
+            <p className="px-1 text-[12px] text-muted">
+              Recovery-agent totals for the selected period. Use search to find an agent, receipt, loan, or customer. Click a row to see every payment.
             </p>
           )}
         </div>

@@ -459,3 +459,81 @@ button, a, input, select, textarea {
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+/* Wide tables: scroll inside viewport without breaking page layout (phone / fold / tablet). */
+.scroll-touch-x {
+  min-width: 0;
+  width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Standard authenticated page body below PageHeader */
+.page-content-shell {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 0.875rem;
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+@media (min-width: 640px) {
+  .page-content-shell {
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+}
+
+/* Card footers: stack on fold/narrow, row on wider screens */
+.action-bar-3,
+.action-bar-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+.action-bar-3 > *,
+.action-bar-2 > * {
+  min-width: 0;
+}
+.action-bar-3 > * + *,
+.action-bar-2 > * + * {
+  border-top: 1px solid rgb(241 245 249);
+}
+.dark .action-bar-3 > * + *,
+.dark .action-bar-2 > * + * {
+  border-top-color: rgb(255 255 255 / 0.06);
+}
+@media (min-width: 380px) {
+  .action-bar-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .action-bar-3 > * + * {
+    border-top: none;
+    border-left: 1px solid rgb(241 245 249);
+  }
+  .dark .action-bar-3 > * + * {
+    border-left-color: rgb(255 255 255 / 0.06);
+  }
+}
+@media (min-width: 360px) {
+  .action-bar-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .action-bar-2 > * + * {
+    border-top: none;
+    border-left: 1px solid rgb(241 245 249);
+  }
+  .dark .action-bar-2 > * + * {
+    border-left-color: rgb(255 255 255 / 0.06);
+  }
+}
+
+@media (max-width: 359px) {
+  html {
+    font-size: 15.5px;
+  }
+}

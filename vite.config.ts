@@ -30,6 +30,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Localtunnel/ngrok/etc. send a non-local Host header; without this, mobile gets 403.
+    allowedHosts: true,
     proxy: {
       '/api': { target: process.env.VITE_API_URL || 'http://localhost:4000', changeOrigin: true },
     },

@@ -647,7 +647,7 @@ export default function Loans() {
         actions={canEdit('Loans') ? <HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openCreate}>Create Loan</HeaderPrimaryButton> : undefined}
       />
 
-      <div className="flex min-w-0 w-full flex-1 flex-col gap-4 p-3.5 sm:px-5">
+      <div className="page-content-shell flex min-w-0 w-full flex-1 flex-col gap-4">
         <div className="flex flex-wrap gap-2">
           <button
             type="button"

@@ -25,10 +25,13 @@ import { AgentLoanAssignment } from '@/features/recovery/components/AgentLoanAss
 import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
 import { RecoveryAutoAssignScheduleCard } from '@/features/recovery/components/RecoveryAutoAssignScheduleCard';
 import { TwoFactorSettingsCard } from '@/features/settings/TwoFactorSettingsCard';
+import { SettingsCollapsibleSection } from '@/features/settings/SettingsCollapsibleSection';
+import { isTotpEnabled } from '@/lib/totpStore';
+import { dailyScheduleSummary } from '@/features/recovery/recoveryAutoAssign';
 import { clearUiReportsAccess, setUiReportsAccess, withUiModuleAccess } from '@/lib/uiModuleAccess';
 import {
   UserPlus, Trash2, Settings as SettingsIcon, Pencil, Plus, Users as UsersIcon, Loader2, ShieldCheck,
-  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3,
+  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3, CalendarClock, KeyRound,
 } from 'lucide-react';
 
 const MODULE_ICON: Record<string, React.ReactNode> = {
@@ -295,22 +298,50 @@ export default function Settings() {
       <PageHeader
         icon={<SettingsIcon size={20} />}
         title="Settings"
-        subtitle="User access & roles"
+        subtitle="Security, recovery automation & team access"
         actions={<HeaderPrimaryButton beam icon={<Plus size={14} />} onClick={openCreate}>Add User</HeaderPrimaryButton>}
       />
 
-      <div className="flex min-w-0 w-full flex-1 flex-col gap-5 p-3.5 sm:px-5">
-        {me && (
-          <TwoFactorSettingsCard userEmail={me.username} userName={me.fullName} />
-        )}
+      <div className="page-content-shell mx-auto max-w-6xl">
+        <div className="flex flex-col gap-3">
+          {me && (
+            <SettingsCollapsibleSection
+              id="two-factor"
+              title="Two-factor authentication"
+              description="Google Authenticator codes required after password at sign-in."
+              icon={<KeyRound size={20} strokeWidth={2.25} />}
+              statusLabel={isTotpEnabled(me.username) ? 'Protected' : 'Off'}
+              statusTone={isTotpEnabled(me.username) ? 'success' : 'warn'}
+              defaultOpen={!isTotpEnabled(me.username)}
+            >
+              <TwoFactorSettingsCard userEmail={me.username} userName={me.fullName} embedded />
+            </SettingsCollapsibleSection>
+          )}
 
-        {hasActiveRecoveryAgents() && (
-          <RecoveryAutoAssignScheduleCard assignmentVersion={recovery.assignmentVersion} />
-        )}
+          {hasActiveRecoveryAgents() && (
+            <SettingsCollapsibleSection
+              id="recovery-auto-assign"
+              title="Recovery auto-assign"
+              description="Daily balancing of overdue loans across active recovery agents."
+              icon={<CalendarClock size={20} strokeWidth={2.25} />}
+              statusLabel={dailyScheduleSummary()}
+              statusTone="primary"
+              defaultOpen={false}
+            >
+              <RecoveryAutoAssignScheduleCard assignmentVersion={recovery.assignmentVersion} embedded />
+            </SettingsCollapsibleSection>
+          )}
+        </div>
 
-        <Card className="anim-pop">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><UserPlus size={17} className="text-primary" /> User Management</CardTitle>
+        <Card className="anim-pop overflow-hidden border-slate-200/80 shadow-card dark:border-white/[.08]">
+          <CardHeader className="flex-col items-stretch gap-0 border-b border-slate-100/80 bg-gradient-to-r from-[#022999]/[.05] via-surface to-[#0AA8F8]/[.04] dark:border-white/[.06]">
+            <CardTitle className="flex flex-wrap items-center gap-2 font-display text-[17px]">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-[#022999] to-[#0AA8F8] text-white shadow-[0_6px_16px_-8px_rgba(5,56,204,.45)]">
+                <UserPlus size={17} />
+              </span>
+              User management
+            </CardTitle>
+            <p className="mt-2 text-[12px] text-muted sm:text-[13px]">Roles, module access, and portal links for your team.</p>
           </CardHeader>
           <CardBody className="space-y-4">
             <div className="flex items-center gap-2 text-[13px] text-muted">

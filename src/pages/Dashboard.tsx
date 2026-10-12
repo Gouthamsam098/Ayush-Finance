@@ -656,7 +656,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-full min-w-0 w-full bg-[#F8FAFC] dark:bg-transparent">
-      <div className="flex w-full min-w-0 flex-col gap-4 p-3 sm:p-4">
+      <div className="page-content-shell flex w-full min-w-0 flex-col gap-4">
         {/* Top bar */}
         <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
