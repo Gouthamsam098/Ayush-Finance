@@ -16,7 +16,7 @@ import { ApiError } from '@/lib/api';
 import { userApi, MODULES, type ManagedUser, type UserRole, type Access, type Permissions } from '@/services/userApi';
 import {
   listMockUsers, saveMockUser, setMockUserActive, removeMockUser, getMockUserLinkedCustomerId,
-  findPortalUserForCustomer, mockUserPasswordIsSet, type MockUser,
+  findPortalUserForCustomer, mockUserPasswordIsSet, isLocalOnlyRole, isStoredPortalMockUser, type MockUser,
 } from '@/lib/mockUsers';
 import { CustomerLinkPicker } from '@/features/customer-portal/components/CustomerLinkPicker';
 import type { AppUserRole } from '@/types/appUser';
@@ -82,6 +82,13 @@ const emptyPerms = (): Permissions => Object.fromEntries(MODULES.map((m) => [m, 
 const blankForm = (): FormState => ({
   email: '', fullName: '', password: '', confirm: '', role: 'VIEWER', permissions: emptyPerms(), assignedLoanIds: [], linkedCustomerId: null,
 });
+
+const ROLE_SELECT_OPTIONS = [
+  { value: 'VIEWER', label: 'Viewer — customise module access' },
+  { value: 'ADMIN', label: 'Admin — full access + user management' },
+  { value: 'RECOVERY_AGENT', label: 'Recovery agent — collections field access' },
+  { value: 'CUSTOMER', label: 'Customer — borrower portal (own data only)' },
+] as const;
 
 function fromMock(u: MockUser): ManagedUser {
   return {
@@ -163,12 +170,13 @@ export default function Settings() {
       if (form.password.length < 8) { toast('Password must be at least 8 characters', 'error'); return; }
       if (form.password !== form.confirm) { toast('Passwords do not match', 'error'); return; }
     }
-    if (form.role === 'RECOVERY_AGENT' && config.useApi) {
-      toast('Recovery agents are available in demo mode until the backend role is released.', 'error');
-      return;
-    }
-    if (form.role === 'CUSTOMER' && config.useApi) {
-      toast('Customer portal accounts are available in demo mode only.', 'error');
+    if (config.useApi && isLocalOnlyRole(form.role)) {
+      toast(
+        form.role === 'RECOVERY_AGENT'
+          ? 'Recovery agent is not available on the server yet. Use demo mode (API off) or assign a Viewer/Admin here.'
+          : 'Customer portal users cannot be saved here while API mode is on. Set portal access on the customer form, or use demo mode.',
+        'error',
+      );
       return;
     }
     if (form.role === 'CUSTOMER' && form.linkedCustomerId == null) {
@@ -236,7 +244,7 @@ export default function Settings() {
   const toggleActive = async (u: ManagedUser) => {
     setBusyId(u.id);
     try {
-      if (!config.useApi) {
+      if (!config.useApi || isStoredPortalMockUser(u)) {
         setMockUserActive(u.id, !u.isActive);
         toast(`${u.fullName} ${u.isActive ? 'disabled' : 'enabled'}`, 'info');
         await load();
@@ -255,7 +263,7 @@ export default function Settings() {
   const doDelete = async (u: ManagedUser) => {
     setBusyId(u.id);
     try {
-      if (!config.useApi) {
+      if (!config.useApi || isStoredPortalMockUser(u)) {
         removeMockUser(u.id);
         recovery.clearAgent(u.id);
         clearUiReportsAccess(u.id);
@@ -468,15 +476,15 @@ export default function Settings() {
               label="Role"
               value={form.role}
               onChange={(e) => set('role', e.target.value as AppUserRole)}
-              options={[
-                { value: 'VIEWER', label: 'Viewer — customise module access' },
-                { value: 'ADMIN', label: 'Admin — full access + user management' },
-                ...(!config.useApi ? [
-                  { value: 'RECOVERY_AGENT', label: 'Recovery agent — collections field access' },
-                  { value: 'CUSTOMER', label: 'Customer — borrower portal (own data only)' },
-                ] : []),
-              ]}
+              options={[...ROLE_SELECT_OPTIONS]}
             />
+            {config.useApi && isLocalOnlyRole(form.role) && (
+              <p className="text-[12px] leading-relaxed text-amber-700 dark:text-amber-300">
+                {form.role === 'RECOVERY_AGENT'
+                  ? 'Recovery agent requires backend support — not saved to the server in API mode. Use demo mode to try field recovery.'
+                  : 'Customer portal is not a server role yet — use Customers → portal password, or demo mode.'}
+              </p>
+            )}
             {form.id === me?.id && <p className="text-[12px] text-amber-600 dark:text-amber-400">You cannot change your own role or disable yourself.</p>}
 
             {form.role === 'RECOVERY_AGENT' ? (
