@@ -89,7 +89,12 @@ func (s *Service) syncLoanStatus(ctx context.Context, loanID int64) {
 			"loan_id", loanID, "error", err)
 		return
 	}
-	fullyPaid := l.IsFullyPaid(collected, s.now())
+	// Status-independent, so a CLOSED loan whose payments were deleted or edited
+	// down is seen to have a balance again and reopens. IsFullyPaid() reads the
+	// status through Outstanding(), which returns 0 for a CLOSED interest-only or
+	// EMI loan — that made the reopen branch below unreachable for every type
+	// except DAILY_COLLECTION.
+	fullyPaid := l.HasNoBalanceIgnoringStatus(collected, s.now())
 	switch {
 	case fullyPaid && l.Status == domain.StatusActive:
 		if _, err := s.loans.SetStatus(ctx, loanID, domain.StatusClosed); err != nil {

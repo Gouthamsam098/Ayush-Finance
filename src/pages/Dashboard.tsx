@@ -17,7 +17,7 @@ import {
 import {
   PeriodFilter, type PeriodMode, type PeriodRangeKey, RANGE_PRESETS, periodDisplayLabel, isPeriodDefault,
 } from '@/components/dashboard/PeriodFilter';
-import { computeFunds, interestRealised } from '@/lib/funds';
+import { cashDisbursedFor, computeFunds, interestRealised } from '@/lib/funds';
 import { buildSchedule } from '@/lib/loanSchedule';
 import { riskFor, RISK_PILL, AVATAR_TINT } from '@/lib/risk';
 import { WhatsAppIcon } from '@/components/ui/whatsapp-icon';
@@ -338,7 +338,29 @@ export default function Dashboard() {
    *  ALL loans not just active: a closed loan's repayments sit in `collected`,
    *  so omitting its disbursal would credit the return without debiting the
    *  outlay. */
-  const actualPrincipal = funds.disbursed;
+  /** Given to Borrowers — cash handed to borrowers whose loans are still OPEN.
+   *
+   *  Settled loans are deliberately excluded: a closed account has nothing
+   *  outstanding, so showing its disbursal here read as though money were
+   *  still out with a borrower who had already repaid in full.
+   *
+   *  This is a DISPLAY figure only. `funds.disbursed` (every loan ever made,
+   *  closed included) remains the input to computeFunds and MUST stay that
+   *  way — a closed loan's repayments sit inside `collected`, so dropping its
+   *  disbursal from the cash formula would credit the money coming back
+   *  without ever debiting the money paid out, inflating Available Funds by
+   *  exactly that amount. See the note in funds.ts. */
+  const activeDisbursed = active.reduce((sum, l) => sum + cashDisbursedFor(l), 0);
+  const actualPrincipal = activeDisbursed;
+  // Closed loans stay INSIDE the lifetime cash figures above — their
+  // repayments sit in `collected`, so removing their disbursal would overstate
+  // Available Funds by that amount (funds.ts explains the trap). They are
+  // called out separately instead, because a settled account showing a live-
+  // looking balance is what makes the dashboard read as though money is still
+  // out with a borrower who has already paid in full.
+  const closedDisbursed = d.loans
+    .filter((l) => l.status === 'CLOSED')
+    .reduce((sum, l) => sum + cashDisbursedFor(l), 0);
 
   /** Interest taken UPFRONT at disbursal, across all loans ever made.
    *
@@ -413,7 +435,15 @@ export default function Dashboard() {
   /** Actual Collection — cash received MINUS the interest portion, i.e. the
    *  principal actually recovered. Interest is shown in its own card, so adding
    *  it here would count the same rupee twice on one screen. */
-  const actualCollection = Math.max(0, periodColl - interestCollected);
+  const activeLoanIds = new Set(active.map((l) => l.id));
+  const collectionsInPeriodActive = collectionsInPeriod.filter((c) => activeLoanIds.has(c.loanId));
+  const periodCollActive = collectionsInPeriodActive.reduce((s, c) => s + c.amount, 0);
+  const interestCollectedActive = collectionsInPeriodActive
+    .reduce((s, c) => s + (profitByCollectionId.get(c.id) ?? 0), 0);
+  // BOTH terms filtered to open loans — filtering only the total would leave a
+  // closed loan's interest being subtracted from an active-only sum and floor
+  // the card at 0.
+  const actualCollection = Math.max(0, periodCollActive - interestCollectedActive);
 
   const profitInMonth = (key: string) =>
     d.collections.reduce((s, c) => (c.date.slice(0, 7) === key ? s + (profitByCollectionId.get(c.id) ?? 0) : s), 0);
@@ -451,7 +481,7 @@ export default function Dashboard() {
       // to customers, nothing derived. It previously showed cash-still-deployed
       // (disbursed − collected), which is a different, smaller number and made
       // the two cards look contradictory for no benefit to the reader.
-      hint: investorCapital > 0 ? `${inr(actualPrincipal)} given to borrowers` : 'No investor capital', trend: null as KpiTrend | null,
+      hint: investorCapital > 0 ? `${inr(actualPrincipal)} out with open loans` : 'No investor capital', trend: null as KpiTrend | null,
       onClick: () => setFundsDialog('investments'), actionLabel: `Investor capital ${inr(investorCapital)} — see the breakdown` },
     // Available to lend: capital − lent out + net profit (interest − expenses).
     { icon: PiggyBank, tint: 'bg-teal-50 dark:bg-teal-500/15', iconColor: 'text-teal-600 dark:text-teal-400', label: 'Available Funds', value: inr(funds.available),
@@ -469,7 +499,9 @@ export default function Dashboard() {
     // Distinct from the Investments card's "lent out", which is cash still
     // deployed; this one does not shrink as borrowers repay.
     { icon: Banknote, tint: 'bg-blue-50 dark:bg-blue-500/15', iconColor: 'text-blue-600 dark:text-blue-400', label: 'Given to Borrowers', value: inr(actualPrincipal),
-      hint: 'Cash handed over, all loans to date', trend: null,
+      hint: closedCount > 0
+        ? `Cash out with open loans · ${closedCount} settled loan${closedCount === 1 ? '' : 's'} excluded`
+        : 'Cash handed over, all loans to date', trend: null,
       onClick: () => navigate('/loans?status=ACTIVE'), actionLabel: `Given to borrowers ${inr(actualPrincipal)} — view loans` },
     { icon: Wallet, tint: 'bg-indigo-50 dark:bg-indigo-500/15', iconColor: 'text-indigo-600 dark:text-indigo-400', label: 'Total Outstanding', value: inr(totalOutstanding),
       hint: 'Principal + accrued interest', trend: null,
@@ -493,7 +525,9 @@ export default function Dashboard() {
     // PRINCIPAL RECOVERED — cash in, MINUS its interest portion. Interest has
     // its own card, so counting it here too would show the same rupee twice.
     { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Principal Recovered', value: inr(actualCollection),
-      hint: `${periodLabel} · ${inr(periodColl)} received in total`, trend: null,
+      hint: closedCount > 0
+        ? `${periodLabel} · ${inr(periodCollActive)} received on open loans · ${closedCount} settled excluded`
+        : `${periodLabel} · ${inr(periodColl)} received in total`, trend: null,
       onClick: () => navigate('/reports?tab=collections'), actionLabel: `Principal recovered ${inr(actualCollection)} — view the collections report` },
     // INTEREST EARNED — the earnings half of the same cash, on the SAME
     // recognition rules as Profit, so the two can never disagree.
@@ -1144,7 +1178,12 @@ export default function Dashboard() {
               {[
                 { sign: '', label: 'Investment', note: 'Capital put in by investors',
                   value: funds.capital, tone: 'text-violet-600 dark:text-violet-400' },
-                { sign: '−', label: 'Given to borrowers', note: 'Same figure as the dashboard card',
+                // ALL loans ever made, closed included — the cash formula
+                // requires it (their repayments are in "Total repaid" below).
+                // The dashboard card deliberately shows only OPEN loans, so
+                // this no longer claims to be "the same figure": that claim
+                // would be false by the settled amount.
+                { sign: '−', label: 'Given to borrowers', note: 'Every loan ever funded, settled ones included',
                   value: funds.disbursed, tone: 'text-indigo-600 dark:text-indigo-400' },
                 // Its OWN row, not a footnote on the row above. This is real
                 // money the business kept at disbursal, and burying it in a
@@ -1152,6 +1191,17 @@ export default function Dashboard() {
                 // like an error. Shown as retained cash, NOT folded into
                 // profit — profit recognition is left exactly as it was, so no
                 // figure is deducted or credited twice.
+                // Display-only (sign ''), so it changes no total: the settled
+                // loan's disbursal is already inside the row above and MUST
+                // stay there — its repayments are inside "Total repaid", so
+                // removing it would overstate available cash. Naming it here
+                // answers "why is a closed loan still in these figures?".
+                ...(closedDisbursed > 0 ? [{
+                  sign: '', label: 'of which already settled',
+                  note: `${closedCount} closed loan${closedCount === 1 ? '' : 's'} — fully repaid; excluded from the card, kept here because the cash did move`,
+                  value: closedDisbursed, tone: 'text-slate-500 dark:text-slate-400',
+                  inset: true,
+                }] : []),
                 ...(upfrontDeducted > 0 ? [{
                   sign: '', label: 'of which deducted upfront',
                   note: 'Interest kept from daily collection loans — you never paid this out',
