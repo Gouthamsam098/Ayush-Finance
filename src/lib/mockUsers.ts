@@ -1,7 +1,7 @@
 /**
- * Demo-mode (VITE_USE_API off) user directory — shared by Settings + Login so the
- * sidebar can show the real name/role for the email you signed in with.
- * Not used when the real backend is on.
+ * Demo user directory (localStorage) — Settings + Login in demo mode. Portal
+ * customers created from the customer form may also live here until the backend
+ * exposes a CUSTOMER role.
  */
 import type { Access, Permissions } from '@/services/userApi';
 import type { AppUserRole } from '@/types/appUser';
@@ -117,6 +117,18 @@ function syncAuthToBook(): void {
 export function findMockUserByEmail(email: string): MockUser | undefined {
   const key = email.trim().toLowerCase();
   return listMockUsers().find((u) => u.email.toLowerCase() === key && u.isActive);
+}
+
+export function isLocalOnlyRole(role: AppUserRole | string): boolean {
+  return role === 'RECOVERY_AGENT' || role === 'CUSTOMER';
+}
+
+/** Portal row merged into Settings when API is on — same id + email in mock store. */
+export function isStoredPortalMockUser(u: { id: number; email: string }): boolean {
+  const key = u.email.trim().toLowerCase();
+  return listMockUsers().some(
+    (x) => x.role === 'CUSTOMER' && x.id === u.id && x.email.toLowerCase() === key,
+  );
 }
 
 /** Demo login — email + password must match Settings (passwords keyed by user email). */

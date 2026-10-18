@@ -1,4 +1,4 @@
-/** Frontend auth roles — RECOVERY_AGENT / CUSTOMER are mock/demo until backend adds them. */
+/** Frontend auth roles — RECOVERY_AGENT / CUSTOMER are demo/local until the backend adds them. */
 export type AppUserRole = 'ADMIN' | 'VIEWER' | 'RECOVERY_AGENT' | 'CUSTOMER';
 
 export function isRecoveryAgent(role?: string): boolean {
