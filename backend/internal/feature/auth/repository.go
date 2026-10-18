@@ -28,6 +28,13 @@ func scanUserPerms(u *domain.User, raw []byte) {
 	}
 }
 
+// liveCustomerLink keeps a portal login usable only while its customer exists:
+// deleting the customer revokes the login immediately, including any token
+// already issued (every protected request reloads the user through FindByID).
+const liveCustomerLink = `
+		  AND (role <> 'CUSTOMER' OR EXISTS (
+		        SELECT 1 FROM customers c WHERE c.id = users.customer_id AND c.deleted_at IS NULL))`
+
 // Repository provides user data access. All queries are parameterised; no SQL
 // string is ever built from user input.
 type Repository struct {
@@ -43,16 +50,16 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
 	const query = `
 		SELECT id, email, full_name, password_hash, role, permissions, mfa_enabled, is_active,
-		       last_login_at, created_at, updated_at
+		       last_login_at, created_at, updated_at, customer_id
 		FROM users
-		WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL`
+		WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL` + liveCustomerLink
 
 	var u domain.User
 	var role string
 	var perms []byte
 	err := r.pool.QueryRow(ctx, query, email).Scan(
 		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &role, &perms, &u.MFAEnabled,
-		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
+		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("user")
@@ -69,16 +76,16 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.Use
 func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, error) {
 	const query = `
 		SELECT id, email, full_name, password_hash, role, permissions, mfa_enabled, is_active,
-		       last_login_at, created_at, updated_at
+		       last_login_at, created_at, updated_at, customer_id
 		FROM users
-		WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL`
+		WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL` + liveCustomerLink
 
 	var u domain.User
 	var role string
 	var perms []byte
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &role, &perms, &u.MFAEnabled,
-		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
+		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("user")

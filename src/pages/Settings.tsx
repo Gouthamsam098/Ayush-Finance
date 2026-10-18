@@ -16,11 +16,12 @@ import { ApiError } from '@/lib/api';
 import { userApi, MODULES, type ManagedUser, type UserRole, type Access, type Permissions } from '@/services/userApi';
 import {
   listMockUsers, saveMockUser, setMockUserActive, removeMockUser, getMockUserLinkedCustomerId,
-  findPortalUserForCustomer, mockUserPasswordIsSet, isLocalOnlyRole, isStoredPortalMockUser, type MockUser,
+  findPortalUserForCustomer, mockUserPasswordIsSet, type MockUser,
 } from '@/lib/mockUsers';
 import { CustomerLinkPicker } from '@/features/customer-portal/components/CustomerLinkPicker';
 import type { AppUserRole } from '@/types/appUser';
 import { useRecovery } from '@/features/recovery/RecoveryContext';
+import { refreshRecovery } from '@/features/recovery/recoveryStore';
 import { AgentLoanAssignment } from '@/features/recovery/components/AgentLoanAssignment';
 import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
 import { RecoveryAutoAssignScheduleCard } from '@/features/recovery/components/RecoveryAutoAssignScheduleCard';
@@ -120,16 +121,13 @@ export default function Settings() {
         setUsers(listMockUsers().map(fromMock));
         return;
       }
+      // Every account is a server user: staff, recovery agents and customer
+      // portal logins (with their linked customer / assigned loans).
       const rows = await userApi.list();
-      const apiUsers = rows.map((u) => ({
+      setUsers(rows.map((u) => ({
         ...u,
         permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
-      }));
-      const apiEmails = new Set(apiUsers.map((u) => u.email.toLowerCase()));
-      const portalFromMock = listMockUsers()
-        .filter((u) => u.role === 'CUSTOMER' && !apiEmails.has(u.email.toLowerCase()))
-        .map(fromMock);
-      setUsers([...apiUsers, ...portalFromMock]);
+      })));
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Failed to load users', 'error');
     } finally {
@@ -151,8 +149,8 @@ export default function Settings() {
     confirm: '',
     role: u.role as AppUserRole,
     permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
-    assignedLoanIds: recovery.getAssignments(u.id),
-    linkedCustomerId: getMockUserLinkedCustomerId(u.id) ?? null,
+    assignedLoanIds: config.useApi ? (u.assignedLoanIds ?? []) : recovery.getAssignments(u.id),
+    linkedCustomerId: config.useApi ? (u.customerId ?? null) : (getMockUserLinkedCustomerId(u.id) ?? null),
   });
   const setPerm = (module: string, access: Access) => setForm((f) => (f ? { ...f, permissions: { ...f.permissions, [module]: access } } : f));
 
@@ -170,20 +168,12 @@ export default function Settings() {
       if (form.password.length < 8) { toast('Password must be at least 8 characters', 'error'); return; }
       if (form.password !== form.confirm) { toast('Passwords do not match', 'error'); return; }
     }
-    if (config.useApi && isLocalOnlyRole(form.role)) {
-      toast(
-        form.role === 'RECOVERY_AGENT'
-          ? 'Recovery agent is not available on the server yet. Use demo mode (API off) or assign a Viewer/Admin here.'
-          : 'Customer portal users cannot be saved here while API mode is on. Set portal access on the customer form, or use demo mode.',
-        'error',
-      );
-      return;
-    }
     if (form.role === 'CUSTOMER' && form.linkedCustomerId == null) {
       toast('Select the customer record for this portal login', 'error');
       return;
     }
-    if (form.role === 'CUSTOMER' && findPortalUserForCustomer(form.linkedCustomerId!, form.id)) {
+    // Demo directory check; in API mode the server enforces one login per customer.
+    if (!config.useApi && form.role === 'CUSTOMER' && findPortalUserForCustomer(form.linkedCustomerId!, form.id)) {
       toast('Another portal user is already linked to that customer', 'error');
       return;
     }
@@ -223,16 +213,25 @@ export default function Settings() {
         return;
       }
       if (creating) {
-        const created = await userApi.create({ email: form.email.trim(), fullName: form.fullName.trim(), password: form.password, role: form.role as UserRole, permissions: form.permissions });
+        const created = await userApi.create({
+          email: form.email.trim(), fullName: form.fullName.trim(), password: form.password,
+          role: form.role as UserRole, permissions: form.permissions,
+          customerId: form.linkedCustomerId, assignedLoanIds: form.assignedLoanIds,
+        });
         setUiReportsAccess(created.id, reportsAccess);
         toast('User created');
       } else {
         const existing = users.find((u) => u.id === form.id)!;
-        await userApi.update(form.id!, { email: form.email.trim(), fullName: form.fullName.trim(), role: form.role as UserRole, permissions: form.permissions, isActive: existing.isActive, password: form.password || undefined });
+        await userApi.update(form.id!, {
+          email: form.email.trim(), fullName: form.fullName.trim(), role: form.role as UserRole,
+          permissions: form.permissions, isActive: existing.isActive, password: form.password || undefined,
+          customerId: form.linkedCustomerId, assignedLoanIds: form.assignedLoanIds,
+        });
         setUiReportsAccess(form.id!, reportsAccess);
         toast('User updated');
       }
       setForm(null);
+      void refreshRecovery(); // agent list + loan assignments changed
       await load();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Failed to save user', 'error');
@@ -244,7 +243,7 @@ export default function Settings() {
   const toggleActive = async (u: ManagedUser) => {
     setBusyId(u.id);
     try {
-      if (!config.useApi || isStoredPortalMockUser(u)) {
+      if (!config.useApi) {
         setMockUserActive(u.id, !u.isActive);
         toast(`${u.fullName} ${u.isActive ? 'disabled' : 'enabled'}`, 'info');
         await load();
@@ -252,6 +251,7 @@ export default function Settings() {
       }
       await userApi.setActive(u.id, u, !u.isActive);
       toast(`${u.fullName} ${u.isActive ? 'disabled' : 'enabled'}`, 'info');
+      void refreshRecovery();
       await load();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Failed to update', 'error');
@@ -263,7 +263,7 @@ export default function Settings() {
   const doDelete = async (u: ManagedUser) => {
     setBusyId(u.id);
     try {
-      if (!config.useApi || isStoredPortalMockUser(u)) {
+      if (!config.useApi) {
         removeMockUser(u.id);
         recovery.clearAgent(u.id);
         clearUiReportsAccess(u.id);
@@ -276,6 +276,7 @@ export default function Settings() {
       clearUiReportsAccess(u.id);
       toast('User removed', 'info');
       setConfirmDel(null);
+      void refreshRecovery();
       await load();
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Failed to remove', 'error');
@@ -478,13 +479,6 @@ export default function Settings() {
               onChange={(e) => set('role', e.target.value as AppUserRole)}
               options={[...ROLE_SELECT_OPTIONS]}
             />
-            {config.useApi && isLocalOnlyRole(form.role) && (
-              <p className="text-[12px] leading-relaxed text-amber-700 dark:text-amber-300">
-                {form.role === 'RECOVERY_AGENT'
-                  ? 'Recovery agent requires backend support — not saved to the server in API mode. Use demo mode to try field recovery.'
-                  : 'Customer portal is not a server role yet — use Customers → portal password, or demo mode.'}
-              </p>
-            )}
             {form.id === me?.id && <p className="text-[12px] text-amber-600 dark:text-amber-400">You cannot change your own role or disable yourself.</p>}
 
             {form.role === 'RECOVERY_AGENT' ? (

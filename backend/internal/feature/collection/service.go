@@ -3,6 +3,7 @@ package collection
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/anush-capitals/lms-backend/internal/audit"
@@ -38,6 +39,9 @@ type Auditor interface {
 	RecordTx(ctx context.Context, tx pgx.Tx, e audit.Entry) error
 }
 
+// UserLoader resolves the posting user, to attribute a payment to them.
+type UserLoader func(ctx context.Context, id int64) (*domain.User, error)
+
 // Service holds collection business logic: validation against the parent loan,
 // status gating, and the (soft) overpayment signal.
 type Service struct {
@@ -45,10 +49,67 @@ type Service struct {
 	loans  LoanGateway
 	now    Clock
 	audits Auditor
+	users  UserLoader
 }
 
-func NewService(repo *Repository, loans *loan.Repository, audits Auditor) *Service {
-	return &Service{repo: repo, loans: loans, now: time.Now, audits: audits}
+func NewService(repo *Repository, loans *loan.Repository, audits Auditor, users UserLoader) *Service {
+	return &Service{repo: repo, loans: loans, now: time.Now, audits: audits, users: users}
+}
+
+// maxRemarkRunes mirrors the collection remark limit (domain validation).
+const maxRemarkRunes = 300
+
+// fitRemark joins a remark and its suffix, trimming the remark so the result
+// always passes the 300-character limit (an over-long agent note must never
+// make an approval impossible).
+func fitRemark(base, suffix string) string {
+	room := maxRemarkRunes - len([]rune(suffix))
+	if r := []rune(base); len(r) > room {
+		base = string(r[:room])
+	}
+	return base + suffix
+}
+
+// originalCollector returns the collector shared by every receipt being
+// replaced, or nil when they are mixed, unattributed or not on this loan (the
+// edit is then credited to the editor, as before).
+func (s *Service) originalCollector(ctx context.Context, loanID int64, ids []int64) *domain.Collector {
+	var kept *domain.Collector
+	for _, id := range ids {
+		c, err := s.repo.FindByID(ctx, id)
+		if err != nil || c.LoanID != loanID || c.CollectorType == nil {
+			return nil
+		}
+		name := ""
+		if c.CollectorName != nil {
+			name = *c.CollectorName
+		}
+		cur := &domain.Collector{Type: domain.CollectorType(*c.CollectorType), Name: name, UserID: c.CollectorUserID}
+		if kept == nil {
+			kept = cur
+			continue
+		}
+		sameUser := (kept.UserID == nil && cur.UserID == nil) ||
+			(kept.UserID != nil && cur.UserID != nil && *kept.UserID == *cur.UserID)
+		if kept.Type != cur.Type || kept.Name != cur.Name || !sameUser {
+			return nil
+		}
+	}
+	return kept
+}
+
+// staffCollector attributes a directly-entered payment to the staff user who
+// posted it. Best-effort: an unresolvable user leaves the payment unattributed
+// rather than failing it.
+func (s *Service) staffCollector(ctx context.Context, postedBy *int64) *domain.Collector {
+	if postedBy == nil || s.users == nil {
+		return nil
+	}
+	u, err := s.users(ctx, *postedBy)
+	if err != nil {
+		return nil
+	}
+	return domain.StaffCollector(u)
 }
 
 // logger returns the request-scoped logger (carrying request_id) so a money
@@ -127,6 +188,10 @@ func (s *Service) syncLoanStatus(ctx context.Context, loanID int64) {
 // replaying the same key returns the payment that was already recorded instead
 // of creating a second one.
 func (s *Service) Record(ctx context.Context, in domain.CollectionInput, postedBy *int64, idempotencyKey string) (*domain.Collection, error) {
+	// Resolve who posted it BEFORE opening the transaction: the lookup needs its
+	// own pool connection, and taking one while holding the tx (and the loan
+	// lock) can starve the pool under concurrent payments.
+	collector := s.staffCollector(ctx, postedBy)
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -157,7 +222,7 @@ func (s *Service) Record(ctx context.Context, in domain.CollectionInput, postedB
 	if err := in.Validate(l, collected, s.now()); err != nil {
 		return nil, err
 	}
-	c, inserted, err := s.repo.CreateTx(ctx, tx, in, postedBy, idempotencyKey)
+	c, inserted, err := s.repo.CreateTx(ctx, tx, in, postedBy, idempotencyKey, collector)
 	if err != nil {
 		return nil, err
 	}
@@ -224,6 +289,14 @@ func (s *Service) Replace(
 	ctx context.Context, loanID int64, replaceIDs []int64,
 	inputs []domain.CollectionInput, postedBy *int64,
 ) ([]*domain.Collection, error) {
+	// Both attribution lookups run BEFORE the transaction (they use their own
+	// pool connections). An edit rewrites the SAME money, so it keeps who
+	// received it: a receipt a recovery agent collected (or a customer paid)
+	// stays credited to them in Reports, not to the staff member correcting it.
+	collector := s.staffCollector(ctx, postedBy)
+	if kept := s.originalCollector(ctx, loanID, replaceIDs); kept != nil {
+		collector = kept
+	}
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -262,7 +335,7 @@ func (s *Service) Replace(
 		if err := in.Validate(l, collected, s.now()); err != nil {
 			return nil, err
 		}
-		c, _, err := s.repo.CreateTx(ctx, tx, in, postedBy, "")
+		c, _, err := s.repo.CreateTx(ctx, tx, in, postedBy, "", collector)
 		if err != nil {
 			return nil, err
 		}
@@ -398,4 +471,116 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 	s.syncLoanStatus(ctx, existing.LoanID)
 	return nil
+}
+
+// ListForCustomer returns every payment on one customer's loans (borrower portal).
+func (s *Service) ListForCustomer(ctx context.Context, customerID int64) ([]*domain.Collection, error) {
+	return s.repo.ListByCustomer(ctx, customerID)
+}
+
+// RecordSplitTx records an APPROVED payment submitted from outside the office —
+// a customer portal proof or a recovery agent's claim — inside the caller's
+// transaction, so the money and the approval commit together.
+// It applies exactly what Record applies to a staff entry: loan row lock, ACTIVE
+// check, per-row validation, audit, and auto-close when the balance hits zero.
+//
+// The amount is split by domain.SplitPortalPayment (interest due first, then
+// principal, for interest-only loans; one payment otherwise) and must not exceed
+// the CURRENT outstanding: staff may have recorded cash since the borrower
+// uploaded, and accepting the proof then would overpay the loan.
+//
+// Each row carries the idempotency key "<keyPrefix>-<n>", so the rows can be
+// traced back to their proof and a replay can never record them twice.
+func (s *Service) RecordSplitTx(
+	ctx context.Context, tx pgx.Tx, loanID int64, amount domain.Paise, date time.Time, mode domain.PayMode,
+	remarks string, postedBy *int64, keyPrefix string, collector *domain.Collector,
+) ([]*domain.Collection, error) {
+	if err := LockLoanForUpdate(ctx, tx, loanID); err != nil {
+		return nil, err
+	}
+	l, err := s.loans.FindByID(ctx, loanID)
+	if err != nil {
+		return nil, err
+	}
+	if l.Status != domain.StatusActive {
+		return nil, domain.NewConflict("This loan is closed — the payment cannot be recorded against it")
+	}
+	collected, err := s.repo.SumByLoanTx(ctx, tx, loanID)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	if outstanding := l.Outstanding(collected, now); amount > outstanding {
+		return nil, domain.NewConflict("This payment (" + amount.String() + ") is more than the loan's current outstanding (" +
+			outstanding.String() + "). Record it from the ledger or reject the proof.")
+	}
+
+	parts, err := domain.SplitPortalPayment(l, collected, amount, now)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.Collection, 0, len(parts))
+	running := collected
+	for i, p := range parts {
+		suffix := ""
+		if len(parts) > 1 {
+			if p.Kind == domain.KindPrincipal {
+				suffix = " — principal"
+			} else {
+				suffix = " — interest"
+			}
+		}
+		note := fitRemark(remarks, suffix)
+		in := domain.CollectionInput{
+			LoanID: loanID, Amount: p.Amount, Date: date,
+			Mode: mode, Kind: p.Kind, Remarks: &note,
+		}
+		if err := in.Validate(l, running, now); err != nil {
+			return nil, err
+		}
+		c, inserted, err := s.repo.CreateTx(ctx, tx, in, postedBy, keyPrefix+"-"+strconv.Itoa(i+1), collector)
+		if err != nil {
+			return nil, err
+		}
+		if inserted && s.audits != nil {
+			if err := s.audits.RecordTx(ctx, tx, audit.Entry{
+				EntityType: audit.EntityCollection,
+				EntityID:   c.ID,
+				Action:     audit.ActionPost,
+				After: map[string]any{
+					"receipt_no": c.ReceiptNo,
+					"loan_id":    c.LoanID,
+					"amount":     c.Amount.Rupees(),
+					"date":       c.Date.Format("2006-01-02"),
+					"mode":       string(c.Mode),
+					"kind":       string(c.Kind),
+					"source":     keyPrefix,
+				},
+			}); err != nil {
+				return nil, err
+			}
+		}
+		if p.Kind == domain.KindPrincipal {
+			running.Principal = running.Principal.Add(p.Amount)
+		} else {
+			running.Interest = running.Interest.Add(p.Amount)
+		}
+		out = append(out, c)
+	}
+
+	after, err := s.repo.SumByLoanTx(ctx, tx, loanID)
+	if err != nil {
+		return nil, err
+	}
+	if l.IsFullyPaid(after, now) && l.Status == domain.StatusActive {
+		if _, err := s.loans.SetStatusTx(ctx, tx, loanID, domain.StatusClosed); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// ListForAgent returns the payments on a recovery agent's assigned loans.
+func (s *Service) ListForAgent(ctx context.Context, agentID int64) ([]*domain.Collection, error) {
+	return s.repo.ListForAgent(ctx, agentID)
 }

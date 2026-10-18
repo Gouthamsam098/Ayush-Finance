@@ -1,12 +1,11 @@
-import { listMockUsers } from '@/lib/mockUsers';
-import { readAssignmentsMap } from './recoveryStore';
+import { listRecoveryAgents, readAssignmentsMap } from './recoveryStore';
 
-/** loanId → recovery agent display name (demo assignments from Settings). */
+/** loanId → recovery agent display name (demo or server assignments). */
 export function recoveryAgentNameByLoanId(): Record<number, string> {
   const agents = new Map(
-    listMockUsers()
-      .filter((u) => u.role === 'RECOVERY_AGENT' && u.isActive)
-      .map((u) => [u.id, u.fullName.trim() || u.email]),
+    listRecoveryAgents()
+      .filter((u) => u.isActive)
+      .map((u) => [u.id, u.fullName]),
   );
   const assignments = readAssignmentsMap();
   const out: Record<number, string> = {};

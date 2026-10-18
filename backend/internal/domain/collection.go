@@ -58,8 +58,14 @@ type Collection struct {
 	// foreclosure/legacy): the ledger falls back to the receipt-date rule.
 	TargetDueDate *time.Time
 	PostedBy      *int64
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// Who received the money (Reports' "Collected by"), set by the server:
+	// ADMIN / STAFF for a direct entry, RECOVERY_AGENT for an approved agent
+	// claim, CUSTOMER for an accepted portal proof. Nil on legacy rows.
+	CollectorType   *string
+	CollectorName   *string
+	CollectorUserID *int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // Collected is the split of a loan's recorded collections. Interest and

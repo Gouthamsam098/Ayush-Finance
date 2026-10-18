@@ -36,6 +36,10 @@ interface CollectionWire {
   remarks?: string;
   target_due_date?: string;
   posted_by?: number;
+  /** Who received the money (server-set): ADMIN | STAFF | RECOVERY_AGENT | CUSTOMER. */
+  collector_type?: Collection['collectorType'];
+  collector_name?: string;
+  collector_user_id?: number;
   created_at: string;
   updated_at: string;
 }
@@ -52,7 +56,12 @@ function toCollection(w: CollectionWire): Collection {
     remarks: w.remarks,
     targetDate: w.target_due_date ? w.target_due_date.slice(0, 10) : undefined,
     recordedOn: w.created_at ? w.created_at.slice(0, 10) : undefined,
-    postedByUserId: w.posted_by,
+    // Reports group receipts by this id; for an approved agent claim or a
+    // customer proof the person who received the money is the collector, not
+    // the admin who approved it.
+    postedByUserId: w.collector_user_id ?? w.posted_by,
+    collectorType: w.collector_type,
+    collectorName: w.collector_name,
   };
 }
 
@@ -159,5 +168,16 @@ export const collectionApi = {
 
   async remove(id: number): Promise<void> {
     await api.delete(`/collections/${id}`);
+  },
+
+  /** Recovery agent: payments on the signed-in agent's assigned loans. */
+  async agentList(): Promise<Collection[]> {
+    return ((await api.get<CollectionWire[]>('/agent/collections')) ?? []).map(toCollection);
+  },
+
+  /** Borrower portal: every payment on the signed-in customer's loans. */
+  async portalList(): Promise<Collection[]> {
+    const rows = await api.get<CollectionWire[]>('/portal/collections');
+    return (rows ?? []).map(toCollection);
   },
 };

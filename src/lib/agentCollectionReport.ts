@@ -1,5 +1,5 @@
 import type { Collection, Customer, Loan } from '@/mock/DataContext';
-import { listMockUsers } from '@/lib/mockUsers';
+import { listRecoveryAgents } from '@/features/recovery/recoveryStore';
 import { resolveCollector } from '@/lib/collectionCollector';
 import { fmtDate, inr } from '@/lib/format';
 
@@ -56,7 +56,7 @@ export function filterAgentCollections(
 export function summarizeAgentsByCollections(
   receipts: Collection[],
 ): AgentCollectionSummary[] {
-  const users = listMockUsers().filter((u) => u.role === 'RECOVERY_AGENT');
+  const users = listRecoveryAgents();
   const userById = new Map(users.map((u) => [u.id, u] as const));
 
   const buckets = new Map<string, Collection[]>();

@@ -15,7 +15,7 @@ import { bumpCustomerPhotoCache, cacheCustomerPhotoDataUrl } from '@/lib/custome
 import { cn } from '@/lib/utils';
 import { config } from '@/lib/config';
 import { validateCustomerForm, INDIAN_STATES, type FieldErrors } from '@/lib/customerValidation';
-import { customerApi } from '@/services/customerApi';
+import { customerApi, type PortalLogin } from '@/services/customerApi';
 import { documentApi, type DocumentType } from '@/services/documentApi';
 import { ApiError } from '@/lib/api';
 import {
@@ -147,6 +147,9 @@ export default function Customers() {
   const [docErrors, setDocErrors] = useState<DocumentType[]>([]);
   const [portalPassword, setPortalPassword] = useState('');
   const [portalConfirm, setPortalConfirm] = useState('');
+  // API mode, edit drawer: the customer's existing portal login. undefined =
+  // not checked yet (or demo mode), null = none, so one can be created here.
+  const [portalLogin, setPortalLogin] = useState<PortalLogin | null | undefined>(undefined);
 
   const cities = useMemo(
     () => Array.from(new Set(d.customers.map((c) => c.city).filter(Boolean))).sort() as string[],
@@ -209,6 +212,7 @@ export default function Customers() {
     setDocErrors([]);
     setPortalPassword('');
     setPortalConfirm('');
+    setPortalLogin(undefined);
     setForm({ ...empty });
   };
   const openEdit = (c: Customer) => {
@@ -218,6 +222,12 @@ export default function Customers() {
     setPendingDocs({});
     setErrors({});
     setDocErrors([]);
+    setPortalPassword('');
+    setPortalConfirm('');
+    setPortalLogin(undefined);
+    if (config.useApi) {
+      customerApi.getPortalLogin(c.id).then(setPortalLogin).catch(() => { /* section stays hidden */ });
+    }
     // Never prefill raw KYC (backend only returns masked); leave blank on edit.
     setForm({ ...c, aadhaar: undefined, pan: undefined });
   };
@@ -336,7 +346,12 @@ export default function Customers() {
       return;
     }
     const emailForPortal = (payload.email ?? '').trim();
-    const portalErrors = !editId && emailForPortal
+    // On add, an email means a portal login (password required). On edit (API
+    // mode, customer without a login) it is optional: only when a password is typed.
+    const wantsPortal = !!emailForPortal && (
+      !editId || (portalLogin === null && !!(portalPassword || portalConfirm))
+    );
+    const portalErrors = wantsPortal
       ? portalCredentialErrors(emailForPortal, portalPassword, portalConfirm)
       : {};
     if (Object.keys(portalErrors).length > 0) {
@@ -348,8 +363,18 @@ export default function Customers() {
     setErrors({});
     setDocErrors([]);
 
-    const attachPortalLogin = (created: Customer) => {
-      if (editId || !emailForPortal || !portalPassword) return;
+    // true = created, false = failed (toast shown), undefined = not requested.
+    const attachPortalLogin = async (created: Customer): Promise<boolean | undefined> => {
+      if (!wantsPortal || !portalPassword) return undefined;
+      if (config.useApi) {
+        try {
+          await customerApi.createPortalLogin(created.id, emailForPortal, portalPassword);
+          return true;
+        } catch (e) {
+          toast(`Portal login not created: ${apiErrorMessage(e, 'please try again')}. Edit the customer to retry.`, 'error');
+          return false;
+        }
+      }
       try {
         provisionCustomerPortalUser({
           customerId: created.id,
@@ -382,7 +407,8 @@ export default function Customers() {
         const updated = await customerApi.update(editId, payload);
         await uploadPendingDocs(editId);
         d.updateCustomerRecord(updated); // reflect the authoritative record
-        toast('Customer updated');
+        const portalOk = await attachPortalLogin(updated);
+        if (portalOk !== false) toast(portalOk ? 'Customer updated · portal login created' : 'Customer updated');
       } catch (e) {
         const conflict = conflictField(e);
         if (conflict) {
@@ -404,7 +430,7 @@ export default function Customers() {
         const created = await customerApi.create(payload);
         await uploadPendingDocs(created.id);
         d.addCustomerRecord(created); // reflect in list without a refetch
-        const portalOk = attachPortalLogin(created);
+        const portalOk = await attachPortalLogin(created);
         toast(portalOk === false ? 'Customer added (portal login failed)' : portalOk ? 'Customer added · portal login created' : 'Customer added');
       } catch (e) {
         const conflict = conflictField(e);
@@ -421,7 +447,7 @@ export default function Customers() {
       const created = d.addCustomer(payload as Omit<Customer, 'id' | 'code' | 'createdAt'>);
       if (created) {
         await uploadPendingDocs(created.id);
-        const portalOk = attachPortalLogin(created);
+        const portalOk = await attachPortalLogin(created);
         toast(portalOk === false ? 'Customer added (portal login failed)' : portalOk ? 'Customer added · portal login created' : 'Customer added');
       } else {
         toast('Customer added');
@@ -722,15 +748,25 @@ export default function Customers() {
                 <Input label="Mobile Number *" placeholder="Enter mobile number" inputMode="numeric" maxLength={10} value={form.mobile ?? ''} onChange={(e) => setMobile('mobile', e.target.value)} error={errors.mobile} />
                 <Input label="Alternate Mobile" placeholder="Enter alternate number" inputMode="numeric" maxLength={10} value={form.altMobile ?? ''} onChange={(e) => setMobile('altMobile', e.target.value)} error={errors.altMobile} />
                 <Input label="Email" type="email" placeholder="Enter email address" value={form.email ?? ''} onChange={(e) => set('email', e.target.value)} error={errors.email} />
-                {!editId && (form.email ?? '').trim() && (
+                {editId && portalLogin && (
+                  <div className="sm:col-span-2 flex items-center gap-3 rounded-card border border-success/25 bg-success/5 px-4 py-3 dark:border-success/30 dark:bg-success/10">
+                    <ShieldCheck size={16} className="shrink-0 text-success" aria-hidden="true" />
+                    <p className="text-[12px] text-muted">
+                      Portal login active for <span className="font-medium text-ink">{portalLogin.email}</span>
+                    </p>
+                  </div>
+                )}
+                {(!editId || portalLogin === null) && (form.email ?? '').trim() && (
                   <div className="sm:col-span-2 rounded-card border border-primary/20 bg-primary/5 p-4 dark:border-primary/30 dark:bg-primary/10">
                     <p className="text-[13px] font-semibold text-ink">Customer portal login</p>
                     <p className="mt-0.5 text-[11px] text-muted">
-                      Creates a Settings → Users entry with role <span className="font-medium text-ink">Customer portal</span> so the borrower can sign in.
+                      {editId
+                        ? 'This customer has no portal login yet. Set a password to let them sign in with this email (optional).'
+                        : <>Lets the borrower sign in with this email to see their loans and payments{config.useApi ? '' : <> (creates a Settings → Users entry with role <span className="font-medium text-ink">Customer portal</span>)</>}.</>}
                     </p>
                     <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <Input
-                        label="Portal password *"
+                        label={editId ? 'Portal password' : 'Portal password *'}
                         placeholder="At least 8 characters"
                         revealPassword
                         value={portalPassword}
@@ -742,7 +778,7 @@ export default function Customers() {
                         autoComplete="new-password"
                       />
                       <Input
-                        label="Confirm password *"
+                        label={editId ? 'Confirm password' : 'Confirm password *'}
                         placeholder="Re-enter password"
                         revealPassword
                         value={portalConfirm}

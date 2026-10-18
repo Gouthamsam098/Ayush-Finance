@@ -1,4 +1,21 @@
 import type { RecoverySubmission } from './types';
+import { config } from '@/lib/config';
+import { tokenStore } from '@/lib/tokenStore';
+import { listMockUsers } from '@/lib/mockUsers';
+import { recoveryApi, type RecoveryAgentInfo } from '@/services/recoveryApi';
+import { store } from '@/store';
+
+/**
+ * Recovery-agent state: loan assignments, agent submissions (collection claims
+ * and promises to pay) and the daily auto-assign schedule.
+ *
+ * Demo mode (VITE_USE_API off): localStorage, as before.
+ * API mode: the server is the record. The exported functions keep their
+ * synchronous signatures (screens call them during render) and read an
+ * in-memory copy that `refreshRecovery()` reloads from the backend — on sign-in,
+ * every 30 s while the tab is visible, and after each write. Each reload fires
+ * the same change events the screens already listen to.
+ */
 
 const ASSIGN_KEY = 'anush.recovery.assignments';
 export const RECOVERY_SUBMISSIONS_KEY = 'anush.recovery.submissions';
@@ -20,7 +37,153 @@ function notifyAssignmentsChanged() {
   window.dispatchEvent(new Event(RECOVERY_ASSIGNMENTS_CHANGED));
 }
 
+// ── API-mode cache ───────────────────────────────────────────────────────────
+
+const POLL_MS = 30_000;
+
+const remote = {
+  owner: '',
+  agents: [] as RecoveryAgentInfo[],
+  assignments: {} as AssignmentsMap,
+  submissions: [] as RecoverySubmission[],
+  schedule: null as { runTime: string | null; lastRunSlot: string | null } | null,
+  inflight: false,
+  /** A refresh was asked for while one was in flight — run it right after. */
+  rerun: false,
+  /** Bumped by every local write, so an older in-flight poll can't overwrite it. */
+  version: 0,
+  pollTimer: 0 as number,
+};
+
+type Scope = 'staff' | 'agent';
+
+function apiScope(): { scope: Scope; owner: string; userId: number; isAdmin: boolean } | null {
+  if (!config.useApi || !tokenStore.get()) return null;
+  const { accessToken, user } = store.getState().auth;
+  if (!accessToken || !user || user.role === 'CUSTOMER') return null;
+  const scope: Scope = user.role === 'RECOVERY_AGENT' ? 'agent' : 'staff';
+  return { scope, owner: `${scope}:${user.id}`, userId: user.id, isAdmin: user.role === 'ADMIN' };
+}
+
+function syncOwner(owner: string) {
+  if (remote.owner === owner) return;
+  remote.owner = owner;
+  remote.agents = [];
+  remote.assignments = {};
+  remote.submissions = [];
+  remote.schedule = null;
+  remote.version += 1;
+}
+
+function startPolling() {
+  if (remote.pollTimer) return;
+  remote.pollTimer = window.setInterval(() => {
+    // Signed out: stop polling and drop the cached recovery data.
+    if (!apiScope()) {
+      window.clearInterval(remote.pollTimer);
+      remote.pollTimer = 0;
+      syncOwner('');
+      return;
+    }
+    if (document.visibilityState === 'visible') void refreshRecovery();
+  }, POLL_MS);
+}
+
+/** Reload assignments, submissions and (admin) the schedule from the server. */
+export async function refreshRecovery(): Promise<void> {
+  const s = apiScope();
+  if (!s) return;
+  syncOwner(s.owner);
+  startPolling();
+  if (remote.inflight) {
+    // Don't drop it: a write may have just happened (e.g. an approval).
+    remote.rerun = true;
+    return;
+  }
+  remote.inflight = true;
+  const owner = s.owner;
+  const version = remote.version;
+  try {
+    let agents = remote.agents;
+    let assignments: AssignmentsMap;
+    let submissions: RecoverySubmission[];
+    let schedule = remote.schedule;
+    if (s.scope === 'agent') {
+      const [loanIds, subs] = await Promise.all([recoveryApi.agentLoanIds(), recoveryApi.agentSubmissions()]);
+      assignments = { [String(s.userId)]: loanIds };
+      submissions = subs;
+    } else {
+      const [snap, subs, sched] = await Promise.all([
+        recoveryApi.assignments(),
+        recoveryApi.staffSubmissions(),
+        s.isAdmin ? recoveryApi.schedule().catch(() => null) : Promise.resolve(null),
+      ]);
+      agents = snap.agents;
+      assignments = snap.map;
+      submissions = subs;
+      if (sched) schedule = { runTime: sched.run_time, lastRunSlot: sched.last_run_slot ?? null };
+    }
+    if (remote.owner !== owner) return;
+    // A local write landed while this poll was in flight: its data is older
+    // than what the screens show, so discard it and fetch again.
+    if (remote.version !== version) {
+      remote.rerun = true;
+      return;
+    }
+    // Notify only on real change: every notification re-renders the recovery
+    // screens, and an idle 30-second poll must not reset an open dialog.
+    const changed = (x: unknown, y: unknown) => JSON.stringify(x) !== JSON.stringify(y);
+    const assignmentsChanged = changed(agents, remote.agents) || changed(assignments, remote.assignments);
+    const submissionsChanged = changed(submissions, remote.submissions);
+    const scheduleChanged = changed(schedule, remote.schedule);
+    remote.agents = agents;
+    if (assignmentsChanged) remote.assignments = assignments;
+    if (submissionsChanged) remote.submissions = submissions;
+    remote.schedule = schedule;
+    if (assignmentsChanged) notifyAssignmentsChanged();
+    if (submissionsChanged) notifySubmissionsChanged();
+    if (scheduleChanged) window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
+  } catch {
+    /* no Collections access, or offline — keep the last copy; the next poll retries */
+  } finally {
+    remote.inflight = false;
+    if (remote.rerun) {
+      remote.rerun = false;
+      void refreshRecovery();
+    }
+  }
+}
+
+/** API mode: replace one submission in the cache (after a write) and notify. */
+export function upsertCachedSubmission(row: RecoverySubmission, replaceId?: string) {
+  remote.version += 1;
+  const id = replaceId ?? row.id;
+  const idx = remote.submissions.findIndex((s) => s.id === id);
+  remote.submissions = idx >= 0
+    ? remote.submissions.map((s, i) => (i === idx ? row : s))
+    : [row, ...remote.submissions];
+  notifySubmissionsChanged();
+}
+
+/** API mode: drop a submission from the cache (a failed optimistic write). */
+export function removeCachedSubmission(id: string) {
+  remote.version += 1;
+  remote.submissions = remote.submissions.filter((s) => s.id !== id);
+  notifySubmissionsChanged();
+}
+
+/** Recovery agents for other screens (Collections tags, Reports, Settings). */
+export function listRecoveryAgents(): { id: number; fullName: string; isActive: boolean }[] {
+  if (config.useApi) return remote.agents.map((a) => ({ id: a.id, fullName: a.name, isActive: a.isActive }));
+  return listMockUsers()
+    .filter((u) => u.role === 'RECOVERY_AGENT')
+    .map((u) => ({ id: u.id, fullName: u.fullName.trim() || u.email, isActive: u.isActive }));
+}
+
+// ── auto-assign schedule ─────────────────────────────────────────────────────
+
 export function readLastAutoAssignDate(): string | null {
+  if (config.useApi) return remote.schedule?.lastRunSlot ?? null;
   try {
     return localStorage.getItem(RECOVERY_AUTO_ASSIGN_LAST_KEY);
   } catch {
@@ -29,6 +192,7 @@ export function readLastAutoAssignDate(): string | null {
 }
 
 export function writeLastAutoAssignDate(isoDate: string) {
+  if (config.useApi) return; // recorded by the server job
   localStorage.setItem(RECOVERY_AUTO_ASSIGN_LAST_KEY, isoDate);
 }
 
@@ -41,6 +205,7 @@ function parseHHMM(value: string): { h: number; m: number } | null {
 
 /** User test schedule (Settings) or optional VITE_RECOVERY_AUTO_ASSIGN_TEST_TIME. */
 export function readTestAutoAssignTime(): string | null {
+  if (config.useApi) return remote.schedule?.runTime ?? null;
   try {
     const stored = localStorage.getItem(RECOVERY_AUTO_ASSIGN_TEST_TIME_KEY);
     if (stored) {
@@ -56,14 +221,33 @@ export function readTestAutoAssignTime(): string | null {
 }
 
 export function writeTestAutoAssignTime(value: string | null) {
+  if (config.useApi) {
+    // Optimistic: the server owns the schedule and runs the job at this time.
+    remote.version += 1;
+    remote.schedule = { runTime: value, lastRunSlot: remote.schedule?.lastRunSlot ?? null };
+    window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
+    recoveryApi.setSchedule(value)
+      .then((s) => {
+        remote.schedule = { runTime: s.run_time, lastRunSlot: s.last_run_slot ?? null };
+        window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
+      })
+      .catch((e) => {
+        console.error('Saving the auto-assign schedule failed', e);
+        void refreshRecovery();
+      });
+    return;
+  }
   if (!value) localStorage.removeItem(RECOVERY_AUTO_ASSIGN_TEST_TIME_KEY);
   else localStorage.setItem(RECOVERY_AUTO_ASSIGN_TEST_TIME_KEY, value);
   window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
 }
 
+// ── assignments ──────────────────────────────────────────────────────────────
+
 export type AssignmentsMap = Record<string, number[]>;
 
 function readAssignments(): AssignmentsMap {
+  if (config.useApi) return remote.assignments;
   try {
     const raw = localStorage.getItem(ASSIGN_KEY);
     return raw ? (JSON.parse(raw) as AssignmentsMap) : {};
@@ -73,6 +257,12 @@ function readAssignments(): AssignmentsMap {
 }
 
 function writeAssignments(map: AssignmentsMap) {
+  // API mode: assignments are saved with the agent (Settings → userApi) and by
+  // the server's auto-assign; this tab just reloads them.
+  if (config.useApi) {
+    void refreshRecovery();
+    return;
+  }
   localStorage.setItem(ASSIGN_KEY, JSON.stringify(map));
   notifyAssignmentsChanged();
 }
@@ -82,6 +272,7 @@ export function replaceAssignmentsMap(map: AssignmentsMap) {
 }
 
 function readSubmissions(): RecoverySubmission[] {
+  if (config.useApi) return remote.submissions;
   try {
     const raw = localStorage.getItem(SUB_KEY);
     return raw ? (JSON.parse(raw) as RecoverySubmission[]) : [];
@@ -91,6 +282,7 @@ function readSubmissions(): RecoverySubmission[] {
 }
 
 function writeSubmissions(rows: RecoverySubmission[]) {
+  if (config.useApi) return; // API mode writes go through RecoveryContext → recoveryApi
   localStorage.setItem(SUB_KEY, JSON.stringify(rows));
 }
 
@@ -123,6 +315,10 @@ export function loanIdsAssignedToOtherAgents(excludeAgentUserId?: number): Set<n
 }
 
 export function setAssignedLoanIds(agentUserId: number, loanIds: number[]) {
+  if (config.useApi) {
+    void refreshRecovery();
+    return;
+  }
   const unique = [...new Set(loanIds)];
   const map = readAssignments();
   const agentKey = String(agentUserId);
@@ -136,22 +332,57 @@ export function setAssignedLoanIds(agentUserId: number, loanIds: number[]) {
 }
 
 export function clearAssignmentsForUser(agentUserId: number) {
+  if (config.useApi) {
+    void refreshRecovery();
+    return;
+  }
   const map = readAssignments();
   delete map[String(agentUserId)];
   writeAssignments(map);
 }
 
 
+// listSubmissions() returns the SAME array while the data is unchanged. The
+// Collections page refreshes the queue from an effect whose dependencies
+// include the submissions themselves; a fresh array on every call made React
+// re-render forever ("Maximum update depth exceeded").
+let sortedSubmissions: { source: unknown; rows: RecoverySubmission[] } = { source: undefined, rows: [] };
+
 export function listSubmissions(): RecoverySubmission[] {
-  return readSubmissions().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  let source: unknown;
+  if (config.useApi) {
+    source = remote.submissions;
+  } else {
+    try {
+      source = localStorage.getItem(SUB_KEY);
+    } catch {
+      source = null;
+    }
+  }
+  if (source !== sortedSubmissions.source) {
+    sortedSubmissions = {
+      source,
+      rows: [...readSubmissions()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    };
+  }
+  return sortedSubmissions.rows;
 }
 
 export function addSubmission(row: RecoverySubmission) {
+  if (config.useApi) {
+    upsertCachedSubmission(row);
+    return;
+  }
   writeSubmissions([row, ...readSubmissions()]);
   notifySubmissionsChanged();
 }
 
 export function updateSubmission(id: string, patch: Partial<RecoverySubmission>) {
+  if (config.useApi) {
+    const cur = remote.submissions.find((s) => s.id === id);
+    if (cur) upsertCachedSubmission({ ...cur, ...patch } as RecoverySubmission);
+    return;
+  }
   writeSubmissions(readSubmissions().map((s) => (s.id === id ? { ...s, ...patch } as RecoverySubmission : s)));
   notifySubmissionsChanged();
 }

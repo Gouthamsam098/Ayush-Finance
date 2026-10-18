@@ -120,6 +120,8 @@ type userResponse struct {
 	Role        string            `json:"role"`
 	Permissions map[string]string `json:"permissions"`
 	MFAEnabled  bool              `json:"mfa_enabled"`
+	// CustomerID links a CUSTOMER portal login to its customer record.
+	CustomerID *int64 `json:"customer_id,omitempty"`
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
@@ -145,5 +147,6 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		Role:        string(user.Role),
 		Permissions: perms,
 		MFAEnabled:  user.MFAEnabled,
+		CustomerID:  user.CustomerID,
 	})
 }

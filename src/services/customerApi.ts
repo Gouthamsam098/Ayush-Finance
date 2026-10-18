@@ -5,7 +5,7 @@
  * pages never see the wire format.
  */
 
-import { api, type ListResult } from '@/lib/api';
+import { api, ApiError, type ListResult } from '@/lib/api';
 import type { Customer } from '@/mock/DataContext';
 
 interface CustomerWire {
@@ -130,4 +130,35 @@ export const customerApi = {
   async remove(id: number): Promise<void> {
     await api.delete(`/customers/${id}`);
   },
+
+  /** Recovery agent: customers of the loans assigned to the signed-in agent. */
+  async agentList(): Promise<Customer[]> {
+    return ((await api.get<CustomerWire[]>('/agent/customers')) ?? []).map(toCustomer);
+  },
+
+  /** Borrower portal: the signed-in customer's own record (CUSTOMER role only). */
+  async portalProfile(): Promise<Customer> {
+    return toCustomer(await api.get<CustomerWire>('/portal/customer'));
+  },
+
+  /** Staff: the customer's portal login, or null when none exists yet. */
+  async getPortalLogin(customerId: number): Promise<PortalLogin | null> {
+    try {
+      return await api.get<PortalLogin>(`/customers/${customerId}/portal-login`);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+
+  /** Staff: give a customer a portal login (password is hashed server-side). */
+  async createPortalLogin(customerId: number, email: string, password: string): Promise<PortalLogin> {
+    return api.post<PortalLogin>(`/customers/${customerId}/portal-login`, { email, password });
+  },
 };
+
+export interface PortalLogin {
+  email: string;
+  is_active: boolean;
+  last_login_at?: string;
+}

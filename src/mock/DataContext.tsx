@@ -11,6 +11,7 @@ import { cacheInvestorCapital } from '@/lib/investments';
 import { loadMockBook, mockUidFloor, repairDuplicateCustomerIds, saveMockBook } from '@/lib/mockBookPersistence';
 import { ensureDemoPortalUserFromEnv } from '@/lib/demoPortalBootstrap';
 import type { RootState } from '@/store';
+import { COLLECTIONS_CHANGED_EVENT } from '@/lib/dataEvents';
 
 // ─────────────── Types ───────────────
 // Seven loan products, three economic behaviours:
@@ -294,8 +295,64 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // the fetch runs AFTER login (the provider mounts before auth exists; a fetch
   // at mount would 401). Re-runs whenever the token changes (login / restore).
   const accessToken = useSelector((s: RootState) => s.auth.accessToken);
+  const isPortalSession = useSelector((s: RootState) => s.auth.user?.role === 'CUSTOMER');
+  const isAgentSession = useSelector((s: RootState) => s.auth.user?.role === 'RECOVERY_AGENT');
+  const sessionUserId = useSelector((s: RootState) => s.auth.user?.id ?? null);
+  // Bumped when money is recorded server-side outside DataContext (a portal
+  // payment proof accepted), so the book below is refetched.
+  const [serverSyncTick, setServerSyncTick] = useState(0);
   useEffect(() => {
-    if (!config.useApi || !accessToken) return;
+    if (!config.useApi) return;
+    const onChanged = () => setServerSyncTick((n) => n + 1);
+    window.addEventListener(COLLECTIONS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(COLLECTIONS_CHANGED_EVENT, onChanged);
+  }, []);
+  const fetchedSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!config.useApi) return;
+    if (!accessToken) {
+      // Signed out: drop the previous user's book from memory, so the next
+      // person on this device never sees it (logout does not reload the page).
+      if (fetchedSessionRef.current !== null) {
+        fetchedSessionRef.current = null;
+        setCustomers([]); setLoans([]); setCollections([]); setExpenses([]);
+      }
+      return;
+    }
+    // Keyed on the USER, not the token: in API mode the token held here is a
+    // fixed sentinel, so borrower B logging in after borrower A on the same tab
+    // must still count as a new session.
+    const sessionKey = `${sessionUserId}:${isPortalSession}:${isAgentSession}`;
+    const newSession = fetchedSessionRef.current !== sessionKey;
+    fetchedSessionRef.current = sessionKey;
+    // A borrower may read only their own record, loans and payments; every
+    // staff list below would 403 for them. Load the portal scope instead.
+    // A recovery agent reads only their assigned loans, those customers and
+    // those payments; the staff lists below would 403 for them.
+    if (isAgentSession) {
+      if (newSession) { setCustomers([]); setLoans([]); setCollections([]); setExpenses([]); }
+      customerApi.agentList().then(setCustomers).catch(() => { /* agent view shows its empty state */ });
+      Promise.all([loanApi.agentList(), collectionApi.agentList()])
+        .then(([loanRows, collRows]) => {
+          setLoans(loanRows);
+          setCollections(collRows);
+        })
+        .catch(() => { /* agent view shows its empty state */ });
+      return;
+    }
+    if (isPortalSession) {
+      // Drop anything a previous staff session left in memory on this tab
+      // (only on a new session — a refetch must not blank the portal).
+      if (newSession) { setCustomers([]); setLoans([]); setCollections([]); setExpenses([]); }
+      customerApi.portalProfile().then((c) => setCustomers([c])).catch(() => { /* portal shows its empty state */ });
+      Promise.all([loanApi.portalList(), collectionApi.portalList()])
+        .then(([loanRows, collRows]) => {
+          setLoans(loanRows);
+          setCollections(collRows);
+        })
+        .catch(() => { /* portal shows its empty state */ });
+      return;
+    }
     // fetchAll everywhere: the plain list() calls take ONE server page (loans
     // and customers cap at 100, expenses at 500) and drop the rest silently,
     // which understates every derived total. Paging costs one extra request
@@ -332,7 +389,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setCollections(collRows.filter((c) => ids.has(c.loanId)));
       })
       .catch(() => { /* surfaced per-action */ });
-  }, [accessToken]);
+  }, [accessToken, sessionUserId, isPortalSession, isAgentSession, serverSyncTick]);
 
   // Drop payments whose loan no longer exists (customer/loan delete, or seed
   // orphans). Keeps Collections / Reports / Dashboard in sync with Loans.

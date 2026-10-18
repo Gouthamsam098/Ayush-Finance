@@ -17,9 +17,11 @@ export interface BackendUser {
   id: number;
   email: string;
   full_name: string;
-  role: 'ADMIN' | 'VIEWER';
+  role: 'ADMIN' | 'VIEWER' | 'CUSTOMER' | 'RECOVERY_AGENT';
   permissions: Record<string, 'none' | 'view' | 'edit'>;
   mfa_enabled: boolean;
+  /** Set only for a CUSTOMER portal login: the customer record it belongs to. */
+  customer_id?: number;
 }
 
 export const authApi = {

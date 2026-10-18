@@ -203,6 +203,12 @@ func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
 		 WHERE customer_id = $1 AND deleted_at IS NULL`, id); err != nil {
 		return err
 	}
+	// Revoke the borrower's portal login with the customer.
+	if _, err := tx.Exec(ctx,
+		`UPDATE users SET deleted_at = now(), is_active = FALSE, updated_at = now()
+		 WHERE customer_id = $1 AND deleted_at IS NULL`, id); err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx,
 		`UPDATE customers SET deleted_at = now(), updated_at = now()
 		 WHERE id = $1 AND deleted_at IS NULL`, id)
@@ -258,4 +264,28 @@ func translateWriteError(err error) error {
 		return domain.NewConflict("a customer with this Aadhaar already exists")
 	}
 	return err
+}
+
+// ListForAgent returns the live customers behind a recovery agent's assigned
+// loans (the agent needs name, phone and address to visit them).
+func (r *Repository) ListForAgent(ctx context.Context, agentID int64) ([]*domain.Customer, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+customerColumns+` FROM customers
+		WHERE deleted_at IS NULL AND id IN (
+			SELECT l.customer_id FROM loans l
+			JOIN loan_assignments a ON a.loan_id = l.id
+			WHERE a.agent_user_id = $1 AND l.deleted_at IS NULL)
+		ORDER BY id`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*domain.Customer
+	for rows.Next() {
+		c, err := scanCustomer(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

@@ -4,8 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { setTokens, setUser } from '@/store/authSlice';
 import { config } from '@/lib/config';
-import { authApi } from '@/services/authApi';
-import { authenticateMock, findMockUserByEmail, type MockUser } from '@/lib/mockUsers';
+import { authApi, type BackendUser } from '@/services/authApi';
+import { authenticateMock, type MockUser } from '@/lib/mockUsers';
 import { ApiError } from '@/lib/api';
 import LoginCard from '@/components/LoginCard';
 import PremiumLogoAnimation from '@/components/PremiumLogoAnimation';
@@ -18,10 +18,21 @@ import {
 import { tokenStore } from '@/lib/tokenStore';
 import { motion } from 'framer-motion';
 
-/** Demo-only roles stored in localStorage — never in the Go backend. */
-function isMockOnlyRole(role: MockUser['role']): boolean {
-  return role === 'CUSTOMER' || role === 'RECOVERY_AGENT';
+/** Redux user for a backend session; a CUSTOMER carries its linked customer. */
+function sessionUser(me: BackendUser) {
+  return {
+    id: me.id,
+    username: me.email,
+    fullName: me.full_name,
+    role: me.role as MockUser['role'],
+    permissions: me.permissions,
+    customerId: me.role === 'CUSTOMER' ? me.customer_id : undefined,
+  };
 }
+
+/** Borrowers land on their portal, recovery agents on their collections,
+ *  staff on the dashboard. */
+const homeFor = (role: string) => (role === 'CUSTOMER' ? '/portal' : role === 'RECOVERY_AGENT' ? '/collections' : '/');
 
 type LoginStep = 'signin' | 'totp';
 
@@ -66,8 +77,8 @@ export default function Login() {
     setLoading(true);
     setError(null);
     const email = username.trim();
-    const preview = findMockUserByEmail(email);
-    const useMockAuth = !config.useApi || (preview != null && isMockOnlyRole(preview.role));
+    // API mode: every role (staff, recovery agent, customer) signs in on the server.
+    const useMockAuth = !config.useApi;
 
     if (useMockAuth) {
       setTimeout(() => {
@@ -104,14 +115,8 @@ export default function Login() {
         return;
       }
       dispatch(setTokens({ accessToken: 'api' }));
-      dispatch(setUser({
-        id: me.id,
-        username: me.email,
-        fullName: me.full_name,
-        role: me.role as MockUser['role'],
-        permissions: me.permissions,
-      }));
-      navigate('/');
+      dispatch(setUser(sessionUser(me)));
+      navigate(homeFor(me.role));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Unable to sign in. Please try again.');
     } finally {
@@ -149,14 +154,8 @@ export default function Login() {
         if (token) tokenStore.set(token);
         clearPendingLogin();
         dispatch(setTokens({ accessToken: 'api' }));
-        dispatch(setUser({
-          id: pending.apiUser.id,
-          username: pending.apiUser.email,
-          fullName: pending.apiUser.full_name,
-          role: pending.apiUser.role as MockUser['role'],
-          permissions: pending.apiUser.permissions,
-        }));
-        navigate('/');
+        dispatch(setUser(sessionUser(pending.apiUser)));
+        navigate(homeFor(pending.apiUser.role));
       } else {
         setError('Session expired. Please sign in again.');
         backToSignIn();

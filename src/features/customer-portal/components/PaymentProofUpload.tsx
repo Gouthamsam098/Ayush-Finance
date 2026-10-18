@@ -8,7 +8,7 @@ import { useToast } from '@/components/ui/toast';
 import type { PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 import {
   getLatestPaymentProof,
-  persistPaymentProof,
+  submitPaymentProof,
   PAYMENT_PROOF_ACCEPT,
   PAYMENT_PROOF_MAX_BYTES,
   PAYMENT_PROOF_STORAGE_KEY,
@@ -176,7 +176,9 @@ export function PaymentProofUpload({
     if (!picked || submitting) return;
     setSubmitting(true);
     try {
-      persistPaymentProof({
+      // Wait for the server: only a saved upload gets the thank-you; a refusal
+      // shows why and keeps the screenshot so the borrower can retry.
+      const err = await submitPaymentProof({
         customerId,
         loanId,
         loanNumber,
@@ -186,6 +188,10 @@ export function PaymentProofUpload({
         amountRupees,
         purpose,
       });
+      if (err) {
+        toast(`Screenshot not submitted: ${err}`, 'error');
+        return;
+      }
       setPicked(null);
       if (inputRef.current) inputRef.current.value = '';
       refreshLatest();

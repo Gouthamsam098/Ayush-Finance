@@ -42,7 +42,10 @@ export default function App() {
       .me()
       .then((me) => {
         dispatch(setTokens({ accessToken: 'api' }));
-        dispatch(setUser({ id: me.id, username: me.email, fullName: me.full_name, role: me.role, permissions: me.permissions }));
+        dispatch(setUser({
+          id: me.id, username: me.email, fullName: me.full_name, role: me.role, permissions: me.permissions,
+          customerId: me.role === 'CUSTOMER' ? me.customer_id : undefined,
+        }));
       })
       .catch(() => tokenStore.clear())
       .finally(() => setRestoring(false));

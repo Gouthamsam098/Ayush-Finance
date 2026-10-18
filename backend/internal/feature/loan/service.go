@@ -146,3 +146,13 @@ func (s *Service) Reopen(ctx context.Context, id int64) (*domain.Loan, error) {
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.repo.SoftDelete(ctx, id)
 }
+
+// ListForCustomer returns all of one customer's loans (borrower portal).
+func (s *Service) ListForCustomer(ctx context.Context, customerID int64) ([]*domain.Loan, error) {
+	return s.repo.ListByCustomer(ctx, customerID)
+}
+
+// ListAssignedTo returns a recovery agent's assigned loans.
+func (s *Service) ListAssignedTo(ctx context.Context, agentID int64) ([]*domain.Loan, error) {
+	return s.repo.ListAssignedTo(ctx, agentID)
+}

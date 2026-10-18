@@ -17,8 +17,10 @@ import (
 type contextKey string
 
 const (
-	ctxRequestID contextKey = "request_id"
-	ctxUserID    contextKey = "user_id"
+	ctxRequestID  contextKey = "request_id"
+	ctxUserID     contextKey = "user_id"
+	ctxCustomerID contextKey = "portal_customer_id"
+	ctxAgentID    contextKey = "recovery_agent_id"
 )
 
 // RequestID assigns each request a unique ID (honouring an inbound
@@ -144,6 +146,73 @@ func RequirePermission(module string, load UserLoader) func(http.Handler) http.H
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequireCustomer guards the borrower portal. The caller must be an active
+// CUSTOMER login; the customer it is linked to is taken from the users row
+// (loaded fresh on every request) and placed in the context. Portal handlers
+// read ONLY that id, so a borrower can never name another customer's records.
+// Staff get 403 here, just as a borrower gets 403 on every staff module.
+func RequireCustomer(load UserLoader) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(UserID(r.Context()), 10, 64)
+			if err != nil {
+				Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+				return
+			}
+			user, err := load(r.Context(), id)
+			if err != nil {
+				Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+				return
+			}
+			if !user.IsCustomer() || user.CustomerID == nil {
+				Error(w, r, domain.NewForbidden("customer portal access only"))
+				return
+			}
+			ctx := context.WithValue(r.Context(), ctxCustomerID, *user.CustomerID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// PortalCustomerID returns the customer id set by RequireCustomer, and false
+// when the request did not pass through it.
+func PortalCustomerID(ctx context.Context) (int64, bool) {
+	id, ok := ctx.Value(ctxCustomerID).(int64)
+	return id, ok
+}
+
+// RequireRecoveryAgent guards the agent's own endpoints (/agent/*). The caller
+// must be an active RECOVERY_AGENT, re-checked from the users row on every
+// request, so disabling or demoting an agent cuts access immediately. Agent
+// handlers then scope every query to the loans assigned to that user id.
+func RequireRecoveryAgent(load UserLoader) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(UserID(r.Context()), 10, 64)
+			if err != nil {
+				Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+				return
+			}
+			user, err := load(r.Context(), id)
+			if err != nil {
+				Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+				return
+			}
+			if !user.IsRecoveryAgent() {
+				Error(w, r, domain.NewForbidden("recovery agent access only"))
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxAgentID, user.ID)))
+		})
+	}
+}
+
+// AgentUserID returns the agent id set by RequireRecoveryAgent.
+func AgentUserID(ctx context.Context) (int64, bool) {
+	id, ok := ctx.Value(ctxAgentID).(int64)
+	return id, ok
 }
 
 type statusRecorder struct {

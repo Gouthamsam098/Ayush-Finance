@@ -39,7 +39,8 @@ type querier interface {
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 const collectionColumns = `
-	id, receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, created_at, updated_at`
+	id, receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by,
+	collector_type, collector_name, collector_user_id, created_at, updated_at`
 
 // Create inserts a payment, minting its RCPT-###### number from the sequence in
 // the same statement so the number is allocated atomically. Amount is stored as
@@ -84,7 +85,7 @@ func LockLoanForUpdate(ctx context.Context, tx pgx.Tx, loanID int64) error {
 // means this was a replay and the existing payment is being returned. Callers
 // must use it to avoid side effects on a replay — auditing a replay would imply
 // several payments where only one exists.
-func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, in domain.CollectionInput, postedBy *int64, idempotencyKey string) (*domain.Collection, bool, error) {
+func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, in domain.CollectionInput, postedBy *int64, idempotencyKey string, collector *domain.Collector) (*domain.Collection, bool, error) {
 	if idempotencyKey != "" {
 		// A retry of a request that already succeeded: return the original row
 		// rather than inserting again.
@@ -95,8 +96,9 @@ func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, in domain.Collecti
 		}
 	}
 	const query = `
-		INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, posted_at, idempotency_key)
-		VALUES ('RCPT-' || nextval('receipt_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, now(), $9)
+		INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, posted_at, idempotency_key,
+		                         collector_type, collector_name, collector_user_id)
+		VALUES ('RCPT-' || nextval('receipt_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, now(), $9, $10, $11, $12)
 		RETURNING ` + collectionColumns
 	// An empty key must be stored as NULL, not "": the partial unique index
 	// ignores NULLs, so unkeyed payments never collide with each other.
@@ -104,9 +106,15 @@ func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, in domain.Collecti
 	if idempotencyKey != "" {
 		keyArg = &idempotencyKey
 	}
+	var cType, cName *string
+	var cUser *int64
+	if collector != nil {
+		t := string(collector.Type)
+		cType, cName, cUser = &t, &collector.Name, collector.UserID
+	}
 	row := tx.QueryRow(ctx, query,
 		in.LoanID, in.Date, in.Amount.DBRupees(), string(in.Mode), string(in.Kind),
-		nilIfEmpty(in.Remarks), in.TargetDueDate, postedBy, keyArg)
+		nilIfEmpty(in.Remarks), in.TargetDueDate, postedBy, keyArg, cType, cName, cUser)
 	c, err := scanCollection(row)
 	if err != nil {
 		return nil, false, translateWriteError(err)
@@ -344,7 +352,8 @@ func scanCollection(row rowScanner) (*domain.Collection, error) {
 	var amount int64
 	err := row.Scan(
 		&c.ID, &c.ReceiptNo, &c.LoanID, &c.Date, &amount, &mode, &kind,
-		&c.Remarks, &c.TargetDueDate, &c.PostedBy, &c.CreatedAt, &c.UpdatedAt,
+		&c.Remarks, &c.TargetDueDate, &c.PostedBy,
+		&c.CollectorType, &c.CollectorName, &c.CollectorUserID, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -384,4 +393,27 @@ func translateWriteError(err error) error {
 		)
 	}
 	return err
+}
+
+// ListByCustomer returns every live payment on one customer's live loans,
+// newest first (borrower portal).
+func (r *Repository) ListByCustomer(ctx context.Context, customerID int64) ([]*domain.Collection, error) {
+	const query = `SELECT ` + collectionColumns + `
+		FROM collections
+		WHERE deleted_at IS NULL
+		  AND loan_id IN (SELECT id FROM loans WHERE customer_id = $1 AND deleted_at IS NULL)
+		ORDER BY date DESC, id DESC`
+	return r.queryList(ctx, query, customerID)
+}
+
+// ListForAgent returns every live payment on a recovery agent's assigned live
+// loans, newest first (the agent's statement view).
+func (r *Repository) ListForAgent(ctx context.Context, agentID int64) ([]*domain.Collection, error) {
+	const query = `SELECT ` + collectionColumns + `
+		FROM collections
+		WHERE deleted_at IS NULL
+		  AND loan_id IN (SELECT a.loan_id FROM loan_assignments a JOIN loans l ON l.id = a.loan_id
+		                  WHERE a.agent_user_id = $1 AND l.deleted_at IS NULL)
+		ORDER BY date DESC, id DESC`
+	return r.queryList(ctx, query, agentID)
 }

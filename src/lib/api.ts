@@ -50,7 +50,7 @@ export interface ListResult<T> {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   /** When false, do not attach the Authorization header (login). */
   auth?: boolean;
@@ -145,6 +145,10 @@ export const api = {
 
   async patch<T>(path: string, body: unknown): Promise<T> {
     return (await request<T>(path, { method: 'PATCH', body })).data as T;
+  },
+
+  async put<T>(path: string, body: unknown): Promise<T> {
+    return (await request<T>(path, { method: 'PUT', body })).data as T;
   },
 
   async delete(path: string): Promise<void> {

@@ -34,7 +34,7 @@ func TestRecordRunsInATransactionWithARowLock(t *testing.T) {
 		{"tx, err := s.repo.Pool().Begin(ctx)", "Record must open a transaction"},
 		{"defer func() { _ = tx.Rollback(ctx) }()", "rollback must be deferred so no path leaks a connection"},
 		{"LockLoanForUpdate(ctx, tx, in.LoanID)", "the loan row must be locked before reading its collected total"},
-		{"s.repo.CreateTx(ctx, tx, in, postedBy, idempotencyKey)", "the insert must happen inside the transaction"},
+		{"s.repo.CreateTx(ctx, tx, in, postedBy, idempotencyKey, collector)", "the insert must happen inside the transaction"},
 		{"s.loans.SetStatusTx(ctx, tx, in.LoanID, domain.StatusClosed)", "auto-close must happen inside the same transaction"},
 		{"tx.Commit(ctx)", "the transaction must be committed"},
 	} {
@@ -73,7 +73,7 @@ func TestCreateTxShortCircuitsOnAReplayedIdempotencyKey(t *testing.T) {
 	// The replay check must happen BEFORE the INSERT, otherwise the retry
 	// duplicates the payment and only then discovers the conflict.
 	checkAt := strings.Index(src, "r.findByIdempotencyKey(ctx, tx, in.LoanID, idempotencyKey)")
-	insertAt := strings.Index(src, "INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, posted_at, idempotency_key)")
+	insertAt := strings.Index(src, "INSERT INTO collections (receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by, posted_at, idempotency_key, collector_type, collector_name, collector_user_id)")
 	if checkAt < 0 {
 		t.Fatal("CreateTx must look up a prior payment by idempotency key")
 	}

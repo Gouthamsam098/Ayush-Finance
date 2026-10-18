@@ -1,8 +1,10 @@
 /**
- * Customer portal logins live in the demo user directory (Settings + Login) until
- * the backend exposes a CUSTOMER role. Used when an admin adds a borrower email
- * and sets a portal password on the customer form.
+ * Customer portal logins. In API mode they are backend users with role CUSTOMER,
+ * created through customerApi.createPortalLogin (the server enforces unique
+ * email + one login per customer). In demo mode they live in the localStorage
+ * user directory (Settings + Login), provisioned here.
  */
+import { config } from '@/lib/config';
 import {
   findPortalUserForCustomer,
   listMockUsers,
@@ -29,6 +31,10 @@ export function portalCredentialErrors(
   } else if (password && password !== confirm) {
     errors.portalConfirm = 'Passwords do not match';
   }
+
+  // Demo directory checks only: in API mode the server is the authority, and a
+  // stale localStorage entry must not block a real login.
+  if (config.useApi) return errors;
 
   const key = trimmed.toLowerCase();
   if (listMockUsers().some((u) => u.email.toLowerCase() === key)) {

@@ -37,20 +37,25 @@ import (
 type Action string
 
 const (
-	ActionCreate Action = "CREATE"
-	ActionUpdate Action = "UPDATE"
-	ActionDelete Action = "DELETE"
-	ActionPost   Action = "POST" // a money movement (payment recorded)
-	ActionLogin  Action = "LOGIN"
+	ActionCreate  Action = "CREATE"
+	ActionUpdate  Action = "UPDATE"
+	ActionDelete  Action = "DELETE"
+	ActionPost    Action = "POST"    // a money movement (payment recorded)
+	ActionApprove Action = "APPROVE" // a reviewed item accepted (e.g. portal payment proof)
+	ActionLogin   Action = "LOGIN"
 )
 
 // Entity types. Kept as constants so a typo cannot fragment the trail.
 const (
-	EntityCollection = "collection"
-	EntityLoan       = "loan"
-	EntityCustomer   = "customer"
-	EntityDocument   = "document"
-	EntityUser       = "user"
+	EntityCollection   = "collection"
+	EntityLoan         = "loan"
+	EntityCustomer     = "customer"
+	EntityDocument     = "document"
+	EntityUser         = "user"
+	EntityPaymentProof = "payment_proof"
+	// Recovery agent claims/promises and the daily auto-assign job.
+	EntityRecoverySubmission = "recovery_submission"
+	EntityRecoveryAutoAssign = "recovery_auto_assign"
 )
 
 // Entry is one audit record. Before/After are optional JSON-able snapshots.

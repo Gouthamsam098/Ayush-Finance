@@ -104,3 +104,8 @@ func nonEmptyStr(s *string) bool { return s != nil && *s != "" }
 func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.repo.SoftDelete(ctx, id)
 }
+
+// ListForAgent returns the customers of a recovery agent's assigned loans.
+func (s *Service) ListForAgent(ctx context.Context, agentID int64) ([]*domain.Customer, error) {
+	return s.repo.ListForAgent(ctx, agentID)
+}

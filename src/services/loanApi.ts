@@ -137,4 +137,15 @@ export const loanApi = {
   async remove(id: number): Promise<void> {
     await api.delete(`/loans/${id}`);
   },
+
+  /** Recovery agent: the loans assigned to the signed-in agent. */
+  async agentList(): Promise<Loan[]> {
+    return ((await api.get<LoanWire[]>('/agent/loans')) ?? []).map(toLoan);
+  },
+
+  /** Borrower portal: every loan of the signed-in customer (CUSTOMER role only). */
+  async portalList(): Promise<Loan[]> {
+    const rows = await api.get<LoanWire[]>('/portal/loans');
+    return (rows ?? []).map(toLoan);
+  },
 };

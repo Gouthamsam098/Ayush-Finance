@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -17,6 +18,8 @@ import (
 	"github.com/anush-capitals/lms-backend/internal/feature/expense"
 	"github.com/anush-capitals/lms-backend/internal/feature/investment"
 	"github.com/anush-capitals/lms-backend/internal/feature/loan"
+	"github.com/anush-capitals/lms-backend/internal/feature/paymentproof"
+	"github.com/anush-capitals/lms-backend/internal/feature/recovery"
 	"github.com/anush-capitals/lms-backend/internal/feature/user"
 	"github.com/anush-capitals/lms-backend/internal/httpx"
 	"github.com/go-chi/chi/v5"
@@ -32,6 +35,9 @@ type Dependencies struct {
 	Tokens *crypto.TokenManager
 	Hasher *crypto.Hasher
 	Now    auth.Clock
+	// Background, when set, runs server-side jobs (the daily recovery
+	// auto-assign) until it is cancelled at shutdown.
+	Background context.Context
 }
 
 // NewRouter builds the full HTTP handler with global middleware, a public
@@ -62,8 +68,26 @@ func NewRouter(deps Dependencies) http.Handler {
 	// collection service so a payment and its audit row commit atomically.
 	auditor := audit.New(deps.Pool)
 
-	collectionService := collection.NewService(collectionRepo, loanRepo, auditor)
+	// authRepo.FindByID attributes each directly-entered payment to the staff
+	// member who posted it (Reports' "Collected by").
+	collectionService := collection.NewService(collectionRepo, loanRepo, auditor, authRepo.FindByID)
 	collectionHandler := collection.NewHandler(collectionService)
+
+	// Customer portal payment screenshots. Accepting one records its money
+	// through the collection service, in the same transaction as the review.
+	paymentProofRepo := paymentproof.NewRepository(deps.Pool)
+	paymentProofService := paymentproof.NewService(paymentProofRepo, collectionService, auditor)
+	paymentProofHandler := paymentproof.NewHandler(paymentProofService)
+
+	// Recovery agents: assignments, claims/promises, staff review, and the daily
+	// auto-assign job. Approving a claim records its money through the
+	// collection service in the same transaction as the approval.
+	recoveryRepo := recovery.NewRepository(deps.Pool)
+	recoveryService := recovery.NewService(recoveryRepo, collectionService, collectionRepo, loanRepo, auditor)
+	recoveryHandler := recovery.NewHandler(recoveryService, authRepo.FindByID)
+	if deps.Background != nil {
+		go recoveryService.RunScheduler(deps.Background, deps.Logger)
+	}
 
 	expenseRepo := expense.NewRepository(deps.Pool)
 	expenseService := expense.NewService(expenseRepo)
@@ -89,7 +113,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Use(audit.Middleware)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: deps.Config.CORSAllowedOrigins,
-		AllowedMethods: []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		// Idempotency-Key must be allow-listed or the browser's preflight blocks
 		// the payment write that carries it.
 		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"},
@@ -132,14 +156,38 @@ func NewRouter(deps Dependencies) http.Handler {
 			protected.Mount("/me", authHandler.ProtectedRoutes())
 			protected.With(perm("Customers")).Mount("/customers", customerHandler.Routes())
 			protected.With(perm("Documents")).Mount("/customers/{customerId}/documents", documentHandler.Routes())
+			protected.With(perm("Customers")).Mount("/customers/{customerId}/portal-login", userHandler.PortalLoginRoutes())
 			protected.With(perm("Loans")).Mount("/loans", loanHandler.Routes())
 			protected.With(perm("Collections")).Mount("/loans/{loanId}/collections", collectionHandler.LoanRoutes())
 			protected.With(perm("Collections")).Mount("/collections", collectionHandler.FlatRoutes())
+			protected.With(perm("Collections")).Mount("/payment-proofs", paymentProofHandler.StaffRoutes())
+			protected.With(perm("Collections")).Mount("/recovery", recoveryHandler.StaffRoutes())
 			protected.With(perm("Expenses")).Mount("/expenses", expenseHandler.Routes())
 			// Gated on Expenses: every interest payout IS an expense write, so
 			// anyone who may record investor interest already needs that right.
 			protected.With(perm("Expenses")).Mount("/investments", investmentHandler.Routes())
 			protected.Mount("/users", userHandler.Routes()) // admin-only, guarded in handler
+
+			// Borrower portal: read-only, scoped to the caller's own customer
+			// (resolved from the users row, never from the request).
+			protected.Route("/portal", func(portal chi.Router) {
+				portal.Use(httpx.RequireCustomer(authRepo.FindByID))
+				portal.Mount("/customer", customerHandler.PortalRoutes())
+				portal.Mount("/loans", loanHandler.PortalRoutes())
+				portal.Mount("/collections", collectionHandler.PortalRoutes())
+				portal.Mount("/payment-proofs", paymentProofHandler.PortalRoutes())
+			})
+
+			// Recovery agent: only the loans assigned to the caller (resolved from
+			// loan_assignments by user id, never from the request), plus their own
+			// claims and promises. Agents never write collections directly.
+			protected.Route("/agent", func(agent chi.Router) {
+				agent.Use(httpx.RequireRecoveryAgent(authRepo.FindByID))
+				agent.Mount("/loans", loanHandler.AgentRoutes())
+				agent.Mount("/customers", customerHandler.AgentRoutes())
+				agent.Mount("/collections", collectionHandler.AgentRoutes())
+				agent.Mount("/", recoveryHandler.AgentRoutes())
+			})
 		})
 	})
 

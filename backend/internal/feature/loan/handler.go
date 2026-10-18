@@ -33,18 +33,18 @@ func (h *Handler) Routes() chi.Router {
 // loanRequest is the wire shape for create/update. Money arrives as rupees and
 // is converted to paise here; the server derives interest/EMI/term/dates.
 type loanRequest struct {
-	CustomerID    int64    `json:"customer_id"`
-	Type          string   `json:"type"`
-	RepaymentMode string   `json:"repayment_mode"` // EMI (default) | MONTHLY_INTEREST
-	Principal     float64  `json:"principal"`
-	Rate          float64  `json:"rate"`
-	LoanDate      string   `json:"loan_date"` // YYYY-MM-DD
-	NumDays       *int     `json:"num_days"`  // EMI months / Flexible days
-	Contact       *string  `json:"contact"`
-	Remarks       *string  `json:"remarks"`
-	VehicleNumber *string  `json:"vehicle_number"`
-	VehicleBrand  *string  `json:"vehicle_brand"`
-	VehicleName   *string  `json:"vehicle_name"`
+	CustomerID    int64   `json:"customer_id"`
+	Type          string  `json:"type"`
+	RepaymentMode string  `json:"repayment_mode"` // EMI (default) | MONTHLY_INTEREST
+	Principal     float64 `json:"principal"`
+	Rate          float64 `json:"rate"`
+	LoanDate      string  `json:"loan_date"` // YYYY-MM-DD
+	NumDays       *int    `json:"num_days"`  // EMI months / Flexible days
+	Contact       *string `json:"contact"`
+	Remarks       *string `json:"remarks"`
+	VehicleNumber *string `json:"vehicle_number"`
+	VehicleBrand  *string `json:"vehicle_brand"`
+	VehicleName   *string `json:"vehicle_name"`
 }
 
 func (req loanRequest) toInput() (domain.LoanInput, error) {
@@ -75,25 +75,25 @@ func (req loanRequest) toInput() (domain.LoanInput, error) {
 
 // loanResponse is the public snake_case projection. Money is emitted as rupees.
 type loanResponse struct {
-	ID            int64    `json:"id"`
-	LoanNumber    string   `json:"loan_number"`
-	CustomerID    int64    `json:"customer_id"`
-	Type          string   `json:"type"`
-	RepaymentMode string   `json:"repayment_mode"`
-	Principal     float64  `json:"principal"`
-	Rate          float64  `json:"rate"`
-	Interest      float64  `json:"interest"`
-	Deduction     *float64 `json:"deduction,omitempty"`
-	Disbursed     float64  `json:"disbursed_amount"`
-	InstalmentAmount *float64 `json:"instalment_amount,omitempty"`
-	NumDays       *int     `json:"num_days,omitempty"`
-	LoanDate      string   `json:"loan_date"`
-	NextDueDate   *string  `json:"next_due_date,omitempty"`
-	Status        string   `json:"status"`
-	Contact       *string  `json:"contact,omitempty"`
-	Remarks       *string  `json:"remarks,omitempty"`
-	VehicleNumber *string  `json:"vehicle_number,omitempty"`
-	VehicleBrand  *string  `json:"vehicle_brand,omitempty"`
+	ID                 int64    `json:"id"`
+	LoanNumber         string   `json:"loan_number"`
+	CustomerID         int64    `json:"customer_id"`
+	Type               string   `json:"type"`
+	RepaymentMode      string   `json:"repayment_mode"`
+	Principal          float64  `json:"principal"`
+	Rate               float64  `json:"rate"`
+	Interest           float64  `json:"interest"`
+	Deduction          *float64 `json:"deduction,omitempty"`
+	Disbursed          float64  `json:"disbursed_amount"`
+	InstalmentAmount   *float64 `json:"instalment_amount,omitempty"`
+	NumDays            *int     `json:"num_days,omitempty"`
+	LoanDate           string   `json:"loan_date"`
+	NextDueDate        *string  `json:"next_due_date,omitempty"`
+	Status             string   `json:"status"`
+	Contact            *string  `json:"contact,omitempty"`
+	Remarks            *string  `json:"remarks,omitempty"`
+	VehicleNumber      *string  `json:"vehicle_number,omitempty"`
+	VehicleBrand       *string  `json:"vehicle_brand,omitempty"`
 	VehicleName        *string  `json:"vehicle_name,omitempty"`
 	Collected          float64  `json:"collected"`
 	InterestCollected  float64  `json:"interest_collected"`
@@ -124,9 +124,9 @@ func (h *Handler) toResponse(l *domain.Loan, collected domain.Collected) loanRes
 	resp := loanResponse{
 		ID: l.ID, LoanNumber: l.LoanNumber, CustomerID: l.CustomerID, Type: string(l.Type),
 		RepaymentMode: string(l.RepaymentMode),
-		Principal: l.Principal.Rupees(), Rate: l.Rate, Interest: l.Interest.Rupees(),
+		Principal:     l.Principal.Rupees(), Rate: l.Rate, Interest: l.Interest.Rupees(),
 		Disbursed: l.Disbursed.Rupees(),
-		NumDays: l.NumDays, LoanDate: l.LoanDate.Format("2006-01-02"), Status: string(l.Status),
+		NumDays:   l.NumDays, LoanDate: l.LoanDate.Format("2006-01-02"), Status: string(l.Status),
 		Contact: l.Contact, Remarks: l.Remarks,
 		VehicleNumber: l.VehicleNumber, VehicleBrand: l.VehicleBrand, VehicleName: l.VehicleName,
 		// Live figures from the real recorded collections.
@@ -318,4 +318,68 @@ func floatQuery(r *http.Request, key string) float64 {
 		return v
 	}
 	return 0
+}
+
+// PortalRoutes are mounted at /portal/loans behind httpx.RequireCustomer: the
+// signed-in borrower's own loans, with the same DTO staff see.
+func (h *Handler) PortalRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.portalList)
+	return r
+}
+
+func (h *Handler) portalList(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := httpx.PortalCustomerID(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.NewForbidden("customer portal access only"))
+		return
+	}
+	loans, err := h.service.ListForCustomer(r.Context(), customerID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	collectedBy, err := h.service.CollectedFor(r.Context(), loans)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	items := make([]loanResponse, 0, len(loans))
+	for _, l := range loans {
+		resp := h.toResponse(l, collectedBy[l.ID])
+		resp.Remarks = nil // staff-internal loan notes are not shown to the borrower
+		items = append(items, resp)
+	}
+	httpx.JSON(w, http.StatusOK, items)
+}
+
+// AgentRoutes are mounted at /agent/loans behind httpx.RequireRecoveryAgent:
+// the loans assigned to the signed-in agent, with the same DTO staff see.
+func (h *Handler) AgentRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.agentList)
+	return r
+}
+
+func (h *Handler) agentList(w http.ResponseWriter, r *http.Request) {
+	agentID, ok := httpx.AgentUserID(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.NewForbidden("recovery agent access only"))
+		return
+	}
+	loans, err := h.service.ListAssignedTo(r.Context(), agentID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	collectedBy, err := h.service.CollectedFor(r.Context(), loans)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	items := make([]loanResponse, 0, len(loans))
+	for _, l := range loans {
+		items = append(items, h.toResponse(l, collectedBy[l.ID]))
+	}
+	httpx.JSON(w, http.StatusOK, items)
 }

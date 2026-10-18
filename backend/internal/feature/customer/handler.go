@@ -250,3 +250,51 @@ func atoiDefault(s string, fallback int) int {
 	}
 	return v
 }
+
+// PortalRoutes are mounted at /portal/customer behind httpx.RequireCustomer:
+// the signed-in borrower's own record (KYC masked, as for staff).
+func (h *Handler) PortalRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.portalGet)
+	return r
+}
+
+func (h *Handler) portalGet(w http.ResponseWriter, r *http.Request) {
+	id, ok := httpx.PortalCustomerID(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.NewForbidden("customer portal access only"))
+		return
+	}
+	c, err := h.service.Get(r.Context(), id)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, toResponse(c))
+}
+
+// AgentRoutes are mounted at /agent/customers behind httpx.RequireRecoveryAgent:
+// only the customers of the agent's assigned loans (KYC masked, as for staff).
+func (h *Handler) AgentRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.agentList)
+	return r
+}
+
+func (h *Handler) agentList(w http.ResponseWriter, r *http.Request) {
+	agentID, ok := httpx.AgentUserID(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.NewForbidden("recovery agent access only"))
+		return
+	}
+	customers, err := h.service.ListForAgent(r.Context(), agentID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	items := make([]customerResponse, 0, len(customers))
+	for _, c := range customers {
+		items = append(items, toResponse(c))
+	}
+	httpx.JSON(w, http.StatusOK, items)
+}

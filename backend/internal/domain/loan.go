@@ -403,6 +403,16 @@ func (l *Loan) AccruedInterest(now time.Time) Paise {
 	return perPeriod.MulInt(int64(periods))
 }
 
+// InterestPerPeriod is the interest one accrual period adds on an interest-only
+// loan (per day / per cycle): DailyAmount, falling back to Interest for legacy
+// rows — the same per-period figure AccruedInterest uses.
+func (l *Loan) InterestPerPeriod() Paise {
+	if l.DailyAmount != nil {
+		return *l.DailyAmount
+	}
+	return l.Interest
+}
+
 // TotalDueForInterestOnly is the accrued-but-unpaid INTEREST for an
 // interest-only loan: accruedInterest − interestPaid. Principal repayments do
 // not reduce this (they settle the principal, tracked separately).

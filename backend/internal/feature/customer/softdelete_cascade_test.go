@@ -31,6 +31,7 @@ func TestSoftDeleteCascadesLinkedRecords(t *testing.T) {
 		"UPDATE collections SET deleted_at = now()",
 		"UPDATE loans SET deleted_at = now()",
 		"UPDATE documents SET deleted_at = now()",
+		"UPDATE users SET deleted_at = now()", // portal login revoked with the customer
 		"UPDATE customers SET deleted_at = now()",
 		"tx.Commit(ctx)",
 	} {

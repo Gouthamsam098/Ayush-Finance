@@ -30,6 +30,14 @@ export function CollectionsAgentView() {
   const [statementLoan, setStatementLoan] = useState<Loan | null>(null);
   const [listFilter, setListFilter] = useState<AgentListFilter>('all');
   const [editPending, setEditPending] = useState<{ loan: Loan; claim: CollectionClaimSubmission } | null>(null);
+  // Stable between renders: the edit dialog resets its fields (and any error it
+  // is showing) whenever these values change identity.
+  const editInitial = useMemo(() => (editPending ? {
+    amount: editPending.claim.amount,
+    mode: editPending.claim.mode,
+    receiptDate: editPending.claim.receiptDate,
+    note: editPending.claim.note,
+  } : undefined), [editPending]);
 
   const assignedIds = useMemo(() => recovery.getAssignments(user.id), [recovery, user.id]);
 
@@ -70,7 +78,7 @@ export function CollectionsAgentView() {
 
   const submitClaim = async (loan: Loan, payload: { amount: number; mode: import('@/mock/DataContext').PayMode; receiptDate: string; note: string }) => {
     const c = d.customers.find((x) => x.id === loan.customerId);
-    const err = recovery.submitCollectionClaim({
+    const err = await recovery.submitCollectionClaim({
       agentUserId: user.id,
       agentName: user.fullName || user.username,
       loanId: loan.id,
@@ -234,14 +242,9 @@ export function CollectionsAgentView() {
           loan={editPending.loan}
           customerName={d.customers.find((c) => c.id === editPending.loan.customerId)?.name ?? '—'}
           dueHint={recoveryDueNow(d, editPending.loan)}
-          initial={{
-            amount: editPending.claim.amount,
-            mode: editPending.claim.mode,
-            receiptDate: editPending.claim.receiptDate,
-            note: editPending.claim.note,
-          }}
+          initial={editInitial}
           onSubmit={async (p) => {
-            const err = recovery.updatePendingCollectionClaim(editPending.claim.id, user.id, p);
+            const err = await recovery.updatePendingCollectionClaim(editPending.claim.id, user.id, p);
             if (err) return err;
             toast('Pending submission updated', 'success');
             return null;
@@ -261,9 +264,9 @@ export function CollectionsAgentView() {
           onClose={() => setPtpLoan(null)}
           loan={ptpLoan}
           customerName={d.customers.find((c) => c.id === ptpLoan.customerId)?.name ?? '—'}
-          onSubmit={(p) => {
+          onSubmit={async (p) => {
             const c = d.customers.find((x) => x.id === ptpLoan.customerId);
-            recovery.submitPromise({
+            const err = await recovery.submitPromise({
               agentUserId: user.id,
               agentName: user.fullName || user.username,
               loanId: ptpLoan.id,
@@ -271,6 +274,10 @@ export function CollectionsAgentView() {
               loanNumber: ptpLoan.loanNumber,
               ...p,
             });
+            if (err) {
+              toast(`Promise not saved: ${err}`, 'error');
+              return;
+            }
             toast('Promise date saved', 'success');
           }}
         />

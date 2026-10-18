@@ -306,3 +306,55 @@ func translateWriteError(err error) error {
 	}
 	return err
 }
+
+// ListByCustomer returns every live loan of one customer, newest first. Used by
+// the borrower portal, which must show the whole book, never one page of it.
+func (r *Repository) ListByCustomer(ctx context.Context, customerID int64) ([]*domain.Loan, error) {
+	query := fmt.Sprintf(`SELECT %s FROM loans
+		WHERE customer_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC`, loanColumns)
+	rows, err := r.pool.Query(ctx, query, customerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var loans []*domain.Loan
+	for rows.Next() {
+		l, err := scanLoan(rows)
+		if err != nil {
+			return nil, err
+		}
+		loans = append(loans, l)
+	}
+	return loans, rows.Err()
+}
+
+// assignedToAgent selects the live loans assigned to a recovery agent.
+const assignedToAgent = `id IN (SELECT loan_id FROM loan_assignments WHERE agent_user_id = $1)`
+
+// ListAssignedTo returns every live loan assigned to a recovery agent.
+func (r *Repository) ListAssignedTo(ctx context.Context, agentID int64) ([]*domain.Loan, error) {
+	return r.listWhere(ctx, `deleted_at IS NULL AND `+assignedToAgent+` ORDER BY created_at DESC`, agentID)
+}
+
+// ListByStatus returns every live loan in a status (used by the daily
+// recovery auto-assign, which must see the whole book).
+func (r *Repository) ListByStatus(ctx context.Context, status domain.LoanStatus) ([]*domain.Loan, error) {
+	return r.listWhere(ctx, `deleted_at IS NULL AND status = $1 ORDER BY id`, string(status))
+}
+
+func (r *Repository) listWhere(ctx context.Context, where string, args ...any) ([]*domain.Loan, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+loanColumns+` FROM loans WHERE `+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var loans []*domain.Loan
+	for rows.Next() {
+		l, err := scanLoan(rows)
+		if err != nil {
+			return nil, err
+		}
+		loans = append(loans, l)
+	}
+	return loans, rows.Err()
+}

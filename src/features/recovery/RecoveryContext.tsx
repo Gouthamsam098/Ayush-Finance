@@ -23,7 +23,14 @@ import {
   runRecoveryAutoAssign,
   type RecoveryAutoAssignResult,
 } from './recoveryAutoAssign';
-import { RECOVERY_SCHEDULE_CHANGED } from './recoveryStore';
+import {
+  RECOVERY_SCHEDULE_CHANGED,
+  refreshRecovery,
+  upsertCachedSubmission,
+} from './recoveryStore';
+import { recoveryApi } from '@/services/recoveryApi';
+import { ApiError } from '@/lib/api';
+import { COLLECTIONS_CHANGED_EVENT } from '@/lib/dataEvents';
 
 interface RecoveryContextValue {
   submissions: RecoverySubmission[];
@@ -41,7 +48,7 @@ interface RecoveryContextValue {
     mode: PayMode;
     receiptDate: string;
     note?: string;
-  }) => string | null;
+  }) => Promise<string | null>;
   submitPromise: (input: {
     agentUserId: number;
     agentName: string;
@@ -51,20 +58,31 @@ interface RecoveryContextValue {
     promiseDate: string;
     promisedAmount?: number;
     note?: string;
-  }) => void;
+  }) => Promise<string | null>;
   approveClaim: (id: string) => Promise<void>;
   rejectClaim: (id: string, reason?: string) => void;
   updatePendingCollectionClaim: (
     id: string,
     agentUserId: number,
     patch: { amount: number; mode: PayMode; receiptDate: string; note?: string },
-  ) => string | null;
+  ) => Promise<string | null>;
   /** Demo only: run overdue balancing (respects once-per-day unless force). */
   runOverdueAutoAssign: (force?: boolean) => RecoveryAutoAssignResult;
   assignmentVersion: number;
 }
 
 const RecoveryCtx = createContext<RecoveryContextValue | null>(null);
+
+/** The message an agent sees when the server refuses a submission. */
+function saveErrorText(e: unknown, fallback: string): string {
+  if (e instanceof ApiError) {
+    const fieldMsgs = Object.values(e.fields ?? {}).filter(Boolean);
+    return fieldMsgs.length > 0 ? fieldMsgs.join(' · ') : e.message;
+  }
+  return fallback;
+}
+
+const OFFLINE_MSG = 'Could not reach the server. Check your connection and try again.';
 
 function newId() {
   return `rcv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -88,6 +106,8 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
   // when another tab writes, or when this tab receives a submission event.
   useEffect(() => {
     refresh();
+    // API mode: assignments + submissions live on the server.
+    if (config.useApi && authUserId != null) void refreshRecovery();
   }, [authUserId, refresh]);
 
   useEffect(() => {
@@ -115,10 +135,20 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener(RECOVERY_SCHEDULE_CHANGED, bump);
   }, []);
 
-  const runOverdueAutoAssign = useCallback((force?: boolean) => runRecoveryAutoAssign(d, { force }), [d]);
+  const runOverdueAutoAssign = useCallback((force?: boolean): RecoveryAutoAssignResult => {
+    if (config.useApi) {
+      // Server-side job; the new assignments arrive with the refresh.
+      recoveryApi.runAutoAssign()
+        .then(() => refreshRecovery())
+        .catch((e) => console.error('Auto-assign run failed', e));
+      return { ran: false };
+    }
+    return runRecoveryAutoAssign(d, { force });
+  }, [d]);
 
   useEffect(() => {
-    if (!dataReady) return;
+    // API mode: the server runs the daily auto-assign (no browser needed).
+    if (!dataReady || config.useApi) return;
     const tick = () => {
       if (dRef.current.loans.length === 0) return;
       if (isPastTodaysTestSchedule()) runRecoveryAutoAssign(dRef.current);
@@ -155,7 +185,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     clearAssignmentsForUser(agentUserId);
   }, []);
 
-  const submitCollectionClaim = useCallback((input: {
+  const submitCollectionClaim = useCallback(async (input: {
     agentUserId: number;
     agentName: string;
     loanId: number;
@@ -165,11 +195,22 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     mode: PayMode;
     receiptDate: string;
     note?: string;
-  }): string | null => {
+  }): Promise<string | null> => {
     const pending = listSubmissions().find(
       (s) => s.loanId === input.loanId && s.type === 'COLLECTION_CLAIM' && s.status === 'PENDING',
     );
     if (pending) return 'A collection for this loan is already awaiting admin approval.';
+    if (config.useApi) {
+      // Wait for the server so a refusal reaches the agent (the dialog shows
+      // the message and stays open) instead of silently vanishing.
+      try {
+        upsertCachedSubmission(await recoveryApi.submitClaim(input));
+        refresh();
+        return null;
+      } catch (e) {
+        return saveErrorText(e, OFFLINE_MSG);
+      }
+    }
     const row: CollectionClaimSubmission = {
       id: newId(),
       type: 'COLLECTION_CLAIM',
@@ -190,7 +231,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     return null;
   }, [refresh]);
 
-  const submitPromise = useCallback((input: {
+  const submitPromise = useCallback(async (input: {
     agentUserId: number;
     agentName: string;
     loanId: number;
@@ -199,7 +240,16 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     promiseDate: string;
     promisedAmount?: number;
     note?: string;
-  }) => {
+  }): Promise<string | null> => {
+    if (config.useApi) {
+      try {
+        upsertCachedSubmission(await recoveryApi.submitPromise(input));
+        refresh();
+        return null;
+      } catch (e) {
+        return saveErrorText(e, OFFLINE_MSG);
+      }
+    }
     const row: PromiseSubmission = {
       id: newId(),
       type: 'PROMISE_TO_PAY',
@@ -216,11 +266,23 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     };
     addSubmission(row);
     refresh();
+    return null;
   }, [refresh]);
 
   const approveClaim = useCallback(async (id: string) => {
     const row = listSubmissions().find((s) => s.id === id);
     if (!row || row.type !== 'COLLECTION_CLAIM' || row.status !== 'PENDING') return;
+    if (config.useApi) {
+      // The server records the collection (credited to the agent), marks the
+      // claim approved and releases the loan once nothing is due — atomically.
+      // A refusal throws, which the queue shows as "Could not accept".
+      const saved = await recoveryApi.approve(id);
+      upsertCachedSubmission(saved);
+      window.dispatchEvent(new Event(COLLECTIONS_CHANGED_EVENT));
+      void refreshRecovery();
+      refresh();
+      return;
+    }
     const loan = d.loans.find((l) => l.id === row.loanId);
     const dueBefore = loan ? recoveryDueNow(d, loan) : row.amount;
     const created = await Promise.resolve(d.addCollection({
@@ -258,19 +320,38 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       reviewNote: reason || 'Rejected by admin',
     } as Partial<CollectionClaimSubmission>);
     refresh();
+    if (config.useApi) {
+      recoveryApi.reject(id, reason)
+        .then((saved) => upsertCachedSubmission(saved))
+        .catch((e) => {
+          console.error('Reject was not saved', e);
+          void refreshRecovery();
+        });
+    }
   }, [refresh]);
 
-  const updatePendingCollectionClaim = useCallback((
+  const updatePendingCollectionClaim = useCallback(async (
     id: string,
     agentUserId: number,
     patch: { amount: number; mode: PayMode; receiptDate: string; note?: string },
-  ): string | null => {
+  ): Promise<string | null> => {
     const row = listSubmissions().find((s) => s.id === id);
     if (!row || row.type !== 'COLLECTION_CLAIM' || row.status !== 'PENDING') {
       return 'This submission can no longer be edited.';
     }
     if (row.agentUserId !== agentUserId) return 'You can only edit your own submissions.';
     if (!patch.amount || patch.amount <= 0) return 'Enter a valid amount.';
+    if (config.useApi) {
+      try {
+        upsertCachedSubmission(await recoveryApi.updateClaim(id, patch));
+        refresh();
+        return null;
+      } catch (e) {
+        // e.g. the admin approved or rejected it meanwhile — show why, and reload.
+        void refreshRecovery();
+        return saveErrorText(e, OFFLINE_MSG);
+      }
+    }
     updateSubmission(id, {
       amount: patch.amount,
       mode: patch.mode,

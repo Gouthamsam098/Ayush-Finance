@@ -94,8 +94,12 @@ type collectionResponse struct {
 	Remarks       *string `json:"remarks,omitempty"`
 	TargetDueDate *string `json:"target_due_date,omitempty"`
 	PostedBy      *int64  `json:"posted_by,omitempty"`
-	CreatedAt     string  `json:"created_at"`
-	UpdatedAt     string  `json:"updated_at"`
+	// Who received the money (see domain.Collection). Omitted on legacy rows.
+	CollectorType   *string `json:"collector_type,omitempty"`
+	CollectorName   *string `json:"collector_name,omitempty"`
+	CollectorUserID *int64  `json:"collector_user_id,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 func toResponse(c *domain.Collection) collectionResponse {
@@ -108,6 +112,7 @@ func toResponse(c *domain.Collection) collectionResponse {
 		ID: c.ID, ReceiptNo: c.ReceiptNo, LoanID: c.LoanID,
 		Date: c.Date.Format("2006-01-02"), Amount: c.Amount.Rupees(), Mode: string(c.Mode),
 		Kind: string(c.Kind), Remarks: c.Remarks, TargetDueDate: target, PostedBy: c.PostedBy,
+		CollectorType: c.CollectorType, CollectorName: c.CollectorName, CollectorUserID: c.CollectorUserID,
 		CreatedAt: c.CreatedAt.Format(time.RFC3339), UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 	}
 }
@@ -341,4 +346,56 @@ func pathID(w http.ResponseWriter, r *http.Request, param, entity string) (int64
 		return 0, false
 	}
 	return id, true
+}
+
+// PortalRoutes are mounted at /portal/collections behind httpx.RequireCustomer:
+// the signed-in borrower's own payment history. Read-only.
+func (h *Handler) PortalRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.portalList)
+	return r
+}
+
+func (h *Handler) portalList(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := httpx.PortalCustomerID(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.NewForbidden("customer portal access only"))
+		return
+	}
+	items, err := h.service.ListForCustomer(r.Context(), customerID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	// A borrower sees their payments, not the office's notes about them or
+	// which staff member posted/collected them.
+	out := projectList(items)
+	for i := range out {
+		out[i].Remarks, out[i].PostedBy = nil, nil
+		out[i].CollectorType, out[i].CollectorName, out[i].CollectorUserID = nil, nil, nil
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+// AgentRoutes are mounted at /agent/collections behind
+// httpx.RequireRecoveryAgent: payments on the agent's assigned loans. Read-only —
+// an agent never records money; they submit claims (see the recovery feature).
+func (h *Handler) AgentRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.agentList)
+	return r
+}
+
+func (h *Handler) agentList(w http.ResponseWriter, r *http.Request) {
+	agentID, ok := httpx.AgentUserID(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.NewForbidden("recovery agent access only"))
+		return
+	}
+	items, err := h.service.ListForAgent(r.Context(), agentID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, projectList(items))
 }

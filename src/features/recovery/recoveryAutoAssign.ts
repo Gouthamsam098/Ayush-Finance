@@ -12,6 +12,7 @@ import {
   readLastAutoAssignDate,
   writeLastAutoAssignDate,
   readTestAutoAssignTime,
+  listRecoveryAgents,
 } from './recoveryStore';
 
 export type RecoveryDueApi = {
@@ -29,9 +30,9 @@ export type RecoveryAutoAssignResult = {
   reassignedCount?: number;
 };
 
-/** Demo recovery agents live in mockUsers even when loans come from the API. */
+/** Any active recovery agent (server users in API mode, mockUsers in demo). */
 export function hasActiveRecoveryAgents(): boolean {
-  return listMockUsers().some((u) => u.role === 'RECOVERY_AGENT' && u.isActive);
+  return listRecoveryAgents().some((u) => u.isActive);
 }
 
 export function runRecoveryAutoAssign(

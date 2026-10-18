@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { CalendarClock, Check, Eye, ImageIcon, Smartphone, X } from 'lucide-react';
 import { useData } from '@/mock/DataContext';
@@ -12,7 +12,7 @@ import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { payPurposeTitle } from '@/features/customer-portal/loanPortalSummary';
 import {
   listPaymentProofs,
-  setPaymentProofStatus,
+  reviewPaymentProof,
   PAYMENT_PROOF_SUBMITTED_EVENT,
   type PaymentProofRecord,
 } from '@/features/customer-portal/paymentProofStore';
@@ -225,15 +225,25 @@ export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
   const customerName = (customerId: number) =>
     d.customers.find((c) => c.id === customerId)?.name ?? `Customer #${customerId}`;
 
-  const setStatus = (id: string, status: 'verified' | 'rejected', closeViewer?: boolean) => {
-    const updated = setPaymentProofStatus(id, status);
-    if (!updated) {
-      toast('Could not update proof status', 'error');
-      return;
+  // Waits for the server: a refusal (e.g. the amount now exceeds the loan's
+  // outstanding) is shown as an error, never as "accepted".
+  const busyIds = useRef(new Set<string>());
+  const setStatus = async (id: string, status: 'verified' | 'rejected', closeViewer?: boolean) => {
+    if (busyIds.current.has(id)) return;
+    busyIds.current.add(id);
+    try {
+      const err = await reviewPaymentProof(id, status);
+      if (err) {
+        toast(err, 'error');
+        refresh();
+        return;
+      }
+      toast(status === 'verified' ? 'Payment proof accepted' : 'Payment proof rejected', status === 'verified' ? 'success' : 'error');
+      refresh();
+      if (closeViewer) setViewer(null);
+    } finally {
+      busyIds.current.delete(id);
     }
-    toast(status === 'verified' ? 'Payment proof accepted' : 'Payment proof rejected', status === 'verified' ? 'success' : 'error');
-    refresh();
-    if (closeViewer) setViewer(null);
   };
 
   if (proofs.length === 0) {

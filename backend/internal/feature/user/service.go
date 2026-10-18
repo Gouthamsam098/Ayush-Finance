@@ -25,8 +25,14 @@ func (s *Service) Get(ctx context.Context, id int64) (*domain.User, error) {
 	return s.repo.FindByID(ctx, id)
 }
 
+// AgentLoans maps each recovery agent to their assigned loans.
+func (s *Service) AgentLoans(ctx context.Context) (map[int64][]int64, error) {
+	return s.repo.AgentLoans(ctx)
+}
+
 // Create validates and persists a new user with a bcrypt-hashed password.
-func (s *Service) Create(ctx context.Context, in domain.UserInput) (*domain.User, error) {
+// actingUserID is recorded as the assigner of an agent's loans.
+func (s *Service) Create(ctx context.Context, actingUserID int64, in domain.UserInput) (*domain.User, error) {
 	if err := in.Validate(true); err != nil {
 		return nil, err
 	}
@@ -34,7 +40,7 @@ func (s *Service) Create(ctx context.Context, in domain.UserInput) (*domain.User
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.Create(ctx, in, hash)
+	return s.repo.Create(ctx, in, hash, &actingUserID)
 }
 
 // Update edits a user. actingUserID is the authenticated admin making the
@@ -47,6 +53,11 @@ func (s *Service) Update(ctx context.Context, id, actingUserID int64, in domain.
 	}
 	if err := in.Validate(false); err != nil {
 		return nil, err
+	}
+	// A borrower's login can never become staff (or the reverse): that would
+	// hand a customer the LMS, or bind a staff account to one borrower.
+	if domain.IsStaffRole(existing.Role) != domain.IsStaffRole(in.Role) {
+		return nil, domain.NewConflict("A customer portal login cannot be changed into a staff account (or the reverse). Create a new user instead.")
 	}
 
 	// Would this change strip the last active admin? (demoting from ADMIN, or
@@ -74,7 +85,7 @@ func (s *Service) Update(ctx context.Context, id, actingUserID int64, in domain.
 		}
 		hash = h
 	}
-	return s.repo.Update(ctx, id, in, hash)
+	return s.repo.Update(ctx, id, in, hash, &actingUserID)
 }
 
 // SetActive enables/disables a user, with the same last-admin + self guards.
@@ -119,4 +130,22 @@ func (s *Service) Delete(ctx context.Context, id, actingUserID int64) error {
 		}
 	}
 	return s.repo.SoftDelete(ctx, id)
+}
+
+// PortalLogin returns a customer's portal login, or NotFound when none exists.
+func (s *Service) PortalLogin(ctx context.Context, customerID int64) (*PortalLogin, error) {
+	return s.repo.FindPortalLogin(ctx, customerID)
+}
+
+// CreatePortalLogin gives a customer a bcrypt-hashed portal login. One live
+// login per customer and one account per email are enforced by the database.
+func (s *Service) CreatePortalLogin(ctx context.Context, customerID int64, in domain.PortalLoginInput) (*PortalLogin, error) {
+	if err := in.Validate(); err != nil {
+		return nil, err
+	}
+	hash, err := s.hasher.Hash(in.Password)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.CreatePortalLogin(ctx, customerID, in.Email, hash)
 }

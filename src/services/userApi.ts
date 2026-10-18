@@ -6,7 +6,7 @@
 
 import { api } from '@/lib/api';
 
-export type UserRole = 'ADMIN' | 'VIEWER';
+export type UserRole = 'ADMIN' | 'VIEWER' | 'RECOVERY_AGENT' | 'CUSTOMER';
 export type Access = 'none' | 'view' | 'edit';
 export type Permissions = Record<string, Access>;
 
@@ -23,6 +23,10 @@ export interface ManagedUser {
   isActive: boolean;
   lastLoginAt?: string;
   createdAt: string;
+  /** CUSTOMER portal login: the customer record it belongs to. */
+  customerId?: number;
+  /** RECOVERY_AGENT: the loans assigned to them. */
+  assignedLoanIds?: number[];
 }
 
 interface UserWire {
@@ -34,6 +38,8 @@ interface UserWire {
   is_active: boolean;
   last_login_at?: string;
   created_at: string;
+  customer_id?: number;
+  assigned_loan_ids?: number[];
 }
 
 function toUser(w: UserWire): ManagedUser {
@@ -46,7 +52,17 @@ function toUser(w: UserWire): ManagedUser {
     isActive: w.is_active,
     lastLoginAt: w.last_login_at,
     createdAt: w.created_at,
+    customerId: w.customer_id,
+    assignedLoanIds: w.assigned_loan_ids,
   };
+}
+
+/** Role-specific fields: a customer's linked record, an agent's loans. */
+function roleFields(input: { role: UserRole; customerId?: number | null; assignedLoanIds?: number[] }): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (input.role === 'CUSTOMER') out.customer_id = input.customerId ?? null;
+  if (input.role === 'RECOVERY_AGENT' && input.assignedLoanIds) out.assigned_loan_ids = input.assignedLoanIds;
+  return out;
 }
 
 export interface UserCreateInput {
@@ -55,6 +71,8 @@ export interface UserCreateInput {
   password: string;
   role: UserRole;
   permissions: Permissions;
+  customerId?: number | null;
+  assignedLoanIds?: number[];
 }
 
 export interface UserUpdateInput {
@@ -64,6 +82,8 @@ export interface UserUpdateInput {
   permissions: Permissions;
   isActive: boolean;
   password?: string; // blank/omitted = keep existing
+  customerId?: number | null;
+  assignedLoanIds?: number[];
 }
 
 export const userApi = {
@@ -78,6 +98,7 @@ export const userApi = {
       password: input.password,
       role: input.role,
       permissions: input.permissions,
+      ...roleFields(input),
     }));
   },
 
@@ -88,6 +109,7 @@ export const userApi = {
       role: input.role,
       permissions: input.permissions,
       is_active: input.isActive,
+      ...roleFields(input),
     };
     if (input.password) body.password = input.password;
     return toUser(await api.patch<UserWire>(`/users/${id}`, body));
@@ -95,7 +117,8 @@ export const userApi = {
 
   async setActive(id: number, u: ManagedUser, isActive: boolean): Promise<ManagedUser> {
     // Update reuses the same endpoint; send current fields with the new flag.
-    return this.update(id, { email: u.email, fullName: u.fullName, role: u.role, permissions: u.permissions, isActive });
+    // Agent loans are left unchanged (omitted); a customer keeps its link.
+    return this.update(id, { email: u.email, fullName: u.fullName, role: u.role, permissions: u.permissions, isActive, customerId: u.customerId });
   },
 
   async remove(id: number): Promise<void> {

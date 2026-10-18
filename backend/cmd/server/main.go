@@ -64,12 +64,13 @@ func run() error {
 	}
 
 	handler := server.NewRouter(server.Dependencies{
-		Config: cfg,
-		Logger: log,
-		Pool:   pool,
-		Tokens: tokens,
-		Hasher: crypto.NewHasher(cfg.BcryptCost),
-		Now:    time.Now,
+		Background: ctx,
+		Config:     cfg,
+		Logger:     log,
+		Pool:       pool,
+		Tokens:     tokens,
+		Hasher:     crypto.NewHasher(cfg.BcryptCost),
+		Now:        time.Now,
 	})
 
 	srv := &http.Server{
