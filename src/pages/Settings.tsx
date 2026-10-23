@@ -110,6 +110,8 @@ export default function Settings() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState | null>(null);
+  /** Bumped on “Add user” so fields remount and browsers don’t autofill login credentials. */
+  const [userFormKey, setUserFormKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [confirmDel, setConfirmDel] = useState<ManagedUser | null>(null);
@@ -140,7 +142,10 @@ export default function Settings() {
   const adminCount = useMemo(() => users.filter((u) => u.role === 'ADMIN' && u.isActive).length, [users]);
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
-  const openCreate = () => setForm(blankForm());
+  const openCreate = () => {
+    setUserFormKey((k) => k + 1);
+    setForm(blankForm());
+  };
   const openEdit = (u: ManagedUser) => setForm({
     id: u.id,
     email: u.email,
@@ -441,15 +446,29 @@ export default function Settings() {
         }
       >
         {form && (
-          <div className="space-y-4">
+          <form
+            key={form.id ?? `create-${userFormKey}`}
+            className="space-y-4"
+            autoComplete="off"
+            onSubmit={(e) => e.preventDefault()}
+          >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Input label="Full name *" placeholder="e.g. Ramesh Kumar" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} />
+              <Input
+                label="Full name *"
+                placeholder="e.g. Ramesh Kumar"
+                value={form.fullName}
+                onChange={(e) => set('fullName', e.target.value)}
+                autoComplete={form.id ? 'name' : 'off'}
+                name={form.id ? undefined : `settings-full-name-${userFormKey}`}
+              />
               <Input
                 label="Email *"
                 type="email"
                 placeholder="user@example.com"
                 value={form.email}
                 onChange={(e) => set('email', e.target.value)}
+                autoComplete={form.id ? 'email' : 'off'}
+                name={form.id ? undefined : `settings-email-${userFormKey}`}
                 error={
                   emailHasComma(form.email)
                     ? 'Commas are not allowed. Use a single email address (not a list).'
@@ -464,6 +483,8 @@ export default function Settings() {
                 placeholder={form.id ? 'Leave blank to keep' : 'Min 8 characters'}
                 value={form.password}
                 onChange={(e) => set('password', e.target.value)}
+                autoComplete="new-password"
+                name={form.id ? undefined : `settings-password-${userFormKey}`}
               />
               <Input
                 revealPassword
@@ -471,6 +492,8 @@ export default function Settings() {
                 placeholder="Re-enter password"
                 value={form.confirm}
                 onChange={(e) => set('confirm', e.target.value)}
+                autoComplete="new-password"
+                name={form.id ? undefined : `settings-password-confirm-${userFormKey}`}
               />
             </div>
             <Select
@@ -533,7 +556,7 @@ export default function Settings() {
                 </div>
               </div>
             )}
-          </div>
+          </form>
         )}
       </Dialog>
 

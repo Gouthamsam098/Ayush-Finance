@@ -76,6 +76,62 @@ func (s *Service) Submit(ctx context.Context, customerID int64, submittedBy *int
 	return p, err
 }
 
+// SubmitForAgent stores a payment screenshot for a loan assigned to the agent.
+func (s *Service) SubmitForAgent(ctx context.Context, agentID int64, submittedBy *int64,
+	in domain.PaymentProofInput, fileName, declaredMime string, content []byte,
+) (*domain.PaymentProof, error) {
+	if err := in.Validate(); err != nil {
+		return nil, err
+	}
+	if len(content) == 0 {
+		return nil, domain.NewValidation("Choose a screenshot to upload", map[string]string{"file": "Required"})
+	}
+	if len(content) > domain.MaxPaymentProofBytes {
+		return nil, domain.NewValidation("Image must be 5 MB or smaller", map[string]string{"file": "Too large"})
+	}
+	mime := domain.DetectDocumentMIME(content)
+	if !domain.IsAllowedProofMIME(mime) || (declaredMime != "" && declaredMime != mime) {
+		return nil, domain.NewValidation("Please upload a screenshot (JPEG, PNG, or WebP)",
+			map[string]string{"file": "Unsupported file"})
+	}
+	customerID, status, err := s.repo.CustomerForAssignedLoan(ctx, in.LoanID, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if status != domain.StatusActive {
+		return nil, domain.NewConflict("This loan is closed — no payment is due on it")
+	}
+	pending, err := s.repo.CountPending(ctx, in.LoanID)
+	if err != nil {
+		return nil, err
+	}
+	if pending >= domain.MaxPendingProofsPerLoan {
+		return nil, domain.NewConflict("This loan already has payments awaiting approval. Please wait for them to be reviewed.")
+	}
+	p, err := s.repo.Create(ctx, customerID, in, domain.SanitizeFileName(fileName), mime, content, submittedBy)
+	if isCheckViolation(err) {
+		return nil, domain.NewValidation("This upload could not be accepted", nil)
+	}
+	return p, err
+}
+
+// ListForAgent returns proofs on the agent's assigned loans.
+func (s *Service) ListForAgent(ctx context.Context, agentID int64) ([]*domain.PaymentProof, error) {
+	return s.repo.ListForAgent(ctx, agentID)
+}
+
+// ImageForAgent returns a screenshot when the proof is on an assigned loan.
+func (s *Service) ImageForAgent(ctx context.Context, agentID, proofID int64) (*domain.PaymentProof, error) {
+	ok, err := s.repo.AgentCanAccessProof(ctx, proofID, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, domain.NewNotFound("payment proof")
+	}
+	return s.repo.Image(ctx, proofID, nil)
+}
+
 // List returns proofs; customerID nil = every customer's (staff).
 func (s *Service) List(ctx context.Context, customerID *int64) ([]*domain.PaymentProof, error) {
 	return s.repo.List(ctx, customerID)

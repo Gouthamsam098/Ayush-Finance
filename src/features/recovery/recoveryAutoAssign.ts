@@ -77,30 +77,34 @@ export function runRecoveryAutoAssign(
   };
 }
 
-/** Once-per-day key; includes test HH:MM when set so you can pick another time same day. */
-export function autoAssignRunSlotKey(): string {
-  const test = readTestAutoAssignTime();
-  return test ? `${todayISO()}|${test}` : todayISO();
+/** Saved HH:MM from Settings, or 00:00 when unset (matches server midnight default). */
+export function effectiveScheduleTime(): string {
+  const raw = readTestAutoAssignTime();
+  return raw && raw.trim() ? raw : '00:00';
 }
 
-/** In test schedule mode, skip catch-up on load until today's HH:MM has passed. */
-export function isPastTodaysTestSchedule(now = new Date()): boolean {
-  const test = readTestAutoAssignTime();
-  if (!test) return true;
-  const [hh, mm] = test.split(':').map(Number);
+/** Once-per-day key; custom times include HH:MM (midnight uses date only, like the server). */
+export function autoAssignRunSlotKey(): string {
+  const t = effectiveScheduleTime();
+  return t === '00:00' ? todayISO() : `${todayISO()}|${t}`;
+}
+
+/** True once today's scheduled run moment has passed (matches backend scheduledToday). */
+export function isPastTodaysScheduledRun(now = new Date()): boolean {
+  const [hh, mm] = effectiveScheduleTime().split(':').map(Number);
   const scheduled = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
   return now.getTime() >= scheduled.getTime();
 }
 
-/** Milliseconds until the next scheduled auto-assign (test time or local midnight). */
+/** @deprecated Use isPastTodaysScheduledRun */
+export function isPastTodaysTestSchedule(now = new Date()): boolean {
+  return isPastTodaysScheduledRun(now);
+}
+
+/** Milliseconds until the next scheduled auto-assign at the saved (or default 00:00) time. */
 export function msUntilNextAutoAssignRun(): number {
-  const test = readTestAutoAssignTime();
+  const [hh, mm] = effectiveScheduleTime().split(':').map(Number);
   const now = new Date();
-  if (!test) {
-    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
-    return Math.max(1000, next.getTime() - now.getTime());
-  }
-  const [hh, mm] = test.split(':').map(Number);
   let next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
   if (next.getTime() <= now.getTime()) {
     next = new Date(next.getTime() + 24 * 60 * 60 * 1000);
@@ -108,9 +112,9 @@ export function msUntilNextAutoAssignRun(): number {
   return Math.max(1000, next.getTime() - now.getTime());
 }
 
-/** Saved daily time for display (null = midnight local). */
-export function savedDailyScheduleTime(): string | null {
-  return readTestAutoAssignTime();
+/** Saved daily time for display and dirty-check (default 00:00). */
+export function savedDailyScheduleTime(): string {
+  return effectiveScheduleTime();
 }
 
 export function formatScheduleClock12(hhmm: string): string {
@@ -121,8 +125,10 @@ export function formatScheduleClock12(hhmm: string): string {
 }
 
 export function dailyScheduleSummary(): string {
-  const t = readTestAutoAssignTime();
-  return t ? `Every day at ${formatScheduleClock12(t)}` : 'Every day at 12:00 AM (midnight)';
+  const t = effectiveScheduleTime();
+  return t === '00:00'
+    ? 'Every day at 12:00 AM (midnight)'
+    : `Every day at ${formatScheduleClock12(t)}`;
 }
 
 export type NextAutoAssignRun = {

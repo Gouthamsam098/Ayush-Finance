@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
+import type { RootState } from '@/store';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, CircleX, Clock, ImagePlus, ShieldCheck, Sparkles, Upload, X } from 'lucide-react';
 import { inr, fmtDate } from '@/lib/format';
@@ -26,7 +28,15 @@ interface Props {
 
 type PickedFile = { name: string; mime: string; dataUrl: string; sizeLabel: string };
 
-function PaymentThankYouModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function PaymentThankYouModal({
+  open,
+  onClose,
+  agent,
+}: {
+  open: boolean;
+  onClose: () => void;
+  agent?: boolean;
+}) {
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -87,12 +97,16 @@ function PaymentThankYouModal({ open, onClose }: { open: boolean; onClose: () =>
                   Thank you!
                 </p>
                 <p className="mt-2 text-[13px] leading-relaxed text-muted sm:text-[14px]">
-                  Your payment will be confirmed once admin approves.
+                  {agent
+                    ? 'The screenshot is queued for admin review in Portal proofs.'
+                    : 'Your payment will be confirmed once admin approves.'}
                 </p>
-                <p className="mt-3 inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-primary">
-                  <Sparkles size={12} aria-hidden />
-                  We&apos;ll notify you after verification
-                </p>
+                {!agent && (
+                  <p className="mt-3 inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-primary">
+                    <Sparkles size={12} aria-hidden />
+                    We&apos;ll notify you after verification
+                  </p>
+                )}
               </motion.div>
               <motion.div
                 className="mt-6"
@@ -116,6 +130,8 @@ export function PaymentProofUpload({
   customerId, loanId, loanNumber, amountRupees, purpose,
 }: Props) {
   const toast = useToast();
+  const authUser = useSelector((s: RootState) => s.auth.user);
+  const isAgent = authUser?.role === 'RECOVERY_AGENT';
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [picked, setPicked] = useState<PickedFile | null>(null);
@@ -131,7 +147,7 @@ export function PaymentProofUpload({
     refreshLatest();
     const onSubmitted = (e: Event) => {
       const detail = (e as CustomEvent<PaymentProofRecord>).detail;
-      if (detail?.loanId === loanId) refreshLatest();
+      if (!detail || detail.loanId === loanId) refreshLatest();
     };
     const onStorage = (e: StorageEvent) => {
       if (e.key === PAYMENT_PROOF_STORAGE_KEY) refreshLatest();
@@ -187,6 +203,9 @@ export function PaymentProofUpload({
         dataUrl: picked.dataUrl,
         amountRupees,
         purpose,
+        recoveryAgentName: isAgent ? authUser?.fullName ?? null : null,
+        submittedByName: authUser?.fullName ?? null,
+        submittedByRole: authUser?.role ?? null,
       });
       if (err) {
         toast(`Screenshot not submitted: ${err}`, 'error');
@@ -208,7 +227,11 @@ export function PaymentProofUpload({
 
   return (
     <>
-    <PaymentThankYouModal open={thankYouOpen} onClose={() => setThankYouOpen(false)} />
+    <PaymentThankYouModal
+      open={thankYouOpen}
+      onClose={() => setThankYouOpen(false)}
+      agent={isAgent}
+    />
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
@@ -265,7 +288,9 @@ export function PaymentProofUpload({
               {rejected ? (
                 <>
                   <CircleX size={10} className="mr-0.5 inline text-danger" aria-hidden />
-                  Admin could not verify your screenshot. Please upload again.
+                  {isAgent
+                    ? 'Admin could not verify this screenshot. Upload again.'
+                    : 'Admin could not verify your screenshot. Please upload again.'}
                 </>
               ) : pending ? (
                 <>

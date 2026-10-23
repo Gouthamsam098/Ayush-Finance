@@ -20,8 +20,77 @@ import { api, ApiError } from '@/lib/api';
 import { tokenStore } from '@/lib/tokenStore';
 import { COLLECTIONS_CHANGED_EVENT } from '@/lib/dataEvents';
 import { store } from '@/store';
+import { dismissPaymentProof, isPaymentProofDismissed } from '@/lib/adminDismissals';
 
 export const PAYMENT_PROOF_STORAGE_KEY = 'anush.portal.paymentProofs';
+/** UI-only: who uploaded each proof (recovery agent vs borrower), keyed by proof id. */
+const PAYMENT_PROOF_SUBMITTER_KEY = 'anush.portal.paymentProofSubmitters';
+
+type SubmitterSnap = { name: string; role: string };
+
+function readSubmitterMap(): Record<string, SubmitterSnap> {
+  try {
+    const raw = localStorage.getItem(PAYMENT_PROOF_SUBMITTER_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, SubmitterSnap>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSubmitterMap(map: Record<string, SubmitterSnap>) {
+  localStorage.setItem(PAYMENT_PROOF_SUBMITTER_KEY, JSON.stringify(map));
+}
+
+function rememberProofSubmitter(proofId: string, snap: SubmitterSnap) {
+  if (!proofId || !snap.name?.trim()) return;
+  const map = readSubmitterMap();
+  map[proofId] = { name: snap.name.trim(), role: snap.role };
+  writeSubmitterMap(map);
+}
+
+function rekeyProofSubmitter(fromId: string, toId: string) {
+  if (!fromId || !toId || fromId === toId) return;
+  const map = readSubmitterMap();
+  if (!map[fromId]) return;
+  if (!map[toId]) map[toId] = map[fromId];
+  delete map[fromId];
+  writeSubmitterMap(map);
+}
+
+function enrichFromSubmitterCache(record: PaymentProofRecord): PaymentProofRecord {
+  if (record.recoveryAgentName || record.submittedByRole === 'RECOVERY_AGENT') {
+    return record;
+  }
+  const snap = readSubmitterMap()[record.id];
+  const name = snap?.name ?? record.submittedByName ?? null;
+  const role = snap?.role ?? record.submittedByRole ?? null;
+  if (!name) return record;
+  const agent = role === 'RECOVERY_AGENT';
+  return {
+    ...record,
+    submittedByName: name,
+    submittedByRole: role,
+    recoveryAgentName: agent ? name : (record.recoveryAgentName ?? null),
+  };
+}
+
+function attachSubmitterFromInput(
+  record: PaymentProofRecord,
+  input: Pick<PaymentProofRecord, 'submittedByName' | 'submittedByRole' | 'recoveryAgentName'>,
+): PaymentProofRecord {
+  const name = input.submittedByName?.trim();
+  if (!name) return enrichFromSubmitterCache(record);
+  const role = input.submittedByRole ?? (input.recoveryAgentName ? 'RECOVERY_AGENT' : 'CUSTOMER');
+  rememberProofSubmitter(record.id, { name, role });
+  return enrichFromSubmitterCache({
+    ...record,
+    submittedByName: name,
+    submittedByRole: role,
+    recoveryAgentName: role === 'RECOVERY_AGENT' ? (input.recoveryAgentName ?? name) : null,
+  });
+}
 
 export const PAYMENT_PROOF_SUBMITTED_EVENT = 'anush:payment-proof-submitted';
 export const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
@@ -42,6 +111,10 @@ export interface PaymentProofRecord {
   purpose: PortalPayPurpose;
   submittedAt: string;
   status: PaymentProofStatus;
+  /** Set when a recovery agent uploaded on behalf of the borrower. */
+  recoveryAgentName?: string | null;
+  submittedByName?: string | null;
+  submittedByRole?: string | null;
 }
 
 // ── demo mode (localStorage) ─────────────────────────────────────────────────
@@ -74,6 +147,7 @@ interface ProofWire {
   mime_type: string;
   status: 'PENDING' | 'VERIFIED' | 'REJECTED';
   submitted_at: string;
+  recovery_agent_name?: string | null;
 }
 
 const STATUS_FROM_WIRE: Record<ProofWire['status'], PaymentProofStatus> = {
@@ -104,23 +178,30 @@ const remote = {
   pollTimer: 0 as number,
 };
 
-type Scope = 'portal' | 'staff';
+type Scope = 'portal' | 'staff' | 'agent';
 
 /** The signed-in API session, or null (logged out / demo token). */
 function apiSession(): { scope: Scope; owner: string } | null {
   if (!config.useApi || !tokenStore.get()) return null;
   const { accessToken, user } = store.getState().auth;
-  // Recovery agents neither upload nor review proofs (their staff list is a 403).
-  if (!accessToken || !user || user.role === 'RECOVERY_AGENT') return null;
-  const scope: Scope = user.role === 'CUSTOMER' ? 'portal' : 'staff';
+  if (!accessToken || !user) return null;
+  const scope: Scope = user.role === 'CUSTOMER'
+    ? 'portal'
+    : user.role === 'RECOVERY_AGENT'
+      ? 'agent'
+      : 'staff';
   return { scope, owner: `${scope}:${user.id}` };
 }
 
-const basePath = (scope: Scope) => (scope === 'portal' ? '/portal/payment-proofs' : '/payment-proofs');
+const basePath = (scope: Scope) => {
+  if (scope === 'portal') return '/portal/payment-proofs';
+  if (scope === 'agent') return '/agent/payment-proofs';
+  return '/payment-proofs';
+};
 
 function toRecord(w: ProofWire): PaymentProofRecord {
   const id = String(w.id);
-  return {
+  return enrichFromSubmitterCache({
     id,
     loanId: w.loan_id,
     customerId: w.customer_id,
@@ -132,7 +213,10 @@ function toRecord(w: ProofWire): PaymentProofRecord {
     purpose: w.purpose,
     submittedAt: w.submitted_at,
     status: STATUS_FROM_WIRE[w.status] ?? 'pending',
-  };
+    recoveryAgentName: w.recovery_agent_name ?? null,
+    submittedByName: w.recovery_agent_name ?? null,
+    submittedByRole: w.recovery_agent_name ? 'RECOVERY_AGENT' : null,
+  });
 }
 
 function emit(record?: PaymentProofRecord) {
@@ -200,7 +284,7 @@ function refreshRemote(force = false) {
       }
       const before = new Map(remote.rows.map((r) => [r.id, r.status]));
       const uploading = remote.rows.filter((r) => r.id.startsWith('tmp-'));
-      const next = [...uploading, ...(list ?? []).map(toRecord)];
+      const next = [...uploading.map(enrichFromSubmitterCache), ...(list ?? []).map(toRecord)];
       const changed = next.length !== remote.rows.length
         || next.some((r) => before.get(r.id) !== r.status);
       // A proof accepted elsewhere (staff on another device, or the borrower
@@ -212,7 +296,7 @@ function refreshRemote(force = false) {
       for (const id of [...remote.images.keys()]) if (!listed.has(id)) remote.images.delete(id);
       if (changed) emitAll();
       if (newlyVerified) window.dispatchEvent(new Event(COLLECTIONS_CHANGED_EVENT));
-      if (s.scope === 'staff') loadImages(owner, s.scope);
+      if (s.scope === 'staff' || s.scope === 'agent') loadImages(owner, s.scope);
     })
     .catch(() => { /* keep the last list; the next read or poll retries */ })
     .finally(() => {
@@ -298,7 +382,13 @@ export async function reviewPaymentProof(id: string, status: 'verified' | 'rejec
   if (!remote.rows.some((r) => r.id === id)) return 'This proof is no longer available. Refresh and try again.';
   try {
     const w = await api.post<ProofWire>(`/payment-proofs/${id}/${status === 'verified' ? 'verify' : 'reject'}`, {});
-    const saved = toRecord(w);
+    const prev = remote.rows.find((r) => r.id === id);
+    const saved = enrichFromSubmitterCache({
+      ...toRecord(w),
+      submittedByName: prev?.submittedByName,
+      submittedByRole: prev?.submittedByRole,
+      recoveryAgentName: prev?.recoveryAgentName,
+    });
     replaceRow(id, saved);
     emit(saved);
     if (saved.status === 'verified') window.dispatchEvent(new Event(COLLECTIONS_CHANGED_EVENT));
@@ -313,14 +403,19 @@ export async function reviewPaymentProof(id: string, status: 'verified' | 'rejec
  * Borrower uploads a screenshot, waiting for the server. Resolves to null on
  * success, or the reason it was refused (too many pending, not an image…).
  */
-export async function submitPaymentProof(input: Omit<PaymentProofRecord, 'id' | 'status' | 'submittedAt'>): Promise<string | null> {
+export async function submitPaymentProof(
+  input: Omit<PaymentProofRecord, 'id' | 'status' | 'submittedAt'>,
+): Promise<string | null> {
   if (!config.useApi) {
     persistPaymentProof(input);
     return null;
   }
   try {
     const w = await uploadProof(input);
-    const saved = { ...toRecord(w), dataUrl: input.dataUrl };
+    const saved = attachSubmitterFromInput(
+      { ...toRecord(w), dataUrl: input.dataUrl },
+      input,
+    );
     remote.images.set(saved.id, input.dataUrl);
     remote.version += 1;
     remote.rows = [saved, ...remote.rows.filter((r) => r.id !== saved.id)];
@@ -340,19 +435,36 @@ function apiRows(): PaymentProofRecord[] {
 
 export function listPaymentProofs(): PaymentProofRecord[] {
   const rows = config.useApi ? [...apiRows()] : readAll();
-  return rows.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  return rows
+    .filter((r) => !isPaymentProofDismissed(r.id))
+    .map(enrichFromSubmitterCache)
+    .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+}
+
+/** Admin clears a reviewed portal proof card from Collections (dismiss list; demo mode also removes stored row). */
+export function removePaymentProofFromAdmin(id: string): void {
+  dismissPaymentProof(id);
+  if (!config.useApi) {
+    writeAll(readAll().filter((r) => r.id !== id));
+  } else {
+    remote.version += 1;
+    remote.rows = remote.rows.filter((r) => r.id !== id);
+    remote.images.delete(id);
+    emitAll();
+  }
+  window.dispatchEvent(new CustomEvent(PAYMENT_PROOF_SUBMITTED_EVENT));
 }
 
 export function countPendingPaymentProofs(): number {
   const rows = config.useApi ? apiRows() : readAll();
-  return rows.filter((r) => r.status === 'pending').length;
+  return rows.filter((r) => r.status === 'pending' && !isPaymentProofDismissed(r.id)).length;
 }
 
 /** Pending submission count per loan (multiple uploads increment the count). */
 export function pendingProofCountByLoanId(): Record<number, number> {
   const counts: Record<number, number> = {};
   for (const row of config.useApi ? apiRows() : readAll()) {
-    if (row.status !== 'pending') continue;
+    if (row.status !== 'pending' || isPaymentProofDismissed(row.id)) continue;
     counts[row.loanId] = (counts[row.loanId] ?? 0) + 1;
   }
   return counts;
@@ -362,7 +474,8 @@ export function getLatestPaymentProof(loanId: number): PaymentProofRecord | null
   const forLoan = (config.useApi ? apiRows() : readAll())
     .filter((r) => r.loanId === loanId)
     .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
-  return forLoan[0] ?? null;
+  const latest = forLoan[0];
+  return latest ? enrichFromSubmitterCache(latest) : null;
 }
 
 /**
@@ -414,15 +527,20 @@ export function persistPaymentProof(input: Omit<PaymentProofRecord, 'id' | 'stat
     submittedAt: new Date().toISOString(),
     status: 'pending',
   };
+  const withMeta = attachSubmitterFromInput(record, input);
   if (config.useApi) {
     refreshRemote();
-    remote.rows = [record, ...remote.rows];
-    emit(record);
+    remote.rows = [withMeta, ...remote.rows];
+    emit(withMeta);
     uploadProof(input)
       .then((w) => {
-        const saved = toRecord(w);
+        rekeyProofSubmitter(record.id, String(w.id));
+        const saved = attachSubmitterFromInput(
+          { ...toRecord(w), dataUrl: input.dataUrl },
+          input,
+        );
         remote.images.set(saved.id, input.dataUrl);
-        replaceRow(record.id, { ...saved, dataUrl: input.dataUrl });
+        replaceRow(record.id, saved);
         emit(saved);
       })
       .catch((e) => {
@@ -430,11 +548,11 @@ export function persistPaymentProof(input: Omit<PaymentProofRecord, 'id' | 'stat
         replaceRow(record.id, null);
         emit(record);
       });
-    return record;
+    return withMeta;
   }
-  writeAll([record, ...readAll()]);
-  window.dispatchEvent(new CustomEvent(PAYMENT_PROOF_SUBMITTED_EVENT, { detail: record }));
-  return record;
+  writeAll([withMeta, ...readAll()]);
+  window.dispatchEvent(new CustomEvent(PAYMENT_PROOF_SUBMITTED_EVENT, { detail: withMeta }));
+  return withMeta;
 }
 
 async function uploadProof(input: Omit<PaymentProofRecord, 'id' | 'status' | 'submittedAt'>): Promise<ProofWire> {
@@ -444,5 +562,7 @@ async function uploadProof(input: Omit<PaymentProofRecord, 'id' | 'status' | 'su
   fd.append('amount', String(input.amountRupees));
   fd.append('purpose', input.purpose);
   fd.append('file', new File([blob], input.fileName || 'payment.png', { type: input.mimeType || blob.type }));
-  return api.upload<ProofWire>('/portal/payment-proofs', fd);
+  const s = apiSession();
+  const path = s?.scope === 'agent' ? '/agent/payment-proofs' : '/portal/payment-proofs';
+  return api.upload<ProofWire>(path, fd);
 }

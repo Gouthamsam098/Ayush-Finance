@@ -18,7 +18,8 @@ import {
 } from './recoveryStore';
 import { recoveryDueNow } from './recoveryDue';
 import {
-  isPastTodaysTestSchedule,
+  hasActiveRecoveryAgents,
+  isPastTodaysScheduledRun,
   msUntilNextAutoAssignRun,
   runRecoveryAutoAssign,
   type RecoveryAutoAssignResult,
@@ -151,7 +152,9 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     if (!dataReady || config.useApi) return;
     const tick = () => {
       if (dRef.current.loans.length === 0) return;
-      if (isPastTodaysTestSchedule()) runRecoveryAutoAssign(dRef.current);
+      if (!isPastTodaysScheduledRun()) return;
+      if (!hasActiveRecoveryAgents()) return;
+      runRecoveryAutoAssign(dRef.current);
     };
     tick();
     let timer: ReturnType<typeof setTimeout> | undefined;

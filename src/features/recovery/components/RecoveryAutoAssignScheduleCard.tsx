@@ -6,13 +6,13 @@ import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import {
   dailyScheduleSummary,
+  effectiveScheduleTime,
   formatScheduleClock12,
   nextAutoAssignRun,
   savedDailyScheduleTime,
 } from '@/features/recovery/recoveryAutoAssign';
 import {
   readLastAutoAssignDate,
-  readTestAutoAssignTime,
   RECOVERY_SCHEDULE_CHANGED,
   writeTestAutoAssignTime,
 } from '@/features/recovery/recoveryStore';
@@ -33,7 +33,7 @@ interface Props {
 
 export function RecoveryAutoAssignScheduleCard({ assignmentVersion, embedded }: Props) {
   const toast = useToast();
-  const [draftTime, setDraftTime] = useState(() => readTestAutoAssignTime() ?? '00:00');
+  const [draftTime, setDraftTime] = useState(() => effectiveScheduleTime());
   const [scheduleTick, setScheduleTick] = useState(0);
   const [saving, setSaving] = useState(false);
 
@@ -64,19 +64,22 @@ export function RecoveryAutoAssignScheduleCard({ assignmentVersion, embedded }: 
     return () => window.removeEventListener(RECOVERY_SCHEDULE_CHANGED, bump);
   }, []);
 
-  const dirty = (savedTime ?? '00:00') !== draftTime;
+  useEffect(() => {
+    setDraftTime(savedDailyScheduleTime());
+  }, [scheduleTick, assignmentVersion]);
+
+  const dirty = savedTime !== draftTime;
 
   const saveSchedule = () => {
     setSaving(true);
-    const normalized = draftTime.trim();
-    const storeValue = normalized === '00:00' || !normalized ? null : normalized;
-    writeTestAutoAssignTime(storeValue);
+    const hhmm = draftTime.trim() || '00:00';
+    writeTestAutoAssignTime(hhmm);
     setScheduleTick((n) => n + 1);
     setSaving(false);
     toast(
-      storeValue
-        ? `Schedule saved — auto-assign runs daily at ${formatScheduleClock12(storeValue)}`
-        : 'Schedule saved — auto-assign runs daily at midnight',
+      hhmm === '00:00'
+        ? 'Schedule saved — auto-assign runs daily at midnight (00:00)'
+        : `Schedule saved — auto-assign runs daily at ${formatScheduleClock12(hhmm)}`,
       'success',
     );
   };
@@ -166,8 +169,8 @@ export function RecoveryAutoAssignScheduleCard({ assignmentVersion, embedded }: 
             </Button>
           </div>
           <p className="mt-2.5 text-[11px] leading-relaxed text-muted">
-            Saving starts the automatic daily run at this time (no manual step). Use{' '}
-            <span className="font-medium text-ink">00:00</span> for midnight. Keep this app open in a browser tab until server-side scheduling is connected.
+            Default is <span className="font-medium text-ink">00:00</span> (midnight). Click{' '}
+            <span className="font-medium text-ink">Save schedule</span> so the server uses your chosen time each day.
           </p>
         </div>
       </div>

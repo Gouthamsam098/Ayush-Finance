@@ -432,6 +432,26 @@ func (s *Service) SetSchedule(ctx context.Context, runTime *string, by *int64) e
 	return s.repo.SetRunTime(ctx, runTime, by)
 }
 
+// markAutoAssignSlotSkipped records today's slot without assigning (e.g. no agents).
+func (s *Service) markAutoAssignSlotSkipped(ctx context.Context, slot string, reason string) error {
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	sched, err := lockScheduleTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if sched.LastRunSlot != nil && *sched.LastRunSlot == slot {
+		return tx.Commit(ctx)
+	}
+	if err := recordRunTx(ctx, tx, slot, map[string]any{"skipped_reason": reason}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // hasActiveAgent is a cheap, lock-free pre-check for the scheduler.
 func (s *Service) hasActiveAgent(ctx context.Context) bool {
 	agents, err := s.repo.Agents(ctx)
@@ -463,9 +483,13 @@ func (s *Service) RunScheduler(ctx context.Context, log *slog.Logger) {
 		if sched.LastRunSlot != nil && *sched.LastRunSlot == slotKey(now, sched.RunTime) {
 			return
 		}
-		// No active agent → nothing to do, and no transaction or lock taken. The
-		// slot stays open, so an agent added later today is served at once.
+		// No active agent at/after the scheduled time: mark the slot consumed so
+		// creating an agent later the same day does not immediately backfill
+		// overdue loans (admin can still POST /auto-assign/run).
 		if !s.hasActiveAgent(ctx) {
+			if err := s.markAutoAssignSlotSkipped(ctx, slotKey(now, sched.RunTime), "no_agents"); err != nil {
+				log.Warn("recovery auto-assign: mark skipped failed", "error", err)
+			}
 			return
 		}
 		res, err := s.AutoAssign(ctx, false)

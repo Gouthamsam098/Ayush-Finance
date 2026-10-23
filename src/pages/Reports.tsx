@@ -787,7 +787,7 @@ export default function Reports() {
                       <td className="h-[60px] whitespace-nowrap px-6 align-middle">
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
                           <span className="text-[13px] font-medium tabular-nums text-ink">{g.lastDate ? fmtDate(g.lastDate) : '—'}</span>
-                          <Badge tone={closed ? 'ok' : 'info'}>{closed ? 'Closed' : 'Active'}</Badge>
+                          <Badge tone={closed ? 'err' : 'ok'}>{closed ? 'Closed' : 'Active'}</Badge>
                         </div>
                       </td>
                     </tr>
@@ -856,7 +856,7 @@ export default function Reports() {
                               otherwise — and the EXPORTS are unaffected, since
                               they read report.body, not this markup. */}
                           {header === 'Status' && (cell === 'ACTIVE' || cell === 'CLOSED')
-                            ? <Badge tone={cell === 'CLOSED' ? 'ok' : 'info'}>{cell === 'CLOSED' ? 'Closed' : 'Active'}</Badge>
+                            ? <Badge tone={cell === 'CLOSED' ? 'err' : 'ok'}>{cell === 'CLOSED' ? 'Closed' : 'Active'}</Badge>
                             : header === 'Mode'
                               ? tab === 'expenses'
                                 ? <div className="flex w-full justify-center"><Badge tone="neutral" className="max-w-full truncate">{cell}</Badge></div>
@@ -1031,7 +1031,7 @@ export default function Reports() {
                 </div>
                 <span className={cn(
                   'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11.5px] font-bold backdrop-blur-sm',
-                  detail.loan.status === 'CLOSED' ? 'bg-emerald-400/25 text-emerald-50' : 'bg-white/20 text-white',
+                  detail.loan.status === 'CLOSED' ? 'bg-danger/30 text-red-50 ring-danger/40' : 'bg-emerald-400/25 text-emerald-50 ring-emerald-300/35',
                 )}>
                   <span className="h-1.5 w-1.5 rounded-full bg-current opacity-90" />
                   {detail.loan.status === 'CLOSED' ? 'Closed' : 'Active'}

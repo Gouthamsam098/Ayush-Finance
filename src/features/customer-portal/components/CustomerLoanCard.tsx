@@ -8,6 +8,10 @@ import {
   CalendarClock, ChevronRight, CircleCheck, FileText, Landmark, Percent, SlidersHorizontal, Smartphone, Wallet,
 } from 'lucide-react';
 import { PaymentProofUpload } from '@/features/customer-portal/components/PaymentProofUpload';
+import {
+  customerPortalPaymentProofEnabled,
+  resolveCustomerPortalProof,
+} from '@/features/customer-portal/customerPortalProof';
 
 const PAY_OPTION_ICON: Record<PortalPayPurpose, ReactNode> = {
   INTEREST: <Percent size={18} strokeWidth={2.25} />,
@@ -189,6 +193,10 @@ export function CustomerLoanCard({
     ? (customParsed <= 0 ? 'Enter a valid amount' : `Maximum ${inr(maxPay)}`)
     : undefined;
   const payValid = payAmount > 0 && payAmount <= maxPay;
+
+  const portalProof = customerPortalPaymentProofEnabled(loan)
+    ? resolveCustomerPortalProof(loan, summary, payValid, payAmount, selected, activeOption?.id)
+    : null;
 
   const presetOptions = useMemo(() => payOptions.filter((o) => o.id !== 'CUSTOM'), [payOptions]);
   const hasCustomOption = payOptions.some((o) => o.id === 'CUSTOM');
@@ -417,18 +425,31 @@ export function CustomerLoanCard({
                 <CalendarClock size={12} className="shrink-0 opacity-70" />
                 Amount is copied into PhonePe or Google Pay automatically
               </p>
+
             </div>
           </motion.section>
         )}
 
-        {canPay && payValid && (
-          <PaymentProofUpload
-            customerId={customerId}
-            loanId={loan.id}
-            loanNumber={loan.loanNumber}
-            amountRupees={payAmount}
-            purpose={selected}
-          />
+        {canPay && portalProof && (
+          <motion.section
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.22, duration: 0.35 }}
+            className="rounded-[20px] border border-violet-200/70 bg-surface px-4 py-4 shadow-soft ring-1 ring-violet-500/10 dark:border-violet-500/20 dark:ring-violet-500/15 sm:px-5 sm:py-5"
+            aria-label="Payment screenshot"
+          >
+            <p className="mb-3 text-center text-[12px] leading-relaxed text-muted sm:text-left">
+              Already paid via UPI or bank transfer? Upload your payment screenshot for verification
+              <span className="font-semibold text-ink"> ({inr(portalProof.amountRupees)})</span>.
+            </p>
+            <PaymentProofUpload
+              customerId={customerId}
+              loanId={loan.id}
+              loanNumber={loan.loanNumber}
+              amountRupees={portalProof.amountRupees}
+              purpose={portalProof.purpose}
+            />
+          </motion.section>
         )}
 
         <motion.button

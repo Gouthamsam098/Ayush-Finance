@@ -186,6 +186,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				agent.Mount("/loans", loanHandler.AgentRoutes())
 				agent.Mount("/customers", customerHandler.AgentRoutes())
 				agent.Mount("/collections", collectionHandler.AgentRoutes())
+				agent.Mount("/payment-proofs", paymentProofHandler.AgentRoutes())
 				agent.Mount("/", recoveryHandler.AgentRoutes())
 			})
 		})

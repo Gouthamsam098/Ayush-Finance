@@ -491,12 +491,14 @@ button, a, input, select, textarea {
 
 /* Card footers: stack on fold/narrow, row on wider screens */
 .action-bar-3,
-.action-bar-2 {
+.action-bar-2,
+.action-bar-1 {
   display: grid;
   grid-template-columns: 1fr;
 }
 .action-bar-3 > *,
-.action-bar-2 > * {
+.action-bar-2 > *,
+.action-bar-1 > * {
   min-width: 0;
 }
 .action-bar-3 > * + *,
@@ -507,7 +509,7 @@ button, a, input, select, textarea {
 .dark .action-bar-2 > * + * {
   border-top-color: rgb(255 255 255 / 0.06);
 }
-@media (min-width: 380px) {
+@media (min-width: 640px) {
   .action-bar-3 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -519,7 +521,7 @@ button, a, input, select, textarea {
     border-left-color: rgb(255 255 255 / 0.06);
   }
 }
-@media (min-width: 360px) {
+@media (min-width: 640px) {
   .action-bar-2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
