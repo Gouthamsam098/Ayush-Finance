@@ -7,6 +7,7 @@ import {
 import { cashDisbursedFor } from '@/lib/funds';
 import { StatCard } from '@/components/ui/stat-card';
 import { ResponsiveTableFrame } from '@/components/ui/responsive-table';
+import { TruncatedTapPopoverText } from '@/components/ui/tap-popover-text';
 import { Button } from '@/components/ui/button';
 import { Drawer } from '@/components/ui/drawer';
 import { Dialog } from '@/components/ui/dialog';
@@ -771,7 +772,9 @@ export default function Reports() {
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetail(g); } }}
                       className="group cursor-pointer border-t border-[#EEF2F7] transition-colors odd:bg-slate-50/30 hover:bg-blue-50/50 focus:outline-none focus-visible:bg-blue-50/60 dark:border-white/[.05] dark:odd:bg-white/[.015] dark:hover:bg-blue-500/[.06]"
                     >
-                      <td className="h-[60px] whitespace-nowrap px-6 align-middle font-semibold text-ink">{g.customer}</td>
+                      <td className="h-[60px] max-w-[9rem] px-6 align-middle sm:max-w-none sm:whitespace-nowrap">
+                        <TruncatedTapPopoverText className="font-semibold text-ink">{g.customer}</TruncatedTapPopoverText>
+                      </td>
                       <td className="h-[60px] whitespace-nowrap px-6 align-middle">
                         <div className="font-mono text-xs text-ink">{g.loan.loanNumber}</div>
                         <div className="text-[11.5px] text-muted">{LOAN_LABELS[g.loan.type]}</div>
@@ -851,8 +854,15 @@ export default function Reports() {
                     {row.map((cell, ci) => {
                       const header = report.head[ci];
                       const money = report.rightAlignCols.includes(ci);
+                      const textTip =
+                        (header === 'Customer' || (tab === 'customers' && header === 'Name'))
+                        && cell && cell !== '—'
+                          ? String(cell)
+                          : undefined;
                       return (
-                        <td key={ci} className={cn(
+                        <td
+                          key={ci}
+                          className={cn(
                           tab === 'expenses'
                             ? expenseReportCell(ci, cn(
                               'tabular-nums',
@@ -886,7 +896,9 @@ export default function Reports() {
                                 </span>
                                 : header === 'Loan Type'
                                   ? <Badge tone="info">{cell}</Badge>
-                                  : cell}
+                                  : textTip
+                                    ? <TruncatedTapPopoverText title={textTip}>{textTip}</TruncatedTapPopoverText>
+                                    : cell}
                         </td>
                       );
                     })}
