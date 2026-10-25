@@ -17,6 +17,7 @@ import {
   PAYMENT_PROOF_SUBMITTED_EVENT,
   type PaymentProofRecord,
 } from '@/features/customer-portal/paymentProofStore';
+import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
 
 interface Props {
   customerId: number;
@@ -24,6 +25,10 @@ interface Props {
   loanNumber: string;
   amountRupees: number;
   purpose: PortalPayPurpose;
+  /** Recovery card: true while a Collect submission is awaiting admin approval. */
+  collectionClaimPending?: boolean;
+  /** For recovery agent activity log (recovery portal only). */
+  activityCustomerName?: string;
 }
 
 type PickedFile = { name: string; mime: string; dataUrl: string; sizeLabel: string };
@@ -127,7 +132,7 @@ function PaymentThankYouModal({
 }
 
 export function PaymentProofUpload({
-  customerId, loanId, loanNumber, amountRupees, purpose,
+  customerId, loanId, loanNumber, amountRupees, purpose, collectionClaimPending, activityCustomerName,
 }: Props) {
   const toast = useToast();
   const authUser = useSelector((s: RootState) => s.auth.user);
@@ -214,6 +219,19 @@ export function PaymentProofUpload({
       setPicked(null);
       if (inputRef.current) inputRef.current.value = '';
       refreshLatest();
+      if (isAgent && authUser && activityCustomerName) {
+        recordAgentActivity({
+          agentUserId: authUser.id,
+          at: new Date().toISOString(),
+          kind: 'PROOF_UPLOADED',
+          loanId,
+          loanNumber,
+          customerName: activityCustomerName,
+          title: 'Screenshot submitted',
+          detail: 'Payment proof queued for admin review',
+          amountRupees,
+        });
+      }
       setThankYouOpen(true);
     } finally {
       setSubmitting(false);
@@ -224,6 +242,10 @@ export function PaymentProofUpload({
   const pending = status === 'pending';
   const rejected = status === 'rejected';
   const accepted = status === 'verified';
+  const recoveryAgentFlow = collectionClaimPending !== undefined;
+  const awaitingNewCollect =
+    recoveryAgentFlow && accepted && !collectionClaimPending;
+  const canAddScreenshot = !pending && !awaitingNewCollect;
 
   return (
     <>
@@ -248,6 +270,7 @@ export function PaymentProofUpload({
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
+        if (!canAddScreenshot) return;
         ingestFile(e.dataTransfer.files?.[0]);
       }}
     >
@@ -309,11 +332,16 @@ export function PaymentProofUpload({
               )}
             </p>
           )}
+          {awaitingNewCollect && !picked && (
+            <p className="mt-0.5 text-[10px] leading-relaxed text-muted">
+              Use <span className="font-semibold text-ink">Collect</span> for the next payment before adding another screenshot.
+            </p>
+          )}
         </div>
         </div>
 
         <AnimatePresence mode="wait">
-          {!picked ? (
+          {!picked && canAddScreenshot ? (
             <motion.button
               key="pick"
               type="button"
@@ -330,6 +358,14 @@ export function PaymentProofUpload({
               <ImagePlus size={14} aria-hidden />
               {rejected ? 'Upload again' : 'Add'}
             </motion.button>
+          ) : !picked && awaitingNewCollect ? (
+            <span
+              className="inline-flex h-9 w-full shrink-0 cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-slate-200/80 px-3 text-[11px] font-semibold text-muted opacity-55 xs:w-auto dark:border-white/[.08]"
+              title="Submit Collect first"
+            >
+              <ImagePlus size={14} aria-hidden />
+              Add
+            </span>
           ) : null}
         </AnimatePresence>
       </div>

@@ -1,4 +1,5 @@
-import type { RecoverySubmission } from './types';
+import type { PromiseSubmission, RecoverySubmission } from './types';
+import { isActiveOpenPromise } from '@/lib/recoveryPtp';
 import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
 import { listMockUsers } from '@/lib/mockUsers';
@@ -434,9 +435,21 @@ export function latestOpenPromiseForLoan(
   submissions?: RecoverySubmission[],
 ): RecoverySubmission | undefined {
   const rows = (submissions ?? readSubmissions()).filter(
-    (s) => s.loanId === loanId && s.type === 'PROMISE_TO_PAY' && s.status === 'OPEN',
+    (s): s is PromiseSubmission =>
+      s.loanId === loanId && s.type === 'PROMISE_TO_PAY' && isActiveOpenPromise(s as PromiseSubmission),
   );
   const scoped = agentUserId != null ? rows.filter((s) => s.agentUserId === agentUserId) : rows;
   if (scoped.length === 0) return undefined;
   return scoped.reduce((latest, s) => (s.createdAt >= latest.createdAt ? s : latest));
+}
+
+/** Open promises for one agent (active OPEN, not manually closed). */
+export function openPromisesForAgent(
+  agentUserId: number,
+  submissions?: RecoverySubmission[],
+): PromiseSubmission[] {
+  return (submissions ?? readSubmissions())
+    .filter((s): s is PromiseSubmission =>
+      s.agentUserId === agentUserId && s.type === 'PROMISE_TO_PAY' && isActiveOpenPromise(s))
+    .sort((a, b) => a.promiseDate.localeCompare(b.promiseDate) || b.createdAt.localeCompare(a.createdAt));
 }

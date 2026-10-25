@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
 import { CustomerAvatar } from '@/components/CustomerAvatar';
 import type { PromiseSubmission } from '../types';
+import { isActiveOpenPromise, classifyPtpTiming, ptpTimingLabel } from '@/lib/recoveryPtp';
 import { CalendarClock, Inbox, Trash2 } from 'lucide-react';
 import { ADMIN_DISMISSALS_CHANGED, isRecoverySubmissionDismissed } from '@/lib/adminDismissals';
 import { removeSubmissionFromAdminQueue } from '../recoveryStore';
@@ -75,7 +76,9 @@ function PromiseToPayCard({
                   <p className="mt-0.5 break-all font-mono text-[11px] text-muted">{submission.loanNumber}</p>
                 </div>
               </div>
-              <Badge tone="info" className="shrink-0">Promise to pay</Badge>
+              <Badge tone="info" className="shrink-0">
+                {ptpTimingLabel(classifyPtpTiming(submission.promiseDate))}
+              </Badge>
             </div>
 
             <div className="mt-4 sm:mt-3">
@@ -140,7 +143,7 @@ export function RecoveryPtpPanel() {
   const promises = useMemo(
     () => submissions.filter(
       (s): s is PromiseSubmission => s.type === 'PROMISE_TO_PAY'
-        && s.status === 'OPEN'
+        && isActiveOpenPromise(s)
         && !isRecoverySubmissionDismissed(s.id),
     ),
     [submissions, dismissTick],

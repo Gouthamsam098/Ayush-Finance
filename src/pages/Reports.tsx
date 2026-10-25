@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   useData, LOAN_LABELS, EXPENSE_CATEGORIES, behavesInterestOnly, type LoanType,
@@ -42,6 +42,8 @@ import {
   filterAgentCollections,
   type AgentCollectionSummary,
 } from '@/lib/agentCollectionReport';
+import { formatUpiReportCells, syncApprovedClaimUpiToCollections } from '@/lib/recoveryClaimUpi';
+import { useRecovery } from '@/features/recovery/RecoveryContext';
 
 type ReportKey = 'loans' | 'customers' | 'collections' | 'agents' | 'expenses';
 type Period = 'THIS_MONTH' | 'LAST_6M' | 'LAST_1Y' | 'ALL';
@@ -235,16 +237,19 @@ function buildReport(tab: ReportKey, data: Dataset, f: BuildArgs): BuiltReport {
     }).reduce((s, c) => s + c.amount, 0);
     const customerTotal = rows.filter((c) => resolveCollector(c).type === 'CUSTOMER').reduce((s, c) => s + c.amount, 0);
     return {
-      head: ['Receipt', 'Customer', 'Loan #', 'Amount', 'Mode', 'Date', 'Collected by', 'Role'],
+      head: ['Receipt', 'Customer', 'Loan #', 'Amount', 'Mode', 'UPI ID', 'Payee name', 'Date', 'Collected by', 'Role'],
       body: rows.map((c) => {
         const loan = loanById.get(c.loanId);
         const who = resolveCollector(c);
+        const [upiId, payeeName] = formatUpiReportCells(c);
         return [
           c.receiptNo,
           loan ? custName(loan.customerId) : '—',
           loan?.loanNumber ?? '—',
           inr(c.amount),
           c.mode,
+          upiId,
+          payeeName,
           fmtDate(c.date),
           who.name,
           who.roleLabel,
@@ -376,6 +381,13 @@ export default function Reports() {
   // Collections drill-down: the loan whose receipts are being inspected.
   const [detail, setDetail] = useState<LoanCollectionGroup | null>(null);
   const [agentDetail, setAgentDetail] = useState<AgentCollectionSummary | null>(null);
+  const recovery = useRecovery();
+  const [upiLinkTick, setUpiLinkTick] = useState(0);
+
+  useEffect(() => {
+    syncApprovedClaimUpiToCollections(d.collections, recovery.submissions);
+    setUpiLinkTick((t) => t + 1);
+  }, [d.collections, recovery.submissions]);
 
   // Portfolio KPI band — real figures, no fabricated trends.
   const portfolio = useMemo(() => {
@@ -398,7 +410,7 @@ export default function Reports() {
   const report = useMemo(
     () => buildReport(tab, { customers: d.customers, loans: d.loans, collections: d.collections, expenses: d.expenses }, buildArgs),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tab, filters, query, d],
+    [tab, filters, query, d, upiLinkTick],
   );
 
   // Collections tab PREVIEW is grouped by loan (319 raw receipts are unreadable);
@@ -964,13 +976,14 @@ export default function Reports() {
               <table className="w-full min-w-[520px] text-sm">
                 <thead>
                   <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
-                    <th>Receipt</th><th>Date</th><th>Customer</th><th>Loan #</th><th className="text-right">Amount</th><th>Mode</th>
+                    <th>Receipt</th><th>Date</th><th>Customer</th><th>Loan #</th><th className="text-right">Amount</th><th>Mode</th><th>UPI ID</th><th>Payee</th>
                   </tr>
                 </thead>
                 <tbody>
                   {agentDetail.receipts.map((c) => {
                     const loan = d.loans.find((l) => l.id === c.loanId);
                     const customer = loan ? d.customers.find((x) => x.id === loan.customerId)?.name ?? '—' : '—';
+                    const [upiId, payeeName] = formatUpiReportCells(c);
                     return (
                       <tr key={c.id} className="border-t border-slate-100 dark:border-white/[.06]">
                         <td className="px-3 py-2 font-mono text-xs text-ink">{c.receiptNo}</td>
@@ -979,6 +992,8 @@ export default function Reports() {
                         <td className="px-3 py-2 font-mono text-xs text-ink">{loan?.loanNumber ?? '—'}</td>
                         <td className="px-3 py-2 text-right font-semibold tabular-nums text-ink">{inr(c.amount)}</td>
                         <td className="px-3 py-2"><Badge tone="neutral">{c.mode}</Badge></td>
+                        <td className="max-w-[8rem] truncate px-3 py-2 font-mono text-[11px] text-ink">{upiId}</td>
+                        <td className="max-w-[7rem] truncate px-3 py-2 text-[12px] text-ink">{payeeName}</td>
                       </tr>
                     );
                   })}
@@ -987,7 +1002,7 @@ export default function Reports() {
                   <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
                     <td className="px-3 py-2.5 text-[12px] font-bold uppercase tracking-wide text-muted" colSpan={4}>Total</td>
                     <td className="px-3 py-2.5 text-right font-display text-[14px] font-bold tabular-nums text-ink">{inr(agentDetail.totalCollected)}</td>
-                    <td />
+                    <td colSpan={2} />
                   </tr>
                 </tfoot>
               </table>
@@ -1070,18 +1085,21 @@ export default function Reports() {
                 <table className="w-full min-w-[520px] text-sm">
                   <thead>
                     <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
-                      <th>Receipt</th><th>Date</th><th className="text-right">Amount</th><th>Mode</th><th>Collected by</th><th>Role</th><th>Remarks</th>
+                      <th>Receipt</th><th>Date</th><th className="text-right">Amount</th><th>Mode</th><th>UPI ID</th><th>Payee</th><th>Collected by</th><th>Role</th><th>Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detail.receipts.map((c) => {
                       const who = resolveCollector(c);
+                      const [upiId, payeeName] = formatUpiReportCells(c);
                       return (
                       <tr key={c.id} className="border-t border-slate-100 transition-colors hover:bg-slate-50/70 dark:border-white/[.06] dark:hover:bg-white/[.03]">
                         <td className="px-3 py-2 font-mono text-xs text-ink">{c.receiptNo}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-ink/80">{fmtDate(c.date)}</td>
                         <td className="px-3 py-2 text-right font-semibold tabular-nums text-ink">{inr(c.amount)}</td>
                         <td className="px-3 py-2"><Badge tone="neutral">{c.mode}</Badge></td>
+                        <td className="max-w-[8rem] truncate px-3 py-2 font-mono text-[11px] text-ink">{upiId}</td>
+                        <td className="max-w-[7rem] truncate px-3 py-2 text-[12px] text-ink">{payeeName}</td>
                         <td className="px-3 py-2 text-[12px] font-medium text-ink">{who.name}</td>
                         <td className="px-3 py-2">
                           <Badge tone={collectorBadgeTone(who.type)}>{who.roleLabel}</Badge>
@@ -1095,7 +1113,7 @@ export default function Reports() {
                     <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
                       <td className="px-3 py-2.5 text-[12px] font-bold uppercase tracking-wide text-muted" colSpan={2}>Total</td>
                       <td className="px-3 py-2.5 text-right font-display text-[14px] font-bold tabular-nums text-ink">{inr(detail.collected)}</td>
-                      <td colSpan={3} />
+                      <td colSpan={5} />
                     </tr>
                   </tfoot>
                 </table>

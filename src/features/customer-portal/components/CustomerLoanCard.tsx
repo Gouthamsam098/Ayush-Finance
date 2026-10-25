@@ -126,12 +126,14 @@ interface Props {
   nextDue: string | null;
   overdue: boolean;
   index: number;
+  /** All six loan-type UPI rows configured in Settings. */
+  upiConfigured: boolean;
   onPay: (amountRupees: number, purpose: PortalPayPurpose) => void;
   onStatement: () => void;
 }
 
 export function CustomerLoanCard({
-  customerId, loan, summary, nextDue, overdue, index, onPay, onStatement,
+  customerId, loan, summary, nextDue, overdue, index, upiConfigured, onPay, onStatement,
 }: Props) {
   const canPay = loan.status === 'ACTIVE' && summary.outstanding > 0;
 
@@ -290,7 +292,7 @@ export function CustomerLoanCard({
           )}
         </div>
 
-        {canPay && payOptions.length > 0 && (
+        {canPay && upiConfigured && payOptions.length > 0 && (
           <motion.section
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}

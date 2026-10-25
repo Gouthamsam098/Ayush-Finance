@@ -13,13 +13,21 @@ import { CustomerProfileHero } from '@/features/customer-portal/components/Custo
 import { CustomerDetailsCard } from '@/features/customer-portal/components/CustomerDetailsCard';
 import { CustomerLoanCard } from '@/features/customer-portal/components/CustomerLoanCard';
 import { buildLoanPortalSummary, type PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
+import { LoanTypeUpiProvider, useLoanTypeUpi } from '@/features/customer-portal/LoanTypeUpiContext';
+import type { UpiPayCredentials } from '@/lib/upiPay';
 
-export default function CustomerPortal() {
+function CustomerPortalContent() {
   const dispatch = useDispatch();
   const customerId = useSelector((s: RootState) => s.auth.user?.customerId);
   const d = useData();
   const [statementLoan, setStatementLoan] = useState<Loan | null>(null);
-  const [payTarget, setPayTarget] = useState<{ loan: Loan; amountRupees: number; purpose: PortalPayPurpose } | null>(null);
+  const { complete: upiComplete, credentialsFor } = useLoanTypeUpi();
+  const [payTarget, setPayTarget] = useState<{
+    loan: Loan;
+    amountRupees: number;
+    purpose: PortalPayPurpose;
+    upi: UpiPayCredentials;
+  } | null>(null);
   const today = todayISO();
 
   const customer = useMemo(
@@ -88,9 +96,19 @@ export default function CustomerPortal() {
         <div className="flex items-end justify-between gap-3">
           <div>
             <h2 className="font-display text-[17px] font-bold text-ink">Your loans</h2>
-            <p className="text-[13px] text-muted">Choose interest or full closure, then pay via PhonePe or Google Pay.</p>
+            <p className="text-[13px] text-muted">
+              {upiComplete
+                ? 'Choose interest or full closure, then pay via PhonePe or Google Pay.'
+                : 'UPI pay will appear here once your lender configures payment IDs for all loan types.'}
+            </p>
           </div>
         </div>
+
+        {!upiComplete && activeLoans.length > 0 && (
+          <div className="rounded-xl border border-amber-300/45 bg-amber-500/[.06] px-4 py-3 text-[12px] leading-relaxed text-amber-950 dark:border-amber-500/25 dark:text-amber-100">
+            UPI payments are temporarily unavailable. Your lender must set up UPI IDs for every loan type in Settings before you can pay from the portal.
+          </div>
+        )}
 
         {loans.length === 0 ? (
           <div className="rounded-card border border-dashed border-slate-200/90 bg-surface/80 px-6 py-14 text-center dark:border-white/10">
@@ -119,7 +137,12 @@ export default function CustomerPortal() {
                   nextDue={nd}
                   overdue={overdue}
                   index={i}
-                  onPay={(amountRupees, purpose) => setPayTarget({ loan, amountRupees, purpose })}
+                  upiConfigured={upiComplete}
+                  onPay={(amountRupees, purpose) => {
+                    const upi = credentialsFor(loan.type);
+                    if (!upi) return;
+                    setPayTarget({ loan, amountRupees, purpose, upi });
+                  }}
                   onStatement={() => setStatementLoan(loan)}
                 />
               );
@@ -145,8 +168,17 @@ export default function CustomerPortal() {
           loan={payTarget.loan}
           amountRupees={payTarget.amountRupees}
           purpose={payTarget.purpose}
+          upi={payTarget.upi}
         />
       )}
     </div>
+  );
+}
+
+export default function CustomerPortal() {
+  return (
+    <LoanTypeUpiProvider>
+      <CustomerPortalContent />
+    </LoanTypeUpiProvider>
   );
 }

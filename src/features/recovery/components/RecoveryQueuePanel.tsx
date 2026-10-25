@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { useRecovery } from '../RecoveryContext';
-import { useData } from '@/mock/DataContext';
+import { useData, LOAN_LABELS } from '@/mock/DataContext';
 import { inr, fmtDate } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
@@ -21,12 +21,19 @@ import {
 import { ADMIN_DISMISSALS_CHANGED, isRecoverySubmissionDismissed } from '@/lib/adminDismissals';
 import { removeSubmissionFromAdminQueue } from '../recoveryStore';
 import { cn } from '@/lib/utils';
+import { enrichCollectionClaim, upiSnapshotFromClaim } from '@/lib/recoveryClaimUpi';
+import { RecoveryUpiDetails } from './RecoveryUpiDetails';
+import {
+  getLatestPaymentProof,
+  PAYMENT_PROOF_SUBMITTED_EVENT,
+} from '@/features/customer-portal/paymentProofStore';
+import { acknowledgeMatchingAgentProofsForClaim, screenshotStatusLabel } from '../recoveryCollectionUi';
 
 function QueueMeta({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="min-w-0 rounded-xl border border-slate-200/70 bg-slate-50/50 px-3 py-2 dark:border-white/[.06] dark:bg-white/[.03]">
-      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-muted">{label}</p>
-      <div className="mt-0.5 break-words text-[13px] font-semibold leading-snug text-ink">{children}</div>
+    <div className="min-w-0 rounded-lg border border-slate-200/70 bg-slate-50/50 px-2 py-1.5 dark:border-white/[.06] dark:bg-white/[.03]">
+      <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-muted">{label}</p>
+      <div className="mt-0.5 break-words text-[12px] font-semibold leading-snug text-ink">{children}</div>
     </div>
   );
 }
@@ -34,6 +41,8 @@ function QueueMeta({ label, children }: { label: string; children: ReactNode }) 
 function CollectionClaimCard({
   submission,
   customerId,
+  loanTypeLabel,
+  screenshotLabel,
   busy,
   index,
   onReject,
@@ -42,12 +51,16 @@ function CollectionClaimCard({
 }: {
   submission: CollectionClaimSubmission;
   customerId: number;
+  loanTypeLabel: string;
+  screenshotLabel: string;
   busy: boolean;
   index: number;
   onReject: () => void;
   onApprove: () => void;
   onDelete: () => void;
 }) {
+  const claim = enrichCollectionClaim(submission);
+  const upiSnap = upiSnapshotFromClaim(claim);
   const pending = submission.status === 'PENDING';
   const approved = submission.status === 'APPROVED';
   const rejected = submission.status === 'REJECTED';
@@ -58,7 +71,7 @@ function CollectionClaimCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: index * 0.05 }}
       className={cn(
-        'overflow-hidden rounded-[18px] border bg-surface shadow-card transition-shadow hover:shadow-soft dark:border-white/[.08]',
+        'overflow-hidden rounded-2xl border bg-surface shadow-soft transition-shadow hover:shadow-card dark:border-white/[.08]',
         pending && 'border-amber-300/40 dark:border-amber-500/25',
         approved && 'border-emerald-300/40 dark:border-emerald-500/25',
         rejected && 'border-rose-300/40 dark:border-rose-500/25',
@@ -74,28 +87,23 @@ function CollectionClaimCard({
         aria-hidden
       />
 
-      <div className="p-3 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
-          <span
-            className="mx-auto grid h-[88px] w-[88px] shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-amber-500/15 via-orange-500/10 to-amber-600/20 text-amber-700 ring-1 ring-amber-400/25 sm:mx-0 dark:text-amber-200 sm:h-[96px] sm:w-[96px]"
-            aria-hidden
-          >
-            <HandCoins size={32} strokeWidth={2} />
-          </span>
-
-          <div className="min-w-0 w-full flex-1">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex min-w-0 items-start gap-2.5">
+      <div className="p-2.5 sm:p-3.5">
+        <div className="min-w-0 w-full">
+            <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 items-start gap-2">
                 <CustomerAvatar
                   customerId={customerId}
                   name={submission.customerName}
-                  className="h-10 w-10 shrink-0 rounded-xl shadow-[0_6px_16px_-8px_rgba(245,158,11,.45)]"
+                  className="h-9 w-9 shrink-0 rounded-lg shadow-[0_4px_12px_-8px_rgba(245,158,11,.4)]"
                 />
                 <div className="min-w-0 flex-1">
-                  <h3 className="break-words font-display text-[15px] font-bold leading-snug text-ink sm:text-[16px]">
+                  <h3 className="break-words font-display text-[14px] font-bold leading-snug text-ink">
                     {submission.customerName}
                   </h3>
-                  <p className="mt-0.5 break-all font-mono text-[11px] text-muted">{submission.loanNumber}</p>
+                  <p className="mt-0.5 break-all font-mono text-[10px] text-muted">{submission.loanNumber}</p>
+                  {loanTypeLabel !== '—' ? (
+                    <p className="mt-0.5 text-[10px] font-semibold text-ink/85">{loanTypeLabel}</p>
+                  ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2 self-start sm:flex-col sm:items-end">
@@ -105,10 +113,10 @@ function CollectionClaimCard({
               </div>
             </div>
 
-            <p className="mt-3 font-display text-[22px] font-bold leading-none tabular-nums text-ink sm:text-[24px]">
+            <p className="mt-2 font-display text-[19px] font-bold leading-none tabular-nums text-ink sm:text-[20px]">
               {inr(submission.amount)}
             </p>
-            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-muted">
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
               <span className="inline-flex items-center gap-1">
                 <Wallet size={12} className="opacity-70" aria-hidden />
                 {submission.mode}
@@ -120,24 +128,38 @@ function CollectionClaimCard({
               </span>
             </p>
 
-            <div className="mt-3 grid grid-cols-1 gap-2 xs:grid-cols-2">
+            <div className="mt-2 grid grid-cols-1 gap-1.5 xs:grid-cols-2 sm:grid-cols-3">
               <QueueMeta label="Recovery agent">
                 <span className="inline-flex items-center gap-1 break-words">
                   <UserCheck size={12} className="shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
                   {submission.agentName}
                 </span>
               </QueueMeta>
+              <QueueMeta label="Screenshot">
+                {screenshotLabel}
+              </QueueMeta>
               <QueueMeta label="Submitted">
                 {fmtDate(submission.createdAt.slice(0, 10))}
               </QueueMeta>
             </div>
 
+            {pending && submission.mode === 'UPI' && (
+              <p className="mt-2 rounded-lg border border-primary/15 bg-primary/[.04] px-2.5 py-1.5 text-[10px] leading-snug text-muted dark:border-primary/20">
+                <strong className="font-semibold text-ink">Accept</strong> records payment on the ledger. Portal proof Accept is for screenshot verification only — do not Accept the same payment in both places.
+              </p>
+            )}
+
+            {upiSnap ? (
+              <div className="mt-2">
+                <RecoveryUpiDetails snap={upiSnap} compact />
+              </div>
+            ) : null}
+
             {submission.note ? (
-              <p className="mt-3 rounded-xl border border-slate-200/70 bg-slate-50/40 px-3 py-2 text-[12px] leading-relaxed text-muted dark:border-white/[.06] dark:bg-white/[.02]">
+              <p className="mt-2 rounded-lg border border-slate-200/70 bg-slate-50/40 px-2.5 py-1.5 text-[11px] leading-snug text-muted dark:border-white/[.06] dark:bg-white/[.02]">
                 {submission.note}
               </p>
             ) : null}
-          </div>
         </div>
       </div>
 
@@ -147,7 +169,7 @@ function CollectionClaimCard({
             type="button"
             onClick={onReject}
             disabled={busy}
-            className="flex min-h-11 items-center justify-center gap-1.5 py-3 text-[12px] font-semibold text-danger transition-colors hover:bg-danger/[.06] disabled:opacity-50 sm:text-[13px]"
+            className="flex min-h-9 items-center justify-center gap-1 py-2 text-[11px] font-semibold text-danger transition-colors hover:bg-danger/[.06] disabled:opacity-50 sm:text-[12px]"
           >
             <X size={15} aria-hidden />
             Reject
@@ -156,7 +178,7 @@ function CollectionClaimCard({
             type="button"
             onClick={onApprove}
             disabled={busy}
-            className="flex min-h-11 items-center justify-center gap-1.5 bg-success/[.04] py-3 text-[12px] font-semibold text-success transition-colors hover:bg-success/[.10] disabled:opacity-50 sm:text-[13px]"
+            className="flex min-h-9 items-center justify-center gap-1 bg-success/[.04] py-2 text-[11px] font-semibold text-success transition-colors hover:bg-success/[.10] disabled:opacity-50 sm:text-[12px]"
           >
             {busy ? <Loader2 size={15} className="animate-spin" aria-hidden /> : <Check size={15} aria-hidden />}
             Accept
@@ -167,7 +189,7 @@ function CollectionClaimCard({
           <button
             type="button"
             onClick={onDelete}
-            className="flex min-h-11 w-full items-center justify-center gap-1.5 py-3 text-[12px] font-semibold text-muted transition-colors hover:bg-slate-100 hover:text-danger dark:hover:bg-white/[.04] sm:text-[13px]"
+            className="flex min-h-9 w-full items-center justify-center gap-1 py-2 text-[11px] font-semibold text-muted transition-colors hover:bg-slate-100 hover:text-danger dark:hover:bg-white/[.04] sm:text-[12px]"
             aria-label="Remove from recovery queue"
           >
             <Trash2 size={15} aria-hidden />
@@ -187,9 +209,13 @@ export function RecoveryQueuePanel() {
   const [dismissTick, setDismissTick] = useState(0);
 
   useEffect(() => {
-    const onDismiss = () => setDismissTick((t) => t + 1);
-    window.addEventListener(ADMIN_DISMISSALS_CHANGED, onDismiss);
-    return () => window.removeEventListener(ADMIN_DISMISSALS_CHANGED, onDismiss);
+    const bump = () => setDismissTick((t) => t + 1);
+    window.addEventListener(ADMIN_DISMISSALS_CHANGED, bump);
+    window.addEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
+    return () => {
+      window.removeEventListener(ADMIN_DISMISSALS_CHANGED, bump);
+      window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
+    };
   }, []);
 
   const queue = useMemo(
@@ -208,10 +234,23 @@ export function RecoveryQueuePanel() {
 
   const customerIdFor = (loanId: number) => d.loans.find((l) => l.id === loanId)?.customerId ?? loanId;
 
-  const onApprove = async (id: string) => {
-    setBusy(id);
+  const loanTypeLabelFor = (loanId: number) => {
+    const loan = d.loans.find((l) => l.id === loanId);
+    return loan ? LOAN_LABELS[loan.type] : '—';
+  };
+
+  const onApprove = async (submission: CollectionClaimSubmission) => {
+    const proof = getLatestPaymentProof(submission.loanId);
+    if (submission.mode === 'UPI' && proof?.status === 'pending') {
+      const ok = window.confirm(
+        `This will record ${inr(submission.amount)} on the ledger.\n\nA UPI screenshot is still pending under Portal proofs. Accept here for the collection only — do not also Accept the same payment in Portal proofs.`,
+      );
+      if (!ok) return;
+    }
+    setBusy(submission.id);
     try {
-      await approveClaim(id);
+      await approveClaim(submission.id);
+      acknowledgeMatchingAgentProofsForClaim(submission);
       toast('Collection accepted — ledger updated', 'success');
     } catch {
       toast('Could not accept — try again', 'error');
@@ -259,31 +298,35 @@ export function RecoveryQueuePanel() {
             <HandCoins size={18} />
           </span>
           <div>
-            <p className="font-display text-[15px] font-bold text-ink">Recovery queue</p>
-            <p className="text-[11px] text-muted">
-              {queue.length} item{queue.length === 1 ? '' : 's'}
-              {pendingClaims > 0 && (
-                <span className="font-semibold text-amber-700 dark:text-amber-300">
-                  {' '}· {pendingClaims} awaiting approval
+            <p className="font-display text-[15px] font-bold text-ink">
+              Recovery queue
+              {pendingClaims > 0 ? (
+                <span className="ml-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                  {pendingClaims} awaiting approval
                 </span>
-              )}
+              ) : null}
             </p>
           </div>
         </div>
       </div>
 
-      <div className="grid min-w-0 gap-4 p-3 sm:p-5 lg:grid-cols-2 [&>*]:min-w-0">
+      <div className="grid min-w-0 gap-3 p-2.5 sm:p-4 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
         {queue.map((s, i) => {
           const customerId = customerIdFor(s.loanId);
+          const proof = getLatestPaymentProof(s.loanId);
+          const screenshotLabel =
+            s.mode === 'UPI' ? screenshotStatusLabel(proof) : '—';
           return (
             <CollectionClaimCard
               key={s.id}
               submission={s}
               customerId={customerId}
+              loanTypeLabel={loanTypeLabelFor(s.loanId)}
+              screenshotLabel={screenshotLabel}
               busy={busy === s.id}
               index={i}
               onReject={() => onReject(s.id)}
-              onApprove={() => onApprove(s.id)}
+              onApprove={() => onApprove(s)}
               onDelete={() => onDelete(s.id)}
             />
           );

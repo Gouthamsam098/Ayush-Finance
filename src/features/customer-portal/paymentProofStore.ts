@@ -25,6 +25,11 @@ import { dismissPaymentProof, isPaymentProofDismissed } from '@/lib/adminDismiss
 export const PAYMENT_PROOF_STORAGE_KEY = 'anush.portal.paymentProofs';
 /** UI-only: who uploaded each proof (recovery agent vs borrower), keyed by proof id. */
 const PAYMENT_PROOF_SUBMITTER_KEY = 'anush.portal.paymentProofSubmitters';
+/**
+ * Staff confirmed screenshot after payment was already booked via Recovery queue.
+ * Does not call verify (no second ledger entry). Display-only: pending → verified for agents.
+ */
+const PROOF_EVIDENCE_ACK_KEY = 'anush.portal.proofEvidenceAck';
 
 type SubmitterSnap = { name: string; role: string };
 
@@ -59,21 +64,61 @@ function rekeyProofSubmitter(fromId: string, toId: string) {
   writeSubmitterMap(map);
 }
 
-function enrichFromSubmitterCache(record: PaymentProofRecord): PaymentProofRecord {
-  if (record.recoveryAgentName || record.submittedByRole === 'RECOVERY_AGENT') {
-    return record;
+function readEvidenceAckMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(PROOF_EVIDENCE_ACK_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
   }
-  const snap = readSubmitterMap()[record.id];
-  const name = snap?.name ?? record.submittedByName ?? null;
-  const role = snap?.role ?? record.submittedByRole ?? null;
-  if (!name) return record;
-  const agent = role === 'RECOVERY_AGENT';
-  return {
-    ...record,
-    submittedByName: name,
-    submittedByRole: role,
-    recoveryAgentName: agent ? name : (record.recoveryAgentName ?? null),
-  };
+}
+
+function writeEvidenceAckMap(map: Record<string, string>) {
+  localStorage.setItem(PROOF_EVIDENCE_ACK_KEY, JSON.stringify(map));
+}
+
+export function isPaymentProofEvidenceAcknowledged(id: string): boolean {
+  return Boolean(readEvidenceAckMap()[id]);
+}
+
+/** Screenshot OK when collection was already accepted in Recovery queue — no verify API. */
+export function acknowledgePaymentProofEvidence(id: string): void {
+  if (!id) return;
+  const map = readEvidenceAckMap();
+  if (!map[id]) {
+    map[id] = new Date().toISOString();
+    writeEvidenceAckMap(map);
+  }
+  dismissPaymentProof(id);
+  window.dispatchEvent(new CustomEvent(PAYMENT_PROOF_SUBMITTED_EVENT));
+}
+
+function withEvidenceDisplayStatus(record: PaymentProofRecord): PaymentProofRecord {
+  if (record.status === 'pending' && isPaymentProofEvidenceAcknowledged(record.id)) {
+    return { ...record, status: 'verified' };
+  }
+  return record;
+}
+
+function enrichFromSubmitterCache(record: PaymentProofRecord): PaymentProofRecord {
+  let base = record;
+  if (!record.recoveryAgentName && record.submittedByRole !== 'RECOVERY_AGENT') {
+    const snap = readSubmitterMap()[record.id];
+    const name = snap?.name ?? record.submittedByName ?? null;
+    const role = snap?.role ?? record.submittedByRole ?? null;
+    if (name) {
+      const agent = role === 'RECOVERY_AGENT';
+      base = {
+        ...record,
+        submittedByName: name,
+        submittedByRole: role,
+        recoveryAgentName: agent ? name : (record.recoveryAgentName ?? null),
+      };
+    }
+  }
+  return withEvidenceDisplayStatus(base);
 }
 
 function attachSubmitterFromInput(

@@ -26,13 +26,15 @@ import { AgentLoanAssignment } from '@/features/recovery/components/AgentLoanAss
 import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
 import { RecoveryAutoAssignScheduleCard } from '@/features/recovery/components/RecoveryAutoAssignScheduleCard';
 import { TwoFactorSettingsCard } from '@/features/settings/TwoFactorSettingsCard';
+import { LoanTypeUpiSettingsCard } from '@/features/settings/LoanTypeUpiSettingsCard';
+import { isPortalLoanTypeUpiReady, LOAN_TYPE_UPI_CHANGED } from '@/lib/loanTypeUpiStore';
 import { SettingsCollapsibleSection } from '@/features/settings/SettingsCollapsibleSection';
 import { isTotpEnabled } from '@/lib/totpStore';
 import { dailyScheduleSummary } from '@/features/recovery/recoveryAutoAssign';
 import { clearUiReportsAccess, setUiReportsAccess, withUiModuleAccess } from '@/lib/uiModuleAccess';
 import {
   UserPlus, Trash2, Settings as SettingsIcon, Pencil, Plus, Users as UsersIcon, Loader2, ShieldCheck,
-  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3, CalendarClock, KeyRound,
+  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3, CalendarClock, KeyRound, Smartphone,
 } from 'lucide-react';
 
 const MODULE_ICON: Record<string, React.ReactNode> = {
@@ -115,6 +117,15 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [confirmDel, setConfirmDel] = useState<ManagedUser | null>(null);
+  const [upiSettingsTick, setUpiSettingsTick] = useState(0);
+
+  const portalUpiReady = useMemo(() => isPortalLoanTypeUpiReady(), [upiSettingsTick]);
+
+  useEffect(() => {
+    const bump = () => setUpiSettingsTick((n) => n + 1);
+    window.addEventListener(LOAN_TYPE_UPI_CHANGED, bump);
+    return () => window.removeEventListener(LOAN_TYPE_UPI_CHANGED, bump);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -345,6 +356,18 @@ export default function Settings() {
               <RecoveryAutoAssignScheduleCard assignmentVersion={recovery.assignmentVersion} embedded />
             </SettingsCollapsibleSection>
           )}
+
+          <SettingsCollapsibleSection
+            id="loan-type-upi"
+            title="Customer portal · UPI IDs"
+            description="UPI ID and payee name per loan type for borrower payments."
+            icon={<Smartphone size={20} strokeWidth={2.25} />}
+            statusLabel={portalUpiReady ? 'Portal ready' : 'Incomplete'}
+            statusTone={portalUpiReady ? 'success' : 'warn'}
+            defaultOpen={!portalUpiReady}
+          >
+            <LoanTypeUpiSettingsCard embedded />
+          </SettingsCollapsibleSection>
         </div>
 
         <Card className="anim-pop overflow-hidden border-slate-200/80 shadow-card dark:border-white/[.08]">

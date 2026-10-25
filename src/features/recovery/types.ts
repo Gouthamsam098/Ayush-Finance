@@ -26,6 +26,9 @@ export interface CollectionClaimSubmission extends RecoverySubmissionBase {
   mode: PayMode;
   receiptDate: string;
   collectionId?: number;
+  /** Snapshot when mode is UPI (Settings loan-type VPA). */
+  payeeVpa?: string;
+  payeeName?: string;
 }
 
 export interface PromiseSubmission extends RecoverySubmissionBase {
