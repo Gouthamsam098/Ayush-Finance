@@ -16,13 +16,13 @@ import { cn } from '@/lib/utils';
 function PtpMeta({ label, children, ellipsis, title }: { label: string; children: ReactNode; ellipsis?: boolean; title?: string }) {
   return (
     <div
-      className="min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-200/70 bg-slate-50/50 px-3 py-2.5 text-center dark:border-white/[.06] dark:bg-white/[.03] sm:py-2 sm:text-left"
+      className="min-w-0 rounded-lg border border-slate-200/70 bg-slate-50/50 px-2 py-1.5 dark:border-white/[.06] dark:bg-white/[.03]"
       title={title}
     >
-      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-muted">{label}</p>
+      <p className="text-[8px] font-bold uppercase tracking-[0.12em] text-muted">{label}</p>
       <div
         className={cn(
-          'mt-0.5 text-[13px] font-semibold leading-snug text-ink',
+          'mt-0.5 text-[12px] font-semibold leading-snug text-ink',
           ellipsis ? 'truncate' : 'break-words',
         )}
       >
@@ -43,73 +43,63 @@ function PromiseToPayCard({
   index: number;
   onDelete: () => void;
 }) {
+  const hasAmount = submission.promisedAmount != null && submission.promisedAmount > 0;
+
   return (
     <motion.article
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: index * 0.05 }}
-      className="min-w-0 max-w-full overflow-hidden rounded-[18px] border border-primary/25 bg-surface shadow-card transition-shadow hover:shadow-soft dark:border-primary/30 dark:border-white/[.08]"
+      className="min-w-0 max-w-full self-start overflow-hidden rounded-2xl border border-primary/25 bg-surface shadow-soft transition-shadow hover:shadow-card dark:border-primary/30 dark:border-white/[.08]"
     >
       <div className="h-1 w-full bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8]" aria-hidden />
 
-      <div className="p-4 sm:p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-4">
-          <span
-            className="mx-auto grid h-[72px] w-[72px] shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-primary/15 to-violet-500/10 text-primary ring-1 ring-primary/20 shadow-soft sm:mx-0 sm:h-[96px] sm:w-[96px]"
-            aria-hidden
-          >
-            <CalendarClock size={28} strokeWidth={2} className="sm:h-8 sm:w-8" />
-          </span>
-
-          <div className="min-w-0 w-full flex-1 max-sm:text-center sm:text-left">
-            <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex w-full flex-col items-center gap-2.5 sm:flex-row sm:items-start sm:gap-2.5">
-                <CustomerAvatar
-                  customerId={customerId}
-                  name={submission.customerName}
-                  className="h-11 w-11 shrink-0 rounded-xl shadow-[0_6px_16px_-8px_rgba(79,70,229,.45)] sm:h-10 sm:w-10"
-                />
-                <div className="min-w-0 flex-1 sm:text-left">
-                  <h3 className="break-words font-display text-[16px] font-bold leading-snug text-ink sm:text-[16px]">
-                    {submission.customerName}
-                  </h3>
-                  <p className="mt-0.5 break-all font-mono text-[11px] text-muted">{submission.loanNumber}</p>
-                </div>
+      <div className="p-2.5 sm:p-3.5">
+        <div className="min-w-0 w-full">
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-start gap-2">
+              <CustomerAvatar
+                customerId={customerId}
+                name={submission.customerName}
+                className="h-9 w-9 shrink-0 rounded-lg shadow-[0_4px_12px_-8px_rgba(79,70,229,.4)]"
+              />
+              <div className="min-w-0 flex-1">
+                <h3 className="break-words font-display text-[14px] font-bold leading-snug text-ink">
+                  {submission.customerName}
+                </h3>
+                <p className="mt-0.5 break-all font-mono text-[10px] text-muted">{submission.loanNumber}</p>
               </div>
-              <Badge tone="info" className="shrink-0">
-                {ptpTimingLabel(classifyPtpTiming(submission.promiseDate))}
-              </Badge>
             </div>
-
-            <div className="mt-4 sm:mt-3">
-              <p className="font-display text-[26px] font-bold leading-none tracking-tight text-primary sm:text-[24px]">
-                {fmtDate(submission.promiseDate)}
-              </p>
-              {submission.promisedAmount != null && submission.promisedAmount > 0 ? (
-                <p className="mt-2 text-[13px] text-muted">
-                  Promised amount
-                  <span className="mt-0.5 block font-display text-[20px] font-bold tabular-nums text-ink sm:inline sm:ml-1 sm:text-[12px] sm:font-semibold">
-                    {inr(submission.promisedAmount)}
-                  </span>
-                </p>
-              ) : (
-                <p className="mt-2 text-[12px] text-muted">Date commitment from recovery agent</p>
-              )}
-            </div>
-
-            <div className="mt-4 grid min-w-0 grid-cols-1 gap-2.5 [&>*]:min-w-0 xs:grid-cols-2 sm:mt-3 sm:gap-2">
-              <PtpMeta label="Recovery agent" ellipsis title={submission.agentName}>
-                {submission.agentName}
-              </PtpMeta>
-              <PtpMeta label="Logged">{fmtDate(submission.createdAt.slice(0, 10))}</PtpMeta>
-            </div>
-
-            {submission.note ? (
-              <p className="mt-4 rounded-xl border border-slate-200/70 bg-slate-50/40 px-3 py-2.5 text-left text-[12px] leading-relaxed text-muted dark:border-white/[.06] dark:bg-white/[.02] sm:mt-3">
-                {submission.note}
-              </p>
-            ) : null}
+            <Badge tone="info" className="shrink-0 self-start">
+              {ptpTimingLabel(classifyPtpTiming(submission.promiseDate))}
+            </Badge>
           </div>
+
+          <p className="mt-2 font-display text-[19px] font-bold leading-none tabular-nums text-ink sm:text-[20px]">
+            {hasAmount ? inr(submission.promisedAmount!) : fmtDate(submission.promiseDate)}
+          </p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1">
+              <CalendarClock size={12} className="opacity-70" aria-hidden />
+              Promise {fmtDate(submission.promiseDate)}
+            </span>
+            {!hasAmount && (
+              <span className="text-muted/80">· Date commitment from agent</span>
+            )}
+          </p>
+
+          <div className="mt-2 grid grid-cols-1 gap-1.5 xs:grid-cols-2">
+            <PtpMeta label="Recovery agent" ellipsis title={submission.agentName}>
+              {submission.agentName}
+            </PtpMeta>
+            <PtpMeta label="Logged">{fmtDate(submission.createdAt.slice(0, 10))}</PtpMeta>
+          </div>
+
+          {submission.note ? (
+            <p className="mt-2 rounded-lg border border-slate-200/70 bg-slate-50/40 px-2.5 py-1.5 text-[11px] leading-snug text-muted dark:border-white/[.06] dark:bg-white/[.02]">
+              {submission.note}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -117,7 +107,7 @@ function PromiseToPayCard({
         <button
           type="button"
           onClick={onDelete}
-          className="flex min-h-11 w-full items-center justify-center gap-1.5 py-3 text-[12px] font-semibold text-muted transition-colors hover:bg-slate-100 hover:text-danger dark:hover:bg-white/[.04] sm:text-[13px]"
+          className="flex min-h-9 w-full items-center justify-center gap-1 py-2 text-[11px] font-semibold text-muted transition-colors hover:bg-slate-100 hover:text-danger dark:hover:bg-white/[.04] sm:text-[12px]"
           aria-label="Remove promise to pay"
         >
           <Trash2 size={15} aria-hidden />
@@ -193,7 +183,7 @@ export function RecoveryPtpPanel() {
         </div>
       </div>
 
-      <div className="grid min-w-0 gap-4 p-3 sm:p-5 lg:grid-cols-2 [&>*]:min-w-0">
+      <div className="grid min-w-0 items-start gap-3 p-2.5 sm:p-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,18.5rem),1fr))] [&>*]:min-w-0">
         {promises.map((s, i) => (
           <PromiseToPayCard
             key={s.id}
