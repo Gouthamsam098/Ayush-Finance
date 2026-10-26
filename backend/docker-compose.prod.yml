@@ -100,7 +100,9 @@ services:
       # invalidates every issued token (all users must log in again).
       - jwt_keys:/app/secrets
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4000/health"]
+      # A plain GET: `wget --spider` sends HEAD, which /health (a GET route)
+      # answers 405 — the container showed "unhealthy" while working fine.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4000/health"]
       interval: 30s
       timeout: 5s
       retries: 3

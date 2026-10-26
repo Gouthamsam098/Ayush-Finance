@@ -343,10 +343,20 @@ export function PaymentProofUpload({
                 <>
                   <CheckCircle2 size={10} className="mr-0.5 inline text-success" aria-hidden />
                   <span className="truncate">
-                    {fmtDate(latest.submittedAt.slice(0, 10))} · {inr(latest.amountRupees)} — payment confirmed
+                    Last payment: {fmtDate(latest.submittedAt.slice(0, 10))} · {inr(latest.amountRupees)} — confirmed
                   </span>
                 </>
               )}
+            </p>
+          )}
+          {/* The next step, spelled out: the screenshot is picked first and
+              only then does Submit appear — with an older screenshot on show,
+              borrowers could not tell how to send a new payment. */}
+          {canAddScreenshot && !picked && !rejected && (
+            <p className="mt-1 text-[11px] leading-relaxed text-ink/80">
+              {latest
+                ? <>Paying again? Upload the new payment&rsquo;s screenshot, then tap <span className="font-semibold">Submit for approval</span>.</>
+                : <>Paid? Upload the payment screenshot, then tap <span className="font-semibold">Submit for approval</span>.</>}
             </p>
           )}
           {awaitingNewCollect && !picked && (
@@ -359,22 +369,22 @@ export function PaymentProofUpload({
 
         <AnimatePresence mode="wait">
           {!picked && canAddScreenshot ? (
-            <motion.button
+            <motion.div
               key="pick"
-              type="button"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => inputRef.current?.click()}
-              className={cn(
-                'inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-[11px] font-semibold transition-colors xs:h-9 xs:w-auto',
-                'border-violet-300/45 bg-violet-500/[.06] text-violet-800 hover:bg-violet-500/12',
-                'dark:border-violet-500/30 dark:text-violet-200 dark:hover:bg-violet-500/15',
-              )}
+              className="w-full shrink-0 xs:w-auto"
             >
-              <ImagePlus size={14} aria-hidden />
-              {rejected ? 'Upload again' : 'Add'}
-            </motion.button>
+              <Button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                className="h-10 w-full px-3.5 text-[12px] xs:h-9 xs:w-auto"
+              >
+                <ImagePlus size={14} aria-hidden />
+                {rejected ? 'Upload again' : latest ? 'Upload new screenshot' : 'Upload screenshot'}
+              </Button>
+            </motion.div>
           ) : !picked && awaitingNewCollect ? (
             <span
               className="inline-flex h-9 w-full shrink-0 cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-slate-200/80 px-3 text-[11px] font-semibold text-muted opacity-55 xs:w-auto dark:border-white/[.08]"
@@ -421,12 +431,12 @@ export function PaymentProofUpload({
               </button>
               <Button
                 type="button"
-                className="h-8 shrink-0 px-2.5 text-[11px]"
+                className="h-9 shrink-0 px-3 text-[12px]"
                 loading={submitting}
                 onClick={submit}
               >
                 <Upload size={13} />
-                Submit
+                Submit for approval
               </Button>
             </div>
           </motion.div>
