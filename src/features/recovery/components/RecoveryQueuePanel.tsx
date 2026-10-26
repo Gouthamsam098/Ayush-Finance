@@ -310,7 +310,7 @@ export function RecoveryQueuePanel() {
         </div>
       </div>
 
-      <div className="grid min-w-0 gap-3 p-2.5 sm:p-4 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
+      <div className="grid min-w-0 items-start gap-3 p-2.5 sm:p-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,18.5rem),1fr))] [&>*]:min-w-0 [&>*]:self-start">
         {queue.map((s, i) => {
           const customerId = customerIdFor(s.loanId);
           const proof = getLatestPaymentProof(s.loanId);

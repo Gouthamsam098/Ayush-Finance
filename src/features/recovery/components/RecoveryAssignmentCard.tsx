@@ -107,7 +107,7 @@ export function RecoveryAssignmentCard({
   return (
     <article
       className={cn(
-        'anim-pop flex flex-col overflow-hidden rounded-[18px] border bg-surface shadow-card transition-shadow hover:shadow-soft dark:border-white/[.08]',
+        'anim-pop flex h-fit w-full min-w-0 flex-col self-start overflow-hidden rounded-[18px] border bg-surface shadow-card transition-shadow hover:shadow-soft dark:border-white/[.08]',
         claim?.status === 'APPROVED' && 'ring-2 ring-success/30',
         claim?.status === 'PENDING' && 'ring-2 ring-warning/35',
         claim?.status === 'REJECTED' && 'ring-2 ring-danger/30',

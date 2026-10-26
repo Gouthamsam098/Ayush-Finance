@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { StatCard } from '@/components/ui/stat-card';
 import { inrShort, todayISO } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { DateRangeFilter } from '@/components/ui/date-range-filter';
 import { HandCoins, Search, X, CalendarClock, AlertCircle, Clock, Layers, ScrollText } from 'lucide-react';
 import { AgentActivityPanel } from './components/AgentActivityPanel';
 import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
@@ -32,6 +33,8 @@ export function CollectionsAgentView() {
   const recovery = useRecovery();
   const toast = useToast();
   const [search, setSearch] = useState('');
+  const [activityDateFrom, setActivityDateFrom] = useState('');
+  const [activityDateTo, setActivityDateTo] = useState('');
   const [payLoan, setPayLoan] = useState<Loan | null>(null);
   const [ptpLoan, setPtpLoan] = useState<Loan | null>(null);
   const [statementLoan, setStatementLoan] = useState<Loan | null>(null);
@@ -262,29 +265,55 @@ export function CollectionsAgentView() {
           </button>
         </div>
 
-        <div className="relative">
-          <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={
-              listFilter === 'ptp'
-                ? 'Search promises…'
-                : listFilter === 'history'
-                  ? 'Search activity…'
-                  : 'Search your assignments…'
-            }
-            className="h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-surface pl-10 pr-10 text-base outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-white/[.08] sm:h-11 sm:text-sm"
-          />
-          {search && (
-            <button type="button" onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted">
-              <X size={15} />
-            </button>
+        <div
+          className={cn(
+            'flex flex-col gap-2 sm:flex-row sm:items-stretch',
+            listFilter === 'history' && 'sm:gap-3',
+          )}
+        >
+          <div className="relative min-w-0 flex-1">
+            <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={
+                listFilter === 'ptp'
+                  ? 'Search promises…'
+                  : listFilter === 'history'
+                    ? 'Search activity…'
+                    : 'Search your assignments…'
+              }
+              className="h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-surface pl-10 pr-10 text-base outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-white/[.08] sm:h-11 sm:text-sm"
+            />
+            {search && (
+              <button type="button" onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted">
+                <X size={15} />
+              </button>
+            )}
+          </div>
+          {listFilter === 'history' && (
+            <DateRangeFilter
+              from={activityDateFrom}
+              to={activityDateTo}
+              onApply={(f, t) => {
+                setActivityDateFrom(f);
+                setActivityDateTo(t);
+              }}
+              onClear={() => {
+                setActivityDateFrom('');
+                setActivityDateTo('');
+              }}
+            />
           )}
         </div>
 
         {listFilter === 'history' ? (
-          <AgentActivityPanel agentUserId={user.id} search={search} />
+          <AgentActivityPanel
+            agentUserId={user.id}
+            search={search}
+            dateFrom={activityDateFrom}
+            dateTo={activityDateTo}
+          />
         ) : listFilter === 'ptp' ? (
           <AgentPtpPanel
             agentUserId={user.id}
@@ -318,7 +347,9 @@ export function CollectionsAgentView() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 min-[520px]:grid-cols-2 md:gap-5 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div
+            className="grid items-start gap-4 md:gap-5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,18.5rem),1fr))]"
+          >
             {loans.map((l, i) => {
               const cust = d.customers.find((c) => c.id === l.customerId);
               const due = recoveryDueNow(d, l);
