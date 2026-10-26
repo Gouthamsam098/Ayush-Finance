@@ -10,10 +10,7 @@ import {
   CalendarClock, Check, ChevronRight, CircleCheck, Copy, FileText, Landmark, Percent, SlidersHorizontal, Smartphone, Wallet,
 } from 'lucide-react';
 import { PaymentProofUpload } from '@/features/customer-portal/components/PaymentProofUpload';
-import {
-  customerPortalPaymentProofEnabled,
-  resolveCustomerPortalProof,
-} from '@/features/customer-portal/customerPortalProof';
+import { resolveCustomerPortalProof } from '@/features/customer-portal/customerPortalProof';
 
 const PAY_OPTION_ICON: Record<PortalPayPurpose, ReactNode> = {
   INTEREST: <Percent size={18} strokeWidth={2.25} />,
@@ -207,6 +204,20 @@ export function CustomerLoanCard({
         accent: 'from-violet-600 via-indigo-600 to-blue-600',
       });
     }
+    // Scheduled loans (Daily Collection, EMI): the instalments due so far come
+    // FIRST, so the default payment — and the amount a screenshot is filed
+    // under — is what is actually due, not the whole balance. Without it the
+    // only preset was "Close loan", and a borrower who paid one instalment
+    // submitted a screenshot for the full balance.
+    if (canPay && summary.scheduleDue != null && summary.scheduleDue > 0 && summary.scheduleDue < summary.fullSettlementAmount) {
+      opts.push({
+        id: 'OUTSTANDING',
+        title: 'Pay amount due',
+        hint: 'Instalments due so far · keeps your loan on schedule',
+        amount: summary.scheduleDue,
+        accent: 'from-violet-600 via-indigo-600 to-blue-600',
+      });
+    }
     if (summary.fullSettlementAmount > 0) {
       const sameAsInterest =
         summary.showInterestPay &&
@@ -255,9 +266,7 @@ export function CustomerLoanCard({
     : undefined;
   const payValid = payAmount > 0 && payAmount <= maxPay;
 
-  const portalProof = customerPortalPaymentProofEnabled(loan)
-    ? resolveCustomerPortalProof(loan, summary, payValid, payAmount, selected, activeOption?.id)
-    : null;
+  const portalProof = resolveCustomerPortalProof(loan, summary, payValid, payAmount, selected, activeOption?.id);
 
   const presetOptions = useMemo(() => payOptions.filter((o) => o.id !== 'CUSTOM'), [payOptions]);
   const hasCustomOption = payOptions.some((o) => o.id === 'CUSTOM');

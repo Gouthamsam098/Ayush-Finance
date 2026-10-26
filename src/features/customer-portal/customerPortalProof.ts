@@ -2,11 +2,9 @@ import type { Loan } from '@/mock/DataContext';
 import { behavesEmi } from '@/mock/DataContext';
 import type { LoanPortalSummary, PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 
-/** Customer portal screenshot upload — not offered on daily collection or monthly-interest products. */
-export function customerPortalPaymentProofEnabled(loan: Loan): boolean {
-  return loan.type !== 'DAILY_COLLECTION' && loan.type !== 'MONTHLY_INTEREST';
-}
-
+/** The amount and purpose a borrower's payment screenshot is filed under, or
+ *  null when nothing is due. Offered on every loan type: the server accepts a
+ *  proof for any active loan and records it on approval (domain.SplitPortalPayment). */
 export function resolveCustomerPortalProof(
   loan: Loan,
   summary: LoanPortalSummary,
