@@ -12,10 +12,12 @@ else
   echo "[entrypoint] keys already present, skipping"
 fi
 
-# Seed the admin only when credentials are provided (upsert = safe to re-run).
+# Create the admin only when credentials are provided and the account does not
+# exist yet (--if-missing): restarting must never reset a password the admin
+# changed in the app. To reset it deliberately: docker compose exec backend /app/seedadmin
 if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ] && [ -n "$ADMIN_FULL_NAME" ]; then
-  echo "[entrypoint] seeding admin user ($ADMIN_EMAIL)…"
-  /app/seedadmin || echo "[entrypoint] seedadmin failed (continuing)"
+  echo "[entrypoint] ensuring admin user ($ADMIN_EMAIL) exists…"
+  /app/seedadmin --if-missing || echo "[entrypoint] seedadmin failed (continuing)"
 else
   echo "[entrypoint] ADMIN_* not set, skipping admin seed"
 fi
