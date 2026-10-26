@@ -104,6 +104,16 @@ func (s *Service) DismissPasswordResetRequest(ctx context.Context, id, actingUse
 	return s.repo.DismissPasswordResetRequest(ctx, id, &actingUserID)
 }
 
+// ResetMFA turns another user's two-factor off (lost phone). An admin's own
+// two-factor is turned off from Settings with a current code instead, so a
+// stolen admin session alone cannot remove it.
+func (s *Service) ResetMFA(ctx context.Context, id, actingUserID int64) error {
+	if id == actingUserID {
+		return domain.NewConflict("Turn off your own two-factor under Settings → Two-factor authentication — it asks for a current code.")
+	}
+	return s.repo.ResetMFA(ctx, id)
+}
+
 // SetActive enables/disables a user, with the same last-admin + self guards.
 func (s *Service) SetActive(ctx context.Context, id, actingUserID int64, active bool) (*domain.User, error) {
 	existing, err := s.repo.FindByID(ctx, id)

@@ -41,6 +41,8 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<LoginStep>('signin');
   const [totpEmail, setTotpEmail] = useState('');
+  // API mode, two-factor on: the single-use token for the code step (memory only).
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
@@ -68,9 +70,17 @@ export default function Login() {
   const backToSignIn = () => {
     clearPendingLogin();
     tokenStore.clear();
+    setMfaToken(null);
     setStep('signin');
     setTotpEmail('');
     setError(null);
+  };
+
+  const finishApiLogin = async () => {
+    const me = await authApi.me();
+    dispatch(setTokens({ accessToken: 'api' }));
+    dispatch(setUser(sessionUser(me)));
+    navigate(homeFor(me.role));
   };
 
   const handleSignIn = async (username: string, password: string) => {
@@ -102,21 +112,16 @@ export default function Login() {
     }
 
     try {
-      await authApi.login(email, password);
-      const me = await authApi.me();
-      if (isTotpEnabled(me.email)) {
-        const token = tokenStore.get();
-        if (token) {
-          tokenStore.clear();
-          setPendingLogin({ email: me.email, mode: 'api', apiUser: me }, token);
-        }
-        setTotpEmail(me.email);
+      // Two-factor is enforced by the server: with it on, no session exists
+      // until the code is verified there.
+      const outcome = await authApi.login(email, password);
+      if (outcome.mfaRequired) {
+        setMfaToken(outcome.mfaToken);
+        setTotpEmail(email);
         setStep('totp');
         return;
       }
-      dispatch(setTokens({ accessToken: 'api' }));
-      dispatch(setUser(sessionUser(me)));
-      navigate(homeFor(me.role));
+      await finishApiLogin();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Unable to sign in. Please try again.');
     } finally {
@@ -127,6 +132,28 @@ export default function Login() {
   const handleTotpVerify = async (code: string) => {
     setLoading(true);
     setError(null);
+    if (config.useApi) {
+      if (!mfaToken) {
+        backToSignIn();
+        setLoading(false);
+        return;
+      }
+      try {
+        await authApi.loginMfa(mfaToken, code);
+        setMfaToken(null);
+        await finishApiLogin();
+      } catch (e) {
+        const msg = e instanceof ApiError ? e.message : 'Unable to verify the code. Please try again.';
+        // Expired / too many wrong codes: the password step must be done again.
+        if (/sign in again/i.test(msg)) {
+          backToSignIn();
+        }
+        setError(msg);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     const secret = getTotpSecret(totpEmail);
     if (!secret) {
       setError('Two-factor is not configured on this device. Sign in and set up 2FA in Settings.');

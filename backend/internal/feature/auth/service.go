@@ -23,6 +23,8 @@ type Service struct {
 	now            Clock
 	refreshEnabled bool
 	accessTTL      time.Duration
+	// mfaBox seals two-factor secrets at rest.
+	mfaBox *crypto.SecretBox
 
 	// dummyHash is compared against when an email has no account, so that path
 	// costs the same bcrypt work as a wrong password (see equalizeUnknownUser).
@@ -42,8 +44,11 @@ func (s *Service) equalizeUnknownUser(password string) {
 	}
 }
 
-func NewService(repo *Repository, hasher *crypto.Hasher, tokens *crypto.TokenManager, now Clock, refreshEnabled bool, accessTTL time.Duration) *Service {
-	return &Service{repo: repo, hasher: hasher, tokens: tokens, now: now, refreshEnabled: refreshEnabled, accessTTL: accessTTL}
+func NewService(repo *Repository, hasher *crypto.Hasher, tokens *crypto.TokenManager, now Clock, refreshEnabled bool,
+	accessTTL time.Duration, mfaBox *crypto.SecretBox,
+) *Service {
+	return &Service{repo: repo, hasher: hasher, tokens: tokens, now: now, refreshEnabled: refreshEnabled,
+		accessTTL: accessTTL, mfaBox: mfaBox}
 }
 
 // RefreshEnabled reports whether silent renewal is available. When false, the
@@ -59,10 +64,18 @@ type TokenPair struct {
 	RefreshToken string
 }
 
-// Login verifies credentials and issues a token pair. To avoid leaking which
-// accounts exist, both "no such user" and "wrong password" return the same
-// generic unauthorized error.
-func (s *Service) Login(ctx context.Context, email, password string) (*TokenPair, *domain.User, error) {
+// LoginResult is a successful password check: either the session (Tokens), or
+// — for an account with two-factor on — the single-use token for the second
+// step (MFAToken), with no session yet.
+type LoginResult struct {
+	Tokens   *TokenPair
+	MFAToken string
+}
+
+// Login verifies credentials. To avoid leaking which accounts exist, both "no
+// such user" and "wrong password" return the same generic unauthorized error.
+// With two-factor on, no session is issued until LoginMFA verifies the code.
+func (s *Service) Login(ctx context.Context, email, password string) (*LoginResult, *domain.User, error) {
 	user, err := s.repo.FindByEmail(ctx, email)
 	if err != nil {
 		if de, ok := domain.AsError(err); ok && de.Code == domain.CodeNotFound {
@@ -76,6 +89,14 @@ func (s *Service) Login(ctx context.Context, email, password string) (*TokenPair
 		return nil, nil, domain.NewUnauthorized("invalid email or password")
 	}
 
+	if user.MFAEnabled {
+		token, err := s.startMFAChallenge(ctx, user.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &LoginResult{MFAToken: token}, user, nil
+	}
+
 	pair, err := s.issueTokens(user.ID)
 	if err != nil {
 		return nil, nil, err
@@ -86,7 +107,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (*TokenPair
 	// only when fatal. Here we ignore a non-fatal update error deliberately.
 	_ = s.repo.TouchLastLogin(ctx, user.ID, s.now())
 
-	return pair, user, nil
+	return &LoginResult{Tokens: pair}, user, nil
 }
 
 // Refresh validates a refresh token and issues a fresh token pair, confirming
@@ -107,8 +128,12 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 		return nil, domain.NewUnauthorized("invalid or expired refresh token")
 	}
 
-	if _, err := s.repo.FindByID(ctx, subjectID); err != nil {
+	user, err := s.repo.FindByID(ctx, subjectID)
+	if err != nil {
 		return nil, domain.NewUnauthorized("account is no longer active")
+	}
+	if claims.IssuedAt == nil || !user.TokenStillValid(claims.IssuedAt.Time) {
+		return nil, domain.NewUnauthorized("session expired, please log in again")
 	}
 
 	return s.issueTokens(subjectID)
@@ -128,23 +153,28 @@ func (s *Service) RequestPasswordReset(ctx context.Context, rawEmail string) err
 // ChangePassword lets a signed-in user replace their own password after proving
 // the current one. A wrong current password is a VALIDATION error, never 401:
 // the client treats 401 as an expired session and signs the user out.
-func (s *Service) ChangePassword(ctx context.Context, userID int64, in domain.PasswordChangeInput) error {
+func (s *Service) ChangePassword(ctx context.Context, userID int64, in domain.PasswordChangeInput) (*TokenPair, error) {
 	if err := in.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	user, err := s.repo.FindByID(ctx, userID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.hasher.Compare(user.PasswordHash, in.Current); err != nil {
-		return domain.NewValidation("Current password is incorrect",
+		return nil, domain.NewValidation("Current password is incorrect",
 			map[string]string{"current_password": "Current password is incorrect"})
 	}
 	hash, err := s.hasher.Hash(in.New)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.repo.UpdatePassword(ctx, userID, user.PasswordHash, hash)
+	if err := s.repo.UpdatePassword(ctx, userID, user.PasswordHash, hash, s.now()); err != nil {
+		return nil, err
+	}
+	// Every other session (other devices, anyone who knew the old password) is
+	// now refused; this one continues on a fresh token issued after the change.
+	return s.issueTokens(userID)
 }
 
 // ChangePasswordWithCredentials is the login page's "Forgot password?": the
@@ -175,7 +205,7 @@ func (s *Service) ChangePasswordWithCredentials(ctx context.Context, rawEmail st
 	if err != nil {
 		return err
 	}
-	return s.repo.UpdatePassword(ctx, user.ID, user.PasswordHash, hash)
+	return s.repo.UpdatePassword(ctx, user.ID, user.PasswordHash, hash, s.now())
 }
 
 // CurrentUser loads the user identified by a validated access token subject.

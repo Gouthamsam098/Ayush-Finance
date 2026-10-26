@@ -25,6 +25,7 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) PublicRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/login", h.login)
+	r.Post("/login/mfa", h.loginMFA)
 	r.Post("/refresh", h.refresh)
 	r.Post("/password-reset-requests", h.requestPasswordReset)
 	r.Post("/change-password", h.changePasswordWithCredentials)
@@ -88,7 +89,99 @@ func (h *Handler) ProtectedRoutes(passwordChangesPerMinute int) chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.me)
 	r.With(httpx.RateLimit(passwordChangesPerMinute)).Post("/password", h.changePassword)
+	// Two-factor: codes can be guessed, so these share a login-sized budget.
+	mfaLimit := httpx.RateLimit(passwordChangesPerMinute)
+	r.With(mfaLimit).Post("/mfa/setup", h.mfaSetup)
+	r.With(mfaLimit).Post("/mfa/enable", h.mfaEnable)
+	r.With(mfaLimit).Post("/mfa/disable", h.mfaDisable)
 	return r
+}
+
+type mfaCodeRequest struct {
+	Code string `json:"code"`
+}
+
+func (h *Handler) callerID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(httpx.UserID(r.Context()), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+		return 0, false
+	}
+	return id, true
+}
+
+// mfaSetup starts two-factor setup: returns the secret (to type in) and the
+// otpauth:// link (for the QR code the app draws itself — never a third party).
+func (h *Handler) mfaSetup(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+	secret, uri, err := h.service.MFASetup(r.Context(), id)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"secret": secret, "otpauth_uri": uri})
+}
+
+func (h *Handler) mfaEnable(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+	var req mfaCodeRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if err := h.service.MFAEnable(r.Context(), id, req.Code); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"mfa_enabled": true})
+}
+
+func (h *Handler) mfaDisable(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.callerID(w, r)
+	if !ok {
+		return
+	}
+	var req mfaCodeRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if err := h.service.MFADisable(r.Context(), id, req.Code); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"mfa_enabled": false})
+}
+
+type loginMFARequest struct {
+	MFAToken string `json:"mfa_token"`
+	Code     string `json:"code"`
+}
+
+// loginMFA is the second login step for an account with two-factor on.
+func (h *Handler) loginMFA(w http.ResponseWriter, r *http.Request) {
+	var req loginMFARequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	pair, err := h.service.LoginMFA(r.Context(), req.MFAToken, req.Code)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, tokenResponse{
+		AccessToken:      pair.AccessToken,
+		RefreshToken:     pair.RefreshToken,
+		TokenType:        "Bearer",
+		ExpiresInSeconds: h.service.AccessTTLSeconds(),
+	})
 }
 
 type changePasswordRequest struct {
@@ -108,13 +201,21 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, err)
 		return
 	}
-	if err := h.service.ChangePassword(r.Context(), userID, domain.PasswordChangeInput{
+	pair, err := h.service.ChangePassword(r.Context(), userID, domain.PasswordChangeInput{
 		Current: req.CurrentPassword, New: req.NewPassword,
-	}); err != nil {
+	})
+	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	httpx.NoContent(w)
+	// Changing the password ends every earlier session, including the one that
+	// sent this request; the caller continues on this fresh token.
+	httpx.JSON(w, http.StatusOK, tokenResponse{
+		AccessToken:      pair.AccessToken,
+		RefreshToken:     pair.RefreshToken,
+		TokenType:        "Bearer",
+		ExpiresInSeconds: h.service.AccessTTLSeconds(),
+	})
 }
 
 type loginRequest struct {
@@ -148,15 +249,24 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, _, err := h.service.Login(r.Context(), email, req.Password)
+	res, _, err := h.service.Login(r.Context(), email, req.Password)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
+	if res.MFAToken != "" {
+		// Two-factor on: no session yet — the client asks for the code and
+		// sends it with this token to /auth/login/mfa.
+		httpx.JSON(w, http.StatusOK, map[string]any{
+			"mfa_required": true, "mfa_token": res.MFAToken,
+			"expires_in_seconds": int(mfaChallengeTTL.Seconds()),
+		})
+		return
+	}
 
 	httpx.JSON(w, http.StatusOK, tokenResponse{
-		AccessToken:      pair.AccessToken,
-		RefreshToken:     pair.RefreshToken,
+		AccessToken:      res.Tokens.AccessToken,
+		RefreshToken:     res.Tokens.RefreshToken,
 		TokenType:        "Bearer",
 		ExpiresInSeconds: h.service.AccessTTLSeconds(),
 	})

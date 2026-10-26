@@ -27,7 +27,27 @@ func (h *Handler) Routes() chi.Router {
 	// password through PATCH /{id} closes their request automatically.
 	r.Get("/password-reset-requests", h.listPasswordResetRequests)
 	r.Post("/password-reset-requests/{id}/dismiss", h.dismissPasswordResetRequest)
+	// Lost phone: an admin turns another user's two-factor off so they can
+	// sign in with their password and set it up again.
+	r.Post("/{id}/mfa/reset", h.resetMFA)
 	return r
+}
+
+func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
+	actingID, ok := h.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("user"))
+		return
+	}
+	if err := h.service.ResetMFA(r.Context(), id, actingID); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
 }
 
 type passwordResetResponse struct {
@@ -123,6 +143,7 @@ type userResponse struct {
 	Role        string            `json:"role"`
 	Permissions map[string]string `json:"permissions"`
 	IsActive    bool              `json:"is_active"`
+	MFAEnabled  bool              `json:"mfa_enabled"`
 	LastLoginAt *string           `json:"last_login_at,omitempty"`
 	CreatedAt   string            `json:"created_at"`
 	// CustomerID is set for a CUSTOMER portal login.
@@ -138,7 +159,7 @@ func toResponse(u *domain.User, agentLoans map[int64][]int64) userResponse {
 	}
 	resp := userResponse{
 		ID: u.ID, Email: u.Email, FullName: u.FullName, Role: string(u.Role),
-		Permissions: perms, IsActive: u.IsActive, CreatedAt: u.CreatedAt.Format(time.RFC3339),
+		Permissions: perms, IsActive: u.IsActive, MFAEnabled: u.MFAEnabled, CreatedAt: u.CreatedAt.Format(time.RFC3339),
 		CustomerID: u.CustomerID,
 	}
 	if u.IsRecoveryAgent() {

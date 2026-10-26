@@ -41,7 +41,7 @@ export function ChangePasswordCard() {
     try {
       await authApi.changePassword(current, next);
       setCurrent(''); setNext(''); setConfirm(''); setErrors({});
-      toast('Password updated — use the new one the next time you sign in');
+      toast('Password updated — other devices have been signed out');
     } catch (err) {
       if (err instanceof ApiError) {
         setErrors(passwordChangeServerErrors(err.fields));
@@ -58,6 +58,7 @@ export function ChangePasswordCard() {
     <form onSubmit={submit} noValidate className="space-y-4 p-4 sm:p-5">
       <p className="text-[12.5px] leading-relaxed text-muted">
         Enter your current password, then choose a new one (at least {PASSWORD_MIN_CHARS} characters).
+        You stay signed in here; any other device signed in to your account is signed out.
         Other people&apos;s passwords are reset from User management below.
       </p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

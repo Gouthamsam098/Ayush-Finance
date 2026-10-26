@@ -9,6 +9,9 @@ import {
   disableTotp, enableTotp, getTotpEnrollment, isTotpEnabled, saveTotpPending,
 } from '@/lib/totpStore';
 import { cn } from '@/lib/utils';
+import { config } from '@/lib/config';
+import { ApiError } from '@/lib/api';
+import { authApi } from '@/services/authApi';
 import {
   CheckCircle2, Copy, Loader2, ShieldCheck, ShieldOff, Sparkles,
 } from 'lucide-react';
@@ -18,6 +21,8 @@ interface Props {
   userName: string;
   /** Inside Settings collapsible — hides duplicate hero header. */
   embedded?: boolean;
+  /** Told when two-factor is turned on or off (Settings shows the status). */
+  onEnabledChange?: (enabled: boolean) => void;
 }
 
 function TotpDigits({
@@ -138,13 +143,29 @@ const bodyMotion = {
   transition: { duration: 0.38, ease: [0.16, 1, 0.3, 1] as const },
 };
 
-export function TwoFactorSettingsCard({ userEmail, embedded }: Props) {
+export function TwoFactorSettingsCard({ userEmail, embedded, onEnabledChange }: Props) {
   const toast = useToast();
   const [storeTick, setStoreTick] = useState(0);
-  const enabled = useMemo(() => isTotpEnabled(userEmail), [userEmail, storeTick]);
-  const enrollment = useMemo(() => getTotpEnrollment(userEmail), [userEmail, storeTick]);
+  // API mode: two-factor lives on the server (secret, code checks, login
+  // enforcement). Demo mode keeps the browser-only enrollment.
+  const apiMode = config.useApi;
+  const [serverEnabled, setServerEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!apiMode) return;
+    let alive = true;
+    authApi.me()
+      .then((m) => { if (alive) setServerEnabled(Boolean(m.mfa_enabled)); })
+      .catch(() => { if (alive) setServerEnabled(false); });
+    return () => { alive = false; };
+  }, [apiMode, userEmail]);
+  const localEnabled = useMemo(() => isTotpEnabled(userEmail), [userEmail, storeTick]);
+  const localEnrollment = useMemo(() => getTotpEnrollment(userEmail), [userEmail, storeTick]);
+  const enabled = apiMode ? serverEnabled === true : localEnabled;
+  const enrollment = apiMode ? null : localEnrollment;
+  const statusLoading = apiMode && serverEnabled === null;
 
   const [setupSecret, setSetupSecret] = useState<string | null>(null);
+  const [setupUri, setSetupUri] = useState<string | null>(null);
   const [confirmCode, setConfirmCode] = useState('');
   const [disableCode, setDisableCode] = useState('');
   const [disablePanelOpen, setDisablePanelOpen] = useState(false);
@@ -163,12 +184,28 @@ export function TwoFactorSettingsCard({ userEmail, embedded }: Props) {
 
   const otpauthUri = useMemo(() => {
     if (!setupSecret) return '';
-    return buildOtpAuthUri(userEmail, setupSecret);
-  }, [setupSecret, userEmail]);
+    return apiMode && setupUri ? setupUri : buildOtpAuthUri(userEmail, setupSecret);
+  }, [apiMode, setupSecret, setupUri, userEmail]);
 
-  const qrUrl = otpauthUri ? qrCodeImageUrl(otpauthUri, 200) : '';
+  const qrUrl = useMemo(() => (otpauthUri ? qrCodeImageUrl(otpauthUri) : ''), [otpauthUri]);
 
-  const startSetup = () => {
+  const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
+
+  const startSetup = async () => {
+    if (apiMode) {
+      setBusy(true);
+      try {
+        const { secret, otpauthUri: uri } = await authApi.mfaSetup();
+        setSetupSecret(secret);
+        setSetupUri(uri);
+        setConfirmCode('');
+      } catch (e) {
+        toast(errText(e, 'Could not start the setup. Check your connection and try again.'), 'error');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const secret = generateBase32Secret();
     saveTotpPending(userEmail, secret);
     setSetupSecret(secret);
@@ -176,12 +213,31 @@ export function TwoFactorSettingsCard({ userEmail, embedded }: Props) {
   };
 
   const cancelSetup = () => {
-    if (!enabled) disableTotp(userEmail);
+    if (!apiMode && !enabled) disableTotp(userEmail);
     setSetupSecret(null);
+    setSetupUri(null);
     setConfirmCode('');
   };
 
   const confirmEnable = async () => {
+    if (apiMode) {
+      setBusy(true);
+      try {
+        await authApi.mfaEnable(confirmCode);
+        setServerEnabled(true);
+        onEnabledChange?.(true);
+        setSetupSecret(null);
+        setSetupUri(null);
+        setConfirmCode('');
+        setCelebration('enabled');
+        toast('Two-factor authentication enabled — every sign-in now asks for a code');
+      } catch (e) {
+        toast(errText(e, 'Could not enable two-factor. Try again.'), 'error');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const secret = setupSecret ?? enrollment?.secret;
     if (!secret) return;
     setBusy(true);
@@ -204,6 +260,24 @@ export function TwoFactorSettingsCard({ userEmail, embedded }: Props) {
   };
 
   const turnOff = async () => {
+    if (apiMode) {
+      setBusy(true);
+      try {
+        await authApi.mfaDisable(disableCode);
+        setServerEnabled(false);
+        onEnabledChange?.(false);
+        setDisableCode('');
+        setSetupSecret(null);
+        setDisablePanelOpen(false);
+        setCelebration('disabled');
+        toast('Two-factor authentication disabled');
+      } catch (e) {
+        toast(errText(e, 'Could not turn off two-factor. Try again.'), 'error');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const secret = getTotpEnrollment(userEmail)?.secret;
     if (!secret) return;
     setBusy(true);
@@ -385,7 +459,9 @@ export function TwoFactorSettingsCard({ userEmail, embedded }: Props) {
               <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-semibold text-ink">Authenticator at sign-in</p>
                 <p className="mt-0.5 text-[12px] text-muted">
-                  Turn off only if you need to remove this device&apos;s enrollment.
+                  {apiMode
+                    ? 'Every sign-in to your account asks for a code. Turn off only if you are moving to a new phone.'
+                    : 'Turn off only if you need to remove this device’s enrollment.'}
                 </p>
               </div>
               <ProtectionToggle
@@ -462,10 +538,11 @@ export function TwoFactorSettingsCard({ userEmail, embedded }: Props) {
             </ul>
             <Button
               type="button"
-              onClick={startSetup}
+              onClick={() => void startSetup()}
+              disabled={busy || statusLoading}
               className="h-11 shrink-0 bg-gradient-to-r from-[#022999] via-[#0538cc] to-[#0AA8F8] px-6 shadow-[0_8px_24px_-10px_rgba(5,56,204,.4)] hover:brightness-110"
             >
-              Begin setup
+              {busy || statusLoading ? <Loader2 size={16} className="animate-spin" /> : 'Begin setup'}
             </Button>
           </div>
         )}

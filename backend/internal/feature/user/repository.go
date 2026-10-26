@@ -151,6 +151,8 @@ func (r *Repository) Update(ctx context.Context, id int64, in domain.UserInput, 
 		UPDATE users SET
 			email = $2, full_name = $3, role = $4, permissions = $5, is_active = $6,
 			password_hash = COALESCE(NULLIF($7, ''), password_hash),
+			-- An admin reset ends the user's existing sessions.
+			password_changed_at = CASE WHEN NULLIF($7, '') IS NULL THEN password_changed_at ELSE now() END,
 			customer_id = $8,
 			updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
@@ -220,6 +222,20 @@ func (r *Repository) DismissPasswordResetRequest(ctx context.Context, id int64, 
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.NewNotFound("password reset request")
+	}
+	return nil
+}
+
+// ResetMFA turns a user's two-factor off and forgets the secret.
+func (r *Repository) ResetMFA(ctx context.Context, id int64) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE users SET mfa_enabled = FALSE, mfa_secret = NULL, mfa_last_step = NULL, updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.NewNotFound("user")
 	}
 	return nil
 }

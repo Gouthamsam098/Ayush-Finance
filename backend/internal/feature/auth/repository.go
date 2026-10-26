@@ -66,7 +66,7 @@ func (r *Repository) RequestPasswordReset(ctx context.Context, email string) err
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
 	const query = `
 		SELECT id, email, full_name, password_hash, role, permissions, mfa_enabled, is_active,
-		       last_login_at, created_at, updated_at, customer_id
+		       last_login_at, created_at, updated_at, customer_id, password_changed_at
 		FROM users
 		WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL` + liveCustomerLink
 
@@ -75,7 +75,7 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.Use
 	var perms []byte
 	err := r.pool.QueryRow(ctx, query, email).Scan(
 		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &role, &perms, &u.MFAEnabled,
-		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID,
+		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID, &u.PasswordChangedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("user")
@@ -92,7 +92,7 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.Use
 func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, error) {
 	const query = `
 		SELECT id, email, full_name, password_hash, role, permissions, mfa_enabled, is_active,
-		       last_login_at, created_at, updated_at, customer_id
+		       last_login_at, created_at, updated_at, customer_id, password_changed_at
 		FROM users
 		WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL` + liveCustomerLink
 
@@ -101,7 +101,7 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, erro
 	var perms []byte
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &role, &perms, &u.MFAEnabled,
-		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID,
+		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID, &u.PasswordChangedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("user")
@@ -118,15 +118,17 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, erro
 // `oldHash` — the hash the current password was just verified against — so two
 // overlapping changes cannot both succeed. It also closes any open "Forgot
 // password?" request of theirs: they have just proved who they are. One tx.
-func (r *Repository) UpdatePassword(ctx context.Context, id int64, oldHash, newHash string) error {
+// changedAt (the service clock, the same one that stamps tokens) ends every
+// session issued before it.
+func (r *Repository) UpdatePassword(ctx context.Context, id int64, oldHash, newHash string, changedAt time.Time) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `
-		UPDATE users SET password_hash = $3, updated_at = now()
-		WHERE id = $1 AND password_hash = $2 AND is_active = TRUE AND deleted_at IS NULL`, id, oldHash, newHash)
+		UPDATE users SET password_hash = $3, password_changed_at = $4, updated_at = now()
+		WHERE id = $1 AND password_hash = $2 AND is_active = TRUE AND deleted_at IS NULL`, id, oldHash, newHash, changedAt)
 	if err != nil {
 		return err
 	}

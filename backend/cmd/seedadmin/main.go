@@ -56,22 +56,35 @@ func run() error {
 		return err
 	}
 
-	hash, err := crypto.NewHasher(cfg.BcryptCost).Hash(password)
+	hasher := crypto.NewHasher(cfg.BcryptCost)
+	hash, err := hasher.Hash(password)
 	if err != nil {
 		return err
 	}
 
+	// The container runs this on every start. When the stored password already
+	// is this one, keep it: re-stamping it would end the admin's sessions on
+	// every restart (a password change ends all sessions).
+	var existing string
+	if err := pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE email = $1`, email).Scan(&existing); err == nil &&
+		hasher.Compare(existing, password) == nil {
+		hash = existing
+	}
+
 	// Upsert on email: re-running rotates the password rather than erroring.
-	// The bootstrap account is always an ADMIN (RBAC).
+	// The bootstrap account is always an ADMIN (RBAC). A real rotation ends the
+	// account's existing sessions.
 	_, err = pool.Exec(ctx, `
 		INSERT INTO users (email, full_name, password_hash, role, is_active)
 		VALUES ($1, $2, $3, 'ADMIN', TRUE)
 		ON CONFLICT (email) DO UPDATE
-		SET password_hash = EXCLUDED.password_hash,
-		    full_name      = EXCLUDED.full_name,
-		    role           = 'ADMIN',
-		    is_active      = TRUE,
-		    updated_at     = now()`,
+		SET password_hash       = EXCLUDED.password_hash,
+		    password_changed_at = CASE WHEN users.password_hash = EXCLUDED.password_hash
+		                               THEN users.password_changed_at ELSE now() END,
+		    full_name           = EXCLUDED.full_name,
+		    role                = 'ADMIN',
+		    is_active           = TRUE,
+		    updated_at          = now()`,
 		email, fullName, hash,
 	)
 	if err != nil {

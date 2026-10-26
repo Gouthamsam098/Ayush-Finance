@@ -16,6 +16,7 @@ import { ApiError } from '@/lib/api';
 import {
   userApi, MODULES, type ManagedUser, type UserRole, type Access, type Permissions, type PasswordResetRequest,
 } from '@/services/userApi';
+import { authApi } from '@/services/authApi';
 import { PASSWORD_RESET_REQUESTS_CHANGED_EVENT } from '@/lib/dataEvents';
 import {
   listMockUsers, saveMockUser, setMockUserActive, removeMockUser, getMockUserLinkedCustomerId,
@@ -129,6 +130,16 @@ export default function Settings() {
   // password closes theirs on the server; Dismiss closes it without a reset.
   const [resetReqs, setResetReqs] = useState<Map<number, PasswordResetRequest>>(new Map());
   const [upiSettingsTick, setUpiSettingsTick] = useState(0);
+  // Your own two-factor status. API mode: from the server (it enforces 2FA at
+  // sign-in); demo mode: this browser's enrollment.
+  const [myMfa, setMyMfa] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!config.useApi) return;
+    let alive = true;
+    authApi.me().then((m) => { if (alive) setMyMfa(Boolean(m.mfa_enabled)); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const twoFactorOn = config.useApi ? myMfa === true : Boolean(me && isTotpEnabled(me.username));
 
   const portalUpiReady = useMemo(() => isPortalLoanTypeUpiReady(), [upiSettingsTick]);
 
@@ -262,7 +273,11 @@ export default function Settings() {
           customerId: form.linkedCustomerId, assignedLoanIds: form.assignedLoanIds,
         });
         setUiReportsAccess(form.id!, reportsAccess);
-        toast(form.password && resetReqs.has(form.id!) ? 'Password reset — request closed' : 'User updated');
+        toast(!form.password
+          ? 'User updated'
+          : resetReqs.has(form.id!)
+            ? 'Password reset — request closed; they are signed out everywhere'
+            : 'Password changed — they are signed out everywhere');
       }
       setForm(null);
       void refreshRecovery(); // agent list + loan assignments changed
@@ -271,6 +286,20 @@ export default function Settings() {
       toast(e instanceof ApiError ? e.message : 'Failed to save user', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Lost phone: turn another user's two-factor off so they can set it up again.
+  const resetTwoFactor = async (u: ManagedUser) => {
+    if (!window.confirm(
+      `Turn off two-factor for ${u.fullName}?\n\nThey will sign in with just their password until they set it up again. Confirm it is really them first.`,
+    )) return;
+    try {
+      await userApi.resetMfa(u.id);
+      toast(`Two-factor turned off for ${u.fullName} — ask them to set it up again`, 'info');
+      await load();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Failed to reset two-factor', 'error');
     }
   };
 
@@ -363,11 +392,11 @@ export default function Settings() {
               title="Two-factor authentication"
               description="Google Authenticator codes required after password at sign-in."
               icon={<KeyRound size={20} strokeWidth={2.25} />}
-              statusLabel={isTotpEnabled(me.username) ? 'Protected' : 'Off'}
-              statusTone={isTotpEnabled(me.username) ? 'success' : 'warn'}
-              defaultOpen={!isTotpEnabled(me.username)}
+              statusLabel={twoFactorOn ? 'Protected' : 'Off'}
+              statusTone={twoFactorOn ? 'success' : 'warn'}
+              defaultOpen={!twoFactorOn}
             >
-              <TwoFactorSettingsCard userEmail={me.username} userName={me.fullName} embedded />
+              <TwoFactorSettingsCard userEmail={me.username} userName={me.fullName} embedded onEnabledChange={setMyMfa} />
             </SettingsCollapsibleSection>
           )}
 
@@ -472,6 +501,11 @@ export default function Settings() {
                                   <KeyRound size={11} aria-hidden /> Reset requested · {fmtDate(localDay(resetReqs.get(u.id)!.lastRequestedAt))}
                                 </button>
                               )}
+                              {u.mfaEnabled && (
+                                <span className="mt-0.5 flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/25">
+                                  <ShieldCheck size={11} aria-hidden /> 2FA on
+                                </span>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -574,6 +608,22 @@ export default function Settings() {
                 </div>
               );
             })()}
+            {config.useApi && form.id != null && form.id !== me?.id && users.find((x) => x.id === form.id)?.mfaEnabled && (
+              <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-[12.5px] text-muted sm:flex-row sm:items-center sm:justify-between dark:border-white/[.08] dark:bg-white/[.03]">
+                <span className="flex items-start gap-2.5">
+                  <ShieldCheck size={15} className="mt-0.5 shrink-0 text-success" aria-hidden />
+                  <span>Two-factor is on for this user. If they lost their phone, turn it off so they can set it up again.</span>
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="shrink-0 !px-3 !py-1.5 !text-[12px]"
+                  onClick={() => { const u = users.find((x) => x.id === form.id); if (u) void resetTwoFactor(u); }}
+                >
+                  Reset 2FA
+                </Button>
+              </div>
+            )}
             {config.useApi && form.id != null && form.id === me?.id ? (
               // Your own password changes only with your current one (the
               // server refuses it here) — point to the section that asks for it.

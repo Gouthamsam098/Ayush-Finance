@@ -27,6 +27,8 @@ export interface ManagedUser {
   customerId?: number;
   /** RECOVERY_AGENT: the loans assigned to them. */
   assignedLoanIds?: number[];
+  /** Two-factor authentication is on for this account (server-enforced). */
+  mfaEnabled?: boolean;
 }
 
 interface UserWire {
@@ -40,6 +42,7 @@ interface UserWire {
   created_at: string;
   customer_id?: number;
   assigned_loan_ids?: number[];
+  mfa_enabled?: boolean;
 }
 
 function toUser(w: UserWire): ManagedUser {
@@ -54,6 +57,7 @@ function toUser(w: UserWire): ManagedUser {
     createdAt: w.created_at,
     customerId: w.customer_id,
     assignedLoanIds: w.assigned_loan_ids,
+    mfaEnabled: w.mfa_enabled ?? false,
   };
 }
 
@@ -138,6 +142,11 @@ export const userApi = {
   /** Close a request without resetting (it was not them, or handled otherwise). */
   async dismissPasswordResetRequest(id: number): Promise<void> {
     await api.post(`/users/password-reset-requests/${id}/dismiss`, {});
+  },
+
+  /** Lost phone: turn another user's two-factor off so they can set it up again. */
+  async resetMfa(id: number): Promise<void> {
+    await api.post(`/users/${id}/mfa/reset`, {});
   },
 };
 

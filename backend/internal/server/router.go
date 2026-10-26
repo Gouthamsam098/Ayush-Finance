@@ -45,8 +45,14 @@ type Dependencies struct {
 // health check, public auth routes, and protected business routes.
 func NewRouter(deps Dependencies) http.Handler {
 	authRepo := auth.NewRepository(deps.Pool)
+	// Two-factor secrets are sealed with a key derived from the token signing
+	// key (a server secret that never enters the database).
+	mfaBox, err := crypto.NewSecretBox(deps.Tokens.SecretKeyMaterial(), "anush-lms/mfa-secret/v1")
+	if err != nil {
+		panic("mfa secret box: " + err.Error())
+	}
 	authService := auth.NewService(authRepo, deps.Hasher, deps.Tokens, deps.Now,
-		deps.Config.JWT.RefreshEnabled(), deps.Config.JWT.AccessTTL)
+		deps.Config.JWT.RefreshEnabled(), deps.Config.JWT.AccessTTL, mfaBox)
 	authHandler := auth.NewHandler(authService)
 
 	customerRepo := customer.NewRepository(deps.Pool)
@@ -151,6 +157,9 @@ func NewRouter(deps Dependencies) http.Handler {
 			// spending a token verification on each request.
 			protected.Use(httpx.RateLimit(deps.Config.APIRateLimitPerMinute))
 			protected.Use(httpx.Authenticate(deps.Tokens))
+			// Ends tokens issued before a password change, and tokens of
+			// accounts deactivated since (one indexed lookup per request).
+			protected.Use(httpx.RequireCurrentSession(authRepo.FindByID))
 			// Protected auth routes live under /me; the public /auth mount
 			// (login, refresh) owns the /auth path already.
 			// perm wraps a mount with RBAC for the given module (view for reads,
