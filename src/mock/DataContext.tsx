@@ -638,7 +638,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       addCustomer: (c) => {
         if (config.useApi) {
           // Server mints the code/id; prepend the authoritative record it returns.
-          customerApi.create(c).then((created) => setCustomers((s) => [created, ...s]));
+          customerApi.create(c).then((created) => setCustomers((s) => [created, ...s.filter((x) => x.id !== created.id)]));
           return;
         }
         const created: Customer = { ...c, id: allocId(), code: 'CUST-' + codeSeq, createdAt: todayISO() };
@@ -683,7 +683,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           // Server mints the number/id and derives all money math; prepend the
           // authoritative record it returns.
-          return loanApi.create(l).then((created) => setLoans((s) => [created, ...s]));
+          return loanApi.create(l).then((created) => setLoans((s) => [created, ...s.filter((x) => x.id !== created.id)]));
         }
         const interest = calcInterest(l.principal, l.rate);
         // Daily Collection retains 3 months of interest upfront; other instalment
@@ -731,10 +731,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Collection mutations return a promise in API mode so callers can await
       // and surface failures (no false success). The loan list is refreshed
       // afterwards so outstanding/status (server-computed) stay in sync.
+      //
+      // Records the server returns are inserted BY ID, never blindly prepended:
+      // a retried or double-submitted payment comes back as the SAME receipt
+      // (Idempotency-Key), and a background refetch (a newly approved portal
+      // screenshot) can land before this .then — prepending would then show
+      // one receipt twice and double every total built on `collections`.
       addCollection: (c) => {
         if (config.useApi) {
           return collectionApi.record(c.loanId, c).then((created) => {
-            setCollections((s) => [created, ...s]);
+            setCollections((s) => [created, ...s.filter((x) => x.id !== created.id)]);
             loanApi.fetchAll().then(setLoans).catch(() => {});
             return created;
           });
@@ -756,7 +762,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       replaceCollections: (loanId, replaceIds, payments) => {
         if (config.useApi) {
           return collectionApi.replace(loanId, replaceIds, payments).then((created) => {
-            setCollections((s) => [...created, ...s.filter((c) => !replaceIds.includes(c.id))]);
+            const createdIds = new Set(created.map((c) => c.id));
+            setCollections((s) => [...created, ...s.filter((c) => !replaceIds.includes(c.id) && !createdIds.has(c.id))]);
             loanApi.fetchAll().then(setLoans).catch(() => {});
           });
         }
@@ -782,7 +789,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // and surface failures (server mints the id and validates every field).
       addExpense: (e) => {
         if (config.useApi) {
-          return expenseApi.create(e).then((created) => setExpenses((s) => [created, ...s]));
+          return expenseApi.create(e).then((created) => setExpenses((s) => [created, ...s.filter((x) => x.id !== created.id)]));
         }
         setExpenses((s) => [{ ...e, id: allocId() }, ...s]);
       },
