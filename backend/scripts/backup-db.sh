@@ -66,7 +66,7 @@ fi
 # corrupt and must not be counted as a successful backup.
 echo "[backup] verifying dump is readable"
 if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T postgres \
-      pg_restore --list /dev/stdin < "$OUT" > /dev/null 2>&1; then
+      pg_restore --list < "$OUT" > /dev/null 2>&1; then
   echo "[backup] FAILED: dump did not verify (corrupt) — keeping it for inspection" >&2
   exit 1
 fi
