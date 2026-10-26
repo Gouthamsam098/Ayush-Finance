@@ -573,8 +573,24 @@ export function persistPaymentProof(input: Omit<PaymentProofRecord, 'id' | 'stat
   return withMeta;
 }
 
+/** Decode a data: URL into a Blob in memory. Not fetch(dataUrl): production's
+ *  Content-Security-Policy (connect-src 'self') refuses fetch() of data: URLs,
+ *  so every screenshot upload failed with "Could not reach the server". */
+function dataUrlToBlob(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(',');
+  const meta = dataUrl.slice(5, comma); // after "data:", e.g. "image/png;base64"
+  const base64 = /;base64$/i.test(meta);
+  const type = meta.replace(/;base64$/i, '') || 'application/octet-stream';
+  const payload = dataUrl.slice(comma + 1);
+  if (!base64) return new Blob([decodeURIComponent(payload)], { type });
+  const bin = atob(payload);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type });
+}
+
 async function uploadProof(input: Omit<PaymentProofRecord, 'id' | 'status' | 'submittedAt'>): Promise<ProofWire> {
-  const blob = await (await fetch(input.dataUrl)).blob();
+  const blob = dataUrlToBlob(input.dataUrl);
   const fd = new FormData();
   fd.append('loan_id', String(input.loanId));
   fd.append('amount', String(input.amountRupees));

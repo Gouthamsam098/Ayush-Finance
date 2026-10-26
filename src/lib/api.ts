@@ -175,10 +175,22 @@ export const api = {
 
     if (res.status === 401) forceReLogin();
 
-    const envelope = (await res.json()) as Envelope<T>;
-    if (!res.ok || !envelope.success) {
-      const err = envelope.error;
-      throw new ApiError(res.status, err?.code ?? 'UNKNOWN', err?.message ?? 'Upload failed', err?.fields);
+    // A proxy in front of the API (Caddy, nginx) answers some failures — a
+    // body over its size limit, a restarting backend — with a plain-text or
+    // HTML page. Say what happened instead of letting the JSON parse error
+    // read as "could not reach the server".
+    let envelope: Envelope<T> | null = null;
+    try {
+      envelope = (await res.json()) as Envelope<T>;
+    } catch {
+      envelope = null;
+    }
+    if (!res.ok || !envelope?.success) {
+      const err = envelope?.error;
+      const fallback = res.status === 413
+        ? 'The file is too large to upload.'
+        : `Upload failed (the server answered ${res.status}). Try again in a moment.`;
+      throw new ApiError(res.status, err?.code ?? 'UNKNOWN', err?.message ?? fallback, err?.fields);
     }
     return envelope.data as T;
   },
