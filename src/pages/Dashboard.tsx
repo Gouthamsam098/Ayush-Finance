@@ -1,8 +1,8 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ComponentProps } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
-  useData, LOAN_LABELS, isDailyLoan, behavesInterestOnly, type Loan,
+  useData, LOAN_LABELS, isDailyLoan, behavesInterestOnly, behavesEmi, type Loan, type LoanType, type Collection,
 } from '@/mock/DataContext';
 import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { whatsappHref } from '@/lib/whatsapp';
@@ -18,10 +18,14 @@ import {
   PeriodFilter, type PeriodMode, type PeriodRangeKey, RANGE_PRESETS, periodDisplayLabel, isPeriodDefault,
 } from '@/components/dashboard/PeriodFilter';
 import { cashDisbursedFor, computeFunds, interestRealised } from '@/lib/funds';
+import { useInvestorCapitalVersion } from '@/lib/investments';
 import { buildSchedule } from '@/lib/loanSchedule';
 import { riskFor, RISK_PILL, AVATAR_TINT } from '@/lib/risk';
 import { WhatsAppIcon } from '@/components/ui/whatsapp-icon';
 import { OverdueLoansDialog, type OverdueLoanRow } from '@/components/dashboard/OverdueLoansDialog';
+import {
+  KpiBreakdownDialog, type BreakdownLine, type BreakdownList, type BreakdownRow,
+} from '@/components/dashboard/KpiBreakdownDialog';
 import {
   Wallet, IndianRupee, TrendingUp, Menu, Landmark, PiggyBank, Banknote, Percent,
   Phone, Eye, HandCoins, ArrowRight, Search, Receipt, FileDown, MoreVertical,
@@ -133,6 +137,7 @@ function trendOf(current: number, prev: number): KpiTrend | null {
 
 export default function Dashboard() {
   const d = useData();
+  const capitalVersion = useInvestorCapitalVersion();
   const navigate = useNavigate();
   const openSidebar = useOpenSidebar();
   const { canView } = usePermissions();
@@ -148,11 +153,15 @@ export default function Dashboard() {
   // place loans 7+ are reachable from the dashboard.
   const [overdueAllOpen, setOverdueAllOpen] = useState(false);
   // Row whose mobile ⋮ menu is open (phones only — desktop shows the icon row).
-  // Which KPI breakdown popup is open. The Profit card deep-links to the
-  // Investments page; Investments and Available Funds explain themselves
-  // right here, because both are derived figures a reader cannot verify
-  // from the card alone.
+  // Which funds breakdown popup is open. Investments and Available Funds keep
+  // their own hand-built dialogs; every other card uses kpiDetail below.
   const [fundsDialog, setFundsDialog] = useState<null | 'investments' | 'available'>(null);
+  // Detail popup for every other KPI card. Each one itemises its card's own
+  // figure in place — the cards used to navigate to pages that measure
+  // something slightly different (all-time vs the selected period, face
+  // principal vs cash given), so the number on arrival never matched.
+  const [kpiDetail, setKpiDetail] = useState<null | 'given' | 'outstanding' | 'receivable' | 'interestOverdue'
+    | 'recovered' | 'interestEarned' | 'profit' | 'expenses'>(null);
   const [overdueMenu, setOverdueMenu] = useState<number | null>(null);
   // Screen coords for the portalled menu (see the trigger's onClick).
   const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
@@ -242,7 +251,9 @@ export default function Dashboard() {
       // its own unearned margin.
       d.collections.reduce((s, c) => s + c.amount, 0),
     ),
-    [d.loans, d.collections, d.expenses],
+    // capitalVersion: recompute when investor capital arrives after the book.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [d.loans, d.collections, d.expenses, capitalVersion],
   );
   const investorCapital = funds.capital;
 
@@ -253,11 +264,14 @@ export default function Dashboard() {
       ? d.collections.filter((c) => inRange(c.date)).reduce((s, c) => s + c.amount, 0)
       : collInMonth(periodKey);
 
-  const periodExp = periodMode === 'day'
-    ? d.expenses.filter((e) => e.date === periodDate).reduce((s, e) => s + e.amount, 0)
-    : periodMode === 'range'
-      ? d.expenses.filter((e) => inRange(e.date)).reduce((s, e) => s + e.amount, 0)
-      : expInMonth(periodKey);
+  // The period's expenses — ONE filter, shared by the Expenses card and the
+  // Expenses / Profit popups, so their lists always add up to the card.
+  const periodExpenses = d.expenses.filter((e) => (
+    periodMode === 'day' ? e.date === periodDate
+      : periodMode === 'range' ? inRange(e.date)
+        : e.date.slice(0, 7) === periodKey
+  ));
+  const periodExp = periodExpenses.reduce((s, e) => s + e.amount, 0);
 
   const totalCollected = d.collections.reduce((s, c) => s + c.amount, 0); // all-time collections
 
@@ -404,14 +418,18 @@ export default function Dashboard() {
    *   • Daily Collection — interest was taken upfront, so instalments repay
    *     principal and it SHRINKS with every payment → principal − collected.
    *   • Interest-only — principal is settled in one lump at the end, so
-   *     periodic payments never reduce it → principal, in full.
+   *     interest payments never reduce it → principal less any PRINCIPAL
+   *     payment, the same remaining principal outstandingFor() uses. (Counting
+   *     the full principal broke the identity above by any part-principal
+   *     payment on an open loan; with none, the two are identical.)
    *
    *  An earlier version counted collection-type loans only. That left the
    *  interest-only loans' ₹70.2 L of principal on no card at all — nearly half
    *  the book invisible — and the two cards then failed to reconcile against
    *  Total Outstanding. */
+  const remainingPrincipalFor = (l: Loan) => Math.max(0, l.principal - d.principalCollectedFor(l.id));
   const collectionReceivable = active.reduce(
-    (s, l) => s + Math.max(0, behavesInterestOnly(l) ? l.principal : d.outstandingFor(l)),
+    (s, l) => s + Math.max(0, behavesInterestOnly(l) ? remainingPrincipalFor(l) : d.outstandingFor(l)),
     0,
   );
   const collectionReceivableCount = active.length;
@@ -436,6 +454,12 @@ export default function Dashboard() {
    *  principal actually recovered. Interest is shown in its own card, so adding
    *  it here would count the same rupee twice on one screen. */
   const activeLoanIds = new Set(active.map((l) => l.id));
+  // ALL-TIME cash received, split by whether the loan is still open — the
+  // Investments popup starts from the Given to Borrowers card (open loans) and
+  // needs these two to add back to the capital. settledSurplus = what settled
+  // loans returned above the cash given out (their realised margin).
+  const collectedOpenAllTime = d.collections.reduce((s, c) => s + (activeLoanIds.has(c.loanId) ? c.amount : 0), 0);
+  const settledSurplus = (funds.collected - collectedOpenAllTime) - closedDisbursed;
   const collectionsInPeriodActive = collectionsInPeriod.filter((c) => activeLoanIds.has(c.loanId));
   const periodCollActive = collectionsInPeriodActive.reduce((s, c) => s + c.amount, 0);
   const interestCollectedActive = collectionsInPeriodActive
@@ -465,15 +489,10 @@ export default function Dashboard() {
   const periodIsDefault = isPeriodDefault(periodMode, periodDate, today);
 
   // ── Section 1 KPIs ──
-  // Each card drills down to the page that can show the SAME figure:
-  //  • Total Outstanding / Due Today → Loans, pre-filtered to ACTIVE (the set
-  //    both figures sum over; Due Today additionally sorts by urgency).
-  //  • Collections / Expenses → Reports on that tab, which lists the underlying
-  //    records (the Collections page is a loan tracker, not a receipt list, so
-  //    it cannot reproduce the figure).
-  //  • Profit → Reports' Collections tab: profit is recognised per collection,
-  //    so those receipts ARE its source records.
-  //  • Collection Efficiency is a ratio with no record list — NOT clickable.
+  // Every card opens a popup that itemises its OWN figure (see kpiDetailProps
+  // below and the two funds dialogs). They no longer navigate: no page shows
+  // exactly these figures — the pages use a different period or basis — so
+  // the reader arrived at a number that did not match the card.
   const kpis = [
     // Investor capital leads: it is the funding the whole book sits on.
     { icon: Landmark, tint: 'bg-violet-50 dark:bg-violet-500/15', iconColor: 'text-violet-600 dark:text-violet-400', label: 'Investments', value: inr(investorCapital),
@@ -502,17 +521,17 @@ export default function Dashboard() {
       hint: closedCount > 0
         ? `Cash out with open loans · ${closedCount} settled loan${closedCount === 1 ? '' : 's'} excluded`
         : 'Cash handed over, all loans to date', trend: null,
-      onClick: () => navigate('/loans?status=ACTIVE'), actionLabel: `Given to borrowers ${inr(actualPrincipal)} — view loans` },
+      onClick: () => setKpiDetail('given'), actionLabel: `Given to borrowers ${inr(actualPrincipal)} — see the breakdown` },
     { icon: Wallet, tint: 'bg-indigo-50 dark:bg-indigo-500/15', iconColor: 'text-indigo-600 dark:text-indigo-400', label: 'Total Outstanding', value: inr(totalOutstanding),
       hint: 'Principal + accrued interest', trend: null,
-      onClick: () => navigate('/loans?status=ACTIVE'), actionLabel: `Total outstanding ${inr(totalOutstanding)} — view active loans` },
+      onClick: () => setKpiDetail('outstanding'), actionLabel: `Total outstanding ${inr(totalOutstanding)} — see the breakdown` },
     // COLLECTION RECEIVABLE — every rupee of principal still to be collected on
     // collection-type loans, arrears included. Sits immediately before the
     // overdue card because it is the whole of which that is the late part.
     { icon: HandCoins, tint: 'bg-cyan-50 dark:bg-cyan-500/15', iconColor: 'text-cyan-600 dark:text-cyan-400', label: 'Collection Receivable', value: inr(collectionReceivable),
       hint: `${collectionReceivableCount} loan${collectionReceivableCount === 1 ? '' : 's'} · incl. ${inr(collectionOverdue)} overdue`,
       trend: null,
-      onClick: () => navigate('/collections'), actionLabel: `Collection receivable ${inr(collectionReceivable)} — view collections` },
+      onClick: () => setKpiDetail('receivable'), actionLabel: `Collection receivable ${inr(collectionReceivable)} — see the breakdown` },
     // Collection Overdue was a card here. Removed: it is a SUBSET of Collection
     // Receivable above (which states the overdue portion in its own hint), so
     // showing both invited adding them together and double-counting the arrears.
@@ -521,31 +540,32 @@ export default function Dashboard() {
     // rather than lost capital.
     { icon: Percent, tint: 'bg-orange-50 dark:bg-orange-500/15', iconColor: 'text-orange-600 dark:text-orange-400', label: 'Interest Overdue', value: inr(interestOverdue),
       hint: `${interestOverdueCount} loan${interestOverdueCount === 1 ? '' : 's'} · interest unpaid`, trend: null,
-      onClick: () => navigate('/loans?status=ACTIVE&urgency=overdue'), actionLabel: `Interest overdue ${inr(interestOverdue)} — view loans in arrears` },
+      onClick: () => setKpiDetail('interestOverdue'), actionLabel: `Interest overdue ${inr(interestOverdue)} — see the loans in arrears` },
     // PRINCIPAL RECOVERED — cash in, MINUS its interest portion. Interest has
     // its own card, so counting it here too would show the same rupee twice.
     { icon: IndianRupee, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Principal Recovered', value: inr(actualCollection),
       hint: closedCount > 0
         ? `${periodLabel} · ${inr(periodCollActive)} received on open loans · ${closedCount} settled excluded`
         : `${periodLabel} · ${inr(periodColl)} received in total`, trend: null,
-      onClick: () => navigate('/reports?tab=collections'), actionLabel: `Principal recovered ${inr(actualCollection)} — view the collections report` },
+      onClick: () => setKpiDetail('recovered'), actionLabel: `Principal recovered ${inr(actualCollection)} — see the breakdown` },
     // INTEREST EARNED — the earnings half of the same cash, on the SAME
     // recognition rules as Profit, so the two can never disagree.
     { icon: Percent, tint: 'bg-amber-50 dark:bg-amber-500/15', iconColor: 'text-amber-600 dark:text-amber-400', label: 'Interest Earned', value: inr(interestCollected),
       hint: `${periodLabel} · before expenses`, trend: null,
-      onClick: () => navigate('/reports?tab=collections'), actionLabel: `Interest earned ${inr(interestCollected)} — view the collections report` },
+      onClick: () => setKpiDetail('interestEarned'), actionLabel: `Interest earned ${inr(interestCollected)} — see which loans earned it` },
     // NET profit — interest earned in the period LESS the expenses paid in it.
     // Can be negative in a month with heavy costs; shown as-is (never clamped),
     // because hiding a loss would misreport the business.
     { icon: TrendingUp, tint: 'bg-emerald-50 dark:bg-emerald-500/15', iconColor: 'text-emerald-600 dark:text-emerald-400', label: 'Profit', value: inr(netPeriodProfit),
       hint: `${inr(interestCollected)} interest earned − ${inr(periodExp)} expenses`,
       trend: periodIsDefault ? trendOf(monthInterest - monthExp, lastInterest - lastExp) : null,
-      // Opens the Business Profit breakdown (which loans earned it, what it was
-      // spent on) rather than a generic report.
-      onClick: () => navigate('/investments?view=profit'),
+      // Opens the period's breakdown in place (which loans earned it, what it
+      // was spent on). The Investments page's Business Profit is ALL-TIME, so
+      // landing there showed a different number from this card.
+      onClick: () => setKpiDetail('profit'),
       actionLabel: `Profit ${inr(netPeriodProfit)} — see which loans earned it and what it was spent on` },
     { icon: Receipt, tint: 'bg-rose-50 dark:bg-rose-500/15', iconColor: 'text-rose-600 dark:text-rose-400', label: 'Expenses', value: inr(periodExp), hint: periodLabel, trend: periodIsDefault && periodMode === 'month' ? trendOf(monthExp, lastExp) : null,
-      onClick: () => navigate('/reports?tab=expenses'), actionLabel: `Expenses ${inr(periodExp)} — view the expenses report` },
+      onClick: () => setKpiDetail('expenses'), actionLabel: `Expenses ${inr(periodExp)} — see the breakdown` },
   ];
 
   // ── Section 2a — Loan Performance: money OUT (disbursed) vs money IN
@@ -669,6 +689,406 @@ export default function Dashboard() {
     const who = fileNamePart(r.customer);
     await sharePDF(doc, `${who ? `${who}-` : ''}Overdue-Notice-${r.loanNo}-${today}.pdf`);
   };
+
+  // ── KPI detail popups ──────────────────────────────────────────────────────
+  // Built from the SAME variables the cards render: every headline and total
+  // below IS the card's variable, and the rows re-sum to it (KpiBreakdownDialog
+  // checks that in development). No new money rule lives here — per-loan values
+  // come from the very helpers the cards add up (outstandingFor, dueFor,
+  // cashDisbursedFor, profitByCollectionId), only itemised.
+  const goTo = (path: string) => { setKpiDetail(null); navigate(path); };
+  const custNameById = new Map(d.customers.map((c) => [c.id, c.name]));
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const sumOf = <T,>(items: T[], f: (x: T) => number) => items.reduce((s, x) => s + f(x), 0);
+  const asOf = `As of ${fmtDate(today)}`;
+  // The period as a phrase: "on 25 Oct 2026" / "in Oct 2026" / "in the last 3 months".
+  const periodPhrase = periodMode === 'day' ? `on ${periodLabel}`
+    : periodMode === 'range' ? (periodRange === 'month' ? 'this month' : `in the ${periodLabel.toLowerCase()}`)
+      : `in ${periodLabel}`;
+  const loanRow = (l: Loan, extra?: string) => {
+    const name = custNameById.get(l.customerId) ?? '—';
+    return {
+      id: l.id,
+      title: l.loanNumber,
+      subtitle: `${name} · ${LOAN_LABELS[l.type]}${extra ? ` · ${extra}` : ''}`,
+      search: `${l.loanNumber} ${name} ${LOAN_LABELS[l.type]}`.toLowerCase(),
+    };
+  };
+  /** A figure split by loan type, biggest share first. */
+  const byLoanType = (items: { loan: Loan; value: number }[]) => {
+    const groups = new Map<LoanType, { count: number; value: number }>();
+    for (const { loan, value } of items) {
+      const g = groups.get(loan.type) ?? { count: 0, value: 0 };
+      g.count += 1;
+      g.value += value;
+      groups.set(loan.type, g);
+    }
+    return [...groups.entries()]
+      .sort((a, b) => b[1].value - a[1].value)
+      .map(([type, g]) => ({ label: LOAN_LABELS[type], meta: plural(g.count, 'loan'), value: g.value }));
+  };
+  /** Receipts grouped per loan: cash received and the profit part of it — the
+   *  same per-receipt split (profitOf) the period cards sum. */
+  const receiptsByLoan = (colls: Collection[]) => {
+    const m = new Map<number, { loan: Loan; count: number; received: number; interest: number; last: string }>();
+    for (const c of colls) {
+      const loan = loanById.get(c.loanId);
+      if (!loan) continue; // no loan → profitOf is 0, so nothing card-side is dropped
+      const g = m.get(loan.id) ?? { loan, count: 0, received: 0, interest: 0, last: c.date };
+      g.count += 1;
+      g.received += c.amount;
+      g.interest += profitOf(c);
+      if (c.date > g.last) g.last = c.date;
+      m.set(loan.id, g);
+    }
+    return [...m.values()];
+  };
+  /** The period's expenses (periodExpenses — a copy, since callers sort it). */
+  const expensesInPeriod = () => [...periodExpenses];
+  /** Loans that earned interest in the period — shared by Interest Earned and Profit. */
+  const interestEarners = () => receiptsByLoan(collectionsInPeriod)
+    .filter((g) => g.interest > 0)
+    .sort((a, b) => b.interest - a.interest);
+  const interestList = (earners: ReturnType<typeof interestEarners>): BreakdownList => ({
+    title: 'Interest by loan', rowHeader: 'Loan',
+    columns: [{ label: 'Received' }, { label: 'Interest' }],
+    rows: earners.map((g): BreakdownRow => ({
+      ...loanRow(g.loan, plural(g.count, 'payment')),
+      badge: g.loan.status === 'CLOSED' ? { label: 'Settled', tone: 'neutral' } : undefined,
+      cells: [g.received, g.interest],
+    })),
+    total: interestCollected,
+    totalLabel: `Total · ${plural(earners.length, 'loan')}`,
+    emptyText: `No interest was received ${periodPhrase}.`,
+    searchPlaceholder: 'Loan no., customer or type',
+  });
+  const categoryTotals = (exps: typeof d.expenses) => {
+    const m = new Map<string, { count: number; amount: number }>();
+    for (const e of exps) {
+      const g = m.get(e.category) ?? { count: 0, amount: 0 };
+      g.count += 1;
+      g.amount += e.amount;
+      m.set(e.category, g);
+    }
+    return [...m.entries()].sort((a, b) => b[1].amount - a[1].amount);
+  };
+  const linkTo = (module: string, label: string, path: string) =>
+    (canView(module) ? { label, onClick: () => goTo(path) } : undefined);
+
+  type KpiDetailProps = Omit<ComponentProps<typeof KpiBreakdownDialog>, 'open' | 'onClose'>;
+  const kpiDetailProps = ((): KpiDetailProps | null => {
+    switch (kpiDetail) {
+      case 'given': {
+        const rows = active.map((l) => ({ l, cash: cashDisbursedFor(l) })).sort((a, b) => b.cash - a.cash);
+        const face = sumOf(active, (l) => l.principal);
+        const upfront = face - actualPrincipal;
+        const lines: BreakdownLine[] = [
+          { op: 'add', label: 'Loan amount', note: `Principal of ${plural(active.length, 'open loan')}`, value: face },
+        ];
+        if (upfront !== 0) {
+          lines.push(upfront > 0
+            ? { op: 'sub', label: 'Interest deducted upfront', note: 'Kept at disbursal on daily loans — this cash never left the business', value: upfront }
+            : { op: 'add', label: 'Paid out above the loan amount', value: -upfront });
+        }
+        return {
+          title: 'Given to Borrowers',
+          subtitle: 'Cash handed to borrowers whose loans are still open',
+          icon: Banknote, accent: 'blue',
+          headline: { label: 'Cash out with open loans', value: actualPrincipal, caption: asOf, aside: plural(active.length, 'open loan') },
+          lines: active.length ? lines : undefined,
+          linesTotal: { label: 'Given to Borrowers', value: actualPrincipal },
+          segments: { title: 'By loan type', items: byLoanType(rows.map((r) => ({ loan: r.l, value: r.cash }))), total: actualPrincipal },
+          lists: [{
+            title: 'Open loans', rowHeader: 'Loan',
+            columns: [{ label: 'Loan amount' }, { label: 'Upfront' }, { label: 'Cash given' }],
+            rows: rows.map(({ l, cash }): BreakdownRow => ({
+              ...loanRow(l, `since ${fmtDate(l.loanDate)}`),
+              cells: [l.principal, l.principal === cash ? null : l.principal - cash, cash],
+            })),
+            total: actualPrincipal,
+            totalLabel: `Total · ${plural(active.length, 'open loan')}`,
+            emptyText: 'No open loans right now.',
+            searchPlaceholder: 'Loan no., customer or type',
+          }],
+          note: closedCount > 0 ? (
+            <>
+              <span className="font-medium text-ink">Not included: {plural(closedCount, 'settled loan')} ({inr(closedDisbursed)} given).</span>{' '}
+              They are fully repaid, so nothing is out with those borrowers. Available Funds still counts that cash, because it did move.
+            </>
+          ) : undefined,
+          link: linkTo('Loans', 'Open Loans', '/loans?status=ACTIVE'),
+        };
+      }
+
+      case 'outstanding': {
+        const rows = active.map((l) => {
+          const io = behavesInterestOnly(l);
+          return {
+            l,
+            receivable: io ? remainingPrincipalFor(l) : Math.max(0, d.outstandingFor(l)),
+            interest: io ? Math.max(0, dueFor(l)) : null,
+            out: d.outstandingFor(l),
+          };
+        }).sort((a, b) => b.out - a.out);
+        return {
+          title: 'Total Outstanding',
+          subtitle: 'What borrowers owe today, loan by loan',
+          icon: Wallet, accent: 'indigo',
+          headline: { label: 'Total outstanding', value: totalOutstanding, caption: `${asOf} · principal plus unpaid interest`, aside: plural(active.length, 'open loan') },
+          lines: active.length ? [
+            { op: 'add', label: 'Collection Receivable', note: 'Principal and instalment balance still to collect — same as its card', value: collectionReceivable },
+            { op: 'add', label: 'Interest Overdue', note: 'Accrued, unpaid interest on interest-only loans — same as its card', value: interestOverdue },
+          ] : undefined,
+          linesTotal: { label: 'Total Outstanding', value: totalOutstanding },
+          segments: { title: 'By loan type', items: byLoanType(rows.map((r) => ({ loan: r.l, value: r.out }))), total: totalOutstanding },
+          lists: [{
+            title: 'Open loans', rowHeader: 'Loan',
+            columns: [{ label: 'Receivable' }, { label: 'Interest overdue' }, { label: 'Outstanding' }],
+            rows: rows.map((r): BreakdownRow => ({ ...loanRow(r.l), cells: [r.receivable, r.interest, r.out] })),
+            total: totalOutstanding,
+            totalLabel: `Total · ${plural(active.length, 'open loan')}`,
+            emptyText: 'No open loans, so nothing is outstanding.',
+            searchPlaceholder: 'Loan no., customer or type',
+          }],
+          note: active.some(behavesEmi)
+            ? 'Vehicle and Property loans on EMI include their flat interest in the balance — the borrower repays principal and interest together through the EMIs.'
+            : undefined,
+          link: linkTo('Loans', 'Open Loans', '/loans?status=ACTIVE'),
+        };
+      }
+
+      case 'receivable': {
+        const rows = active.map((l) => {
+          const io = behavesInterestOnly(l);
+          return {
+            l, io,
+            overdue: io ? null : Math.max(0, dueFor(l)),
+            receivable: io ? remainingPrincipalFor(l) : Math.max(0, d.outstandingFor(l)),
+          };
+        }).sort((a, b) => b.receivable - a.receivable);
+        const inst = rows.filter((r) => !r.io);
+        const io = rows.filter((r) => r.io);
+        const lines: BreakdownLine[] = [];
+        if (inst.length) {
+          lines.push({ op: 'add', label: 'Instalment loans', note: `${plural(inst.length, 'loan')} · Daily Collection and EMI balance still to collect`, value: sumOf(inst, (r) => r.receivable) });
+          if (collectionOverdue > 0) {
+            lines.push({ op: 'info', label: 'of which overdue', note: 'Instalments due by today and not yet paid', value: collectionOverdue, tone: 'text-red-600 dark:text-red-400' });
+          }
+        }
+        if (io.length) {
+          lines.push({ op: 'add', label: 'Interest-only loans', note: `${plural(io.length, 'loan')} · principal comes back in one payment at settlement`, value: sumOf(io, (r) => r.receivable) });
+        }
+        return {
+          title: 'Collection Receivable',
+          subtitle: 'Principal still to be collected on every open loan',
+          icon: HandCoins, accent: 'cyan',
+          headline: { label: 'Collection receivable', value: collectionReceivable, caption: asOf, aside: plural(collectionReceivableCount, 'open loan') },
+          lines: lines.length ? lines : undefined,
+          linesTotal: { label: 'Collection Receivable', value: collectionReceivable },
+          segments: { title: 'By loan type', items: byLoanType(rows.map((r) => ({ loan: r.l, value: r.receivable }))), total: collectionReceivable },
+          lists: [{
+            title: 'Open loans', rowHeader: 'Loan',
+            columns: [{ label: 'Overdue' }, { label: 'Receivable' }],
+            rows: rows.map((r): BreakdownRow => ({
+              ...loanRow(r.l),
+              badge: r.io ? { label: 'At settlement', tone: 'neutral' } : undefined,
+              cells: [r.overdue, r.receivable],
+            })),
+            total: collectionReceivable,
+            totalLabel: `Total · ${plural(collectionReceivableCount, 'open loan')}`,
+            emptyText: 'No open loans, so nothing is left to collect.',
+            searchPlaceholder: 'Loan no., customer or type',
+          }],
+          link: linkTo('Collections', 'Open Collections', '/collections'),
+        };
+      }
+
+      case 'interestOverdue': {
+        // Every interest-only loan the card's amount OR count includes. The
+        // amount also counts interest falling due today, which is not yet
+        // "overdue" for the count — the badges say which is which.
+        const rows = active
+          .filter((l) => behavesInterestOnly(l) && (dueFor(l) > 0 || isOverdue(l)))
+          .map((l) => {
+            const nd = d.nextDueFor(l);
+            const late = isOverdue(l);
+            return { l, nd, late, days: late && nd ? daysBetween(today, nd) : 0, due: Math.max(0, dueFor(l)) };
+          })
+          .sort((a, b) => b.days - a.days || b.due - a.due);
+        const late = rows.filter((r) => r.late);
+        const notLate = rows.filter((r) => !r.late);
+        const lines: BreakdownLine[] = [];
+        if (late.length) {
+          lines.push({ op: 'add', label: 'Past the due date', note: `${plural(late.length, 'loan')} — the count shown on the card`, value: sumOf(late, (r) => r.due), tone: 'text-red-600 dark:text-red-400' });
+        }
+        if (notLate.length) {
+          lines.push({ op: 'add', label: 'Due now, not yet late', note: `${plural(notLate.length, 'loan')} · accrued interest whose due date has not passed`, value: sumOf(notLate, (r) => r.due) });
+        }
+        return {
+          title: 'Interest Overdue',
+          subtitle: 'Interest accrued and not yet paid on interest-only loans',
+          icon: Percent, accent: 'orange',
+          headline: { label: 'Interest overdue', value: interestOverdue, caption: asOf, aside: `${plural(interestOverdueCount, 'loan')} overdue` },
+          lines: lines.length ? lines : undefined,
+          linesTotal: { label: 'Interest Overdue', value: interestOverdue },
+          segments: { title: 'By loan type', items: byLoanType(rows.map((r) => ({ loan: r.l, value: r.due }))), total: interestOverdue },
+          lists: [{
+            title: 'Loans with unpaid interest', rowHeader: 'Loan',
+            columns: [{ label: 'Outstanding' }, { label: 'Interest overdue' }],
+            rows: rows.map((r): BreakdownRow => ({
+              ...loanRow(r.l, r.nd ? `due since ${fmtDate(r.nd)}` : undefined),
+              badge: r.late
+                ? { label: `${plural(r.days, 'day')} late`, tone: 'danger' }
+                : { label: r.nd === today ? 'Due today' : 'Due', tone: 'warning' },
+              cells: [d.outstandingFor(r.l), r.due],
+            })),
+            total: interestOverdue,
+            totalLabel: `Total · ${plural(rows.length, 'loan')}`,
+            emptyText: 'No interest is overdue — every interest-only loan is paid up to date.',
+            searchPlaceholder: 'Loan no., customer or type',
+          }],
+          link: linkTo('Loans', 'Open Loans', '/loans?status=ACTIVE&urgency=overdue'),
+        };
+      }
+
+      case 'recovered': {
+        const groups = receiptsByLoan(collectionsInPeriodActive)
+          .map((g) => ({ ...g, principal: g.received - g.interest }))
+          .sort((a, b) => b.principal - a.principal);
+        const settledReceived = periodColl - periodCollActive;
+        return {
+          title: 'Principal Recovered',
+          subtitle: 'Cash returned on open loans, with the interest taken out',
+          icon: IndianRupee, accent: 'emerald',
+          headline: { label: 'Principal recovered', value: actualCollection, caption: `${periodLabel} · open loans`, aside: plural(collectionsInPeriodActive.length, 'payment') },
+          lines: collectionsInPeriodActive.length ? [
+            { op: 'add', label: 'Received on open loans', note: `${plural(collectionsInPeriodActive.length, 'payment')} in this period`, value: periodCollActive },
+            { op: 'sub', label: 'Interest part of those payments', note: 'Counted on the Interest Earned card instead', value: interestCollectedActive },
+          ] : undefined,
+          linesTotal: { label: 'Principal Recovered', value: actualCollection },
+          segments: { title: 'By loan type', items: byLoanType(groups.map((g) => ({ loan: g.loan, value: g.principal }))), total: actualCollection },
+          lists: [{
+            title: 'By loan', rowHeader: 'Loan',
+            columns: [{ label: 'Received' }, { label: 'Interest' }, { label: 'Principal' }],
+            rows: groups.map((g): BreakdownRow => ({
+              ...loanRow(g.loan, `${plural(g.count, 'payment')}, last ${fmtDate(g.last)}`),
+              cells: [g.received, g.interest, g.principal],
+            })),
+            total: actualCollection,
+            totalLabel: `Total · ${plural(groups.length, 'loan')}`,
+            emptyText: `No payments were received on open loans ${periodPhrase}.`,
+            searchPlaceholder: 'Loan no., customer or type',
+          }],
+          note: settledReceived > 0
+            ? `Not included: ${inr(settledReceived)} received on settled loans in this period — this card counts open loans only.`
+            : undefined,
+          link: linkTo('Reports', 'Open Reports', '/reports?tab=collections'),
+        };
+      }
+
+      case 'interestEarned': {
+        const all = receiptsByLoan(collectionsInPeriod);
+        const earners = interestEarners();
+        const ioSum = sumOf(earners.filter((g) => behavesInterestOnly(g.loan)), (g) => g.interest);
+        const upSum = sumOf(earners.filter((g) => !behavesInterestOnly(g.loan)), (g) => g.interest);
+        const lines: BreakdownLine[] = [];
+        if (ioSum > 0) lines.push({ op: 'add', label: 'Interest-only loans', note: 'Every interest payment counts in full', value: ioSum });
+        if (upSum > 0) lines.push({ op: 'add', label: 'Daily Collection & EMI loans', note: 'Counts only once the cash given out has been fully recovered', value: upSum });
+        const principalOnly = all.length - earners.length;
+        return {
+          title: 'Interest Earned',
+          subtitle: 'Interest received in the period, before expenses',
+          icon: Percent, accent: 'amber',
+          headline: { label: 'Interest earned', value: interestCollected, caption: `${periodLabel} · before expenses`, aside: plural(earners.length, 'loan') },
+          lines: lines.length ? lines : undefined,
+          linesTotal: { label: 'Interest Earned', value: interestCollected },
+          segments: { title: 'By loan type', items: byLoanType(earners.map((g) => ({ loan: g.loan, value: g.interest }))), total: interestCollected },
+          lists: [interestList(earners)],
+          note: periodColl > 0 ? (
+            <>
+              Of {inr(periodColl)} received in this period, {inr(interestCollected)} is interest; the rest is principal coming back.
+              {principalOnly > 0 && ` ${plural(principalOnly, 'other loan')} received only principal in this period, so ${principalOnly === 1 ? 'it is' : 'they are'} not listed.`}
+            </>
+          ) : undefined,
+          link: linkTo('Reports', 'Open Reports', '/reports?tab=collections'),
+        };
+      }
+
+      case 'profit': {
+        const earners = interestEarners();
+        const exps = expensesInPeriod();
+        const cats = categoryTotals(exps);
+        return {
+          title: 'Profit',
+          subtitle: 'Interest earned in the period, less what was spent in it',
+          icon: TrendingUp, accent: netPeriodProfit < 0 ? 'rose' : 'emerald',
+          headline: {
+            label: netPeriodProfit < 0 ? 'Net loss' : 'Net profit', value: netPeriodProfit,
+            caption: `${periodLabel} · interest earned minus expenses`,
+          },
+          lines: [
+            { op: 'add', label: 'Interest earned', note: 'Same as the Interest Earned card', value: interestCollected, tone: 'text-emerald-600 dark:text-emerald-400' },
+            { op: 'sub', label: 'Expenses', note: 'Same as the Expenses card', value: periodExp, tone: 'text-rose-600 dark:text-rose-400' },
+          ],
+          linesTotal: { label: 'Profit', value: netPeriodProfit },
+          lists: [
+            interestList(earners),
+            {
+              title: 'Expenses by category', rowHeader: 'Category',
+              columns: [{ label: 'Amount' }],
+              rows: cats.map(([category, g]): BreakdownRow => ({
+                id: category, title: category, subtitle: plural(g.count, 'expense'), cells: [g.amount],
+              })),
+              total: periodExp,
+              totalLabel: `Total · ${plural(exps.length, 'expense')}`,
+              emptyText: `No expenses recorded ${periodPhrase}.`,
+              valueTone: 'text-rose-600 dark:text-rose-400',
+            },
+          ],
+          note: netPeriodProfit < 0
+            ? 'Expenses were higher than the interest earned in this period, so it shows a loss.'
+            : 'Interest is counted when the money is actually received — this is profit in hand, not interest borrowers still owe.',
+          link: linkTo('Expenses', 'All-time profit', '/investments?view=profit'),
+        };
+      }
+
+      case 'expenses': {
+        const exps = expensesInPeriod()
+          .sort((a, b) => (a.date === b.date ? b.id - a.id : a.date < b.date ? 1 : -1));
+        const cats = categoryTotals(exps);
+        return {
+          title: 'Expenses',
+          subtitle: 'Everything spent in the period',
+          icon: Receipt, accent: 'rose',
+          headline: { label: 'Expenses', value: periodExp, caption: periodLabel, aside: plural(exps.length, 'expense') },
+          segments: {
+            title: 'By category',
+            items: cats.map(([category, g]) => ({ label: category, meta: plural(g.count, 'expense'), value: g.amount })),
+            total: periodExp,
+          },
+          lists: [{
+            title: 'Expenses', rowHeader: 'Expense',
+            columns: [{ label: 'Amount' }],
+            rows: exps.map((e): BreakdownRow => ({
+              id: e.id,
+              title: e.name || e.category,
+              subtitle: `${fmtDate(e.date)} · ${e.category}${e.subCategory ? ` · ${e.subCategory}` : ''} · ${e.mode}`,
+              cells: [e.amount],
+              search: `${e.name} ${e.category} ${e.subCategory ?? ''} ${e.mode}`.toLowerCase(),
+            })),
+            total: periodExp,
+            totalLabel: `Total · ${plural(exps.length, 'expense')}`,
+            emptyText: `No expenses recorded ${periodPhrase}.`,
+            searchPlaceholder: 'Name, category or mode',
+          }],
+          link: linkTo('Reports', 'Open Reports', '/reports?tab=expenses'),
+        };
+      }
+
+      default:
+        return null;
+    }
+  })();
 
   const greeting = (() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })();
 
@@ -1120,31 +1540,55 @@ export default function Dashboard() {
             <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted">Where it is now</div>
             <div className="overflow-hidden rounded-xl border-[0.5px] border-slate-200 dark:border-white/[.07]">
               {[
-                { label: 'Cash in hand', note: 'In the bank, ready to lend',
-                  value: funds.available, tone: 'text-teal-600 dark:text-teal-400' },
-                { label: 'With borrowers', note: 'Given to borrowers, minus what they have repaid',
-                  value: Math.max(0, funds.disbursed - funds.collected), tone: 'text-indigo-600 dark:text-indigo-400' },
-                { label: 'Spent on expenses', note: 'Running costs and investor payouts',
+                // Built FROM the two cards beside it, so nothing here can read
+                // as a rival figure. It used to show "With borrowers — given to
+                // borrowers, minus what they have repaid" (all loans, net of
+                // repayments): a third number next to the Given to Borrowers
+                // card, under the same words. Now that card's own figure leads,
+                // and the repayments are their own rows.
+                //   capital = cash + given(open) − repaid(open) − surplus(settled) + expenses
+                // which is computeFunds rearranged (disbursed and collected
+                // each split into open + settled loans), so it adds back exactly.
+                // RAW cash, not the card's ₹0 floor, so an overdraft still adds up.
+                { sign: '', label: 'Cash in hand',
+                  note: funds.rawAvailable < 0 ? 'Overdrawn — the Available Funds card shows ₹0' : 'Same as the Available Funds card',
+                  value: funds.rawAvailable, tone: 'text-teal-600 dark:text-teal-400' },
+                { sign: '+', label: 'Given to borrowers', note: 'Open loans — same as the Given to Borrowers card',
+                  value: actualPrincipal, tone: 'text-indigo-600 dark:text-indigo-400' },
+                { sign: '−', label: 'Already repaid on open loans', note: 'Principal and interest received on them so far',
+                  value: collectedOpenAllTime, tone: 'text-emerald-600 dark:text-emerald-400' },
+                ...(settledSurplus !== 0 ? [{
+                  sign: settledSurplus > 0 ? '−' : '+',
+                  label: settledSurplus > 0 ? 'Earned on settled loans' : 'Short-paid on settled loans',
+                  note: settledSurplus > 0
+                    ? 'Repaid above the cash given out — profit already inside cash in hand'
+                    : 'Repaid less than the cash given out',
+                  value: Math.abs(settledSurplus), tone: 'text-emerald-600 dark:text-emerald-400',
+                }] : []),
+                { sign: '+', label: 'Spent on expenses', note: 'Running costs and investor payouts',
                   value: funds.expenses, tone: 'text-rose-600 dark:text-rose-400' },
               ].map((r) => (
                 <div key={r.label} className="flex items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 last:border-0 dark:border-white/[.06]">
-                  <div className="min-w-0">
-                    <div className="text-[13px] font-medium text-ink">{r.label}</div>
-                    <div className="text-[11.5px] text-muted">{r.note}</div>
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <span className={`mt-px w-3 shrink-0 text-center font-display text-[15px] font-bold ${r.sign === '+' ? 'text-emerald-500' : r.sign === '−' ? 'text-rose-500' : 'text-transparent'}`} aria-hidden>{r.sign || '+'}</span>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium text-ink">{r.label}</div>
+                      <div className="text-[11.5px] text-muted">{r.note}</div>
+                    </div>
                   </div>
-                  <div className={`shrink-0 font-display text-[15px] font-bold tabular-nums ${r.tone}`}>{inr(r.value)}</div>
+                  <div className={`shrink-0 font-display text-[15px] font-bold tabular-nums ${r.tone}`}>{r.value < 0 ? `−${inr(-r.value)}` : inr(r.value)}</div>
                 </div>
               ))}
               <div className="flex items-center justify-between gap-3 bg-slate-50 px-3.5 py-2.5 dark:bg-white/[.03]">
                 <div className="text-[13px] font-semibold text-ink">= Total raised</div>
                 <div className="font-display text-[15px] font-bold tabular-nums text-violet-600 dark:text-violet-400">
-                  {inr(funds.available + Math.max(0, funds.disbursed - funds.collected) + funds.expenses)}
+                  {inr(funds.rawAvailable + actualPrincipal - collectedOpenAllTime - settledSurplus + funds.expenses)}
                 </div>
               </div>
             </div>
             <p className="mt-2 text-[11.5px] leading-relaxed text-muted">
-              Every rupee raised is in one of these three places. Profit earned
-              ({inr(funds.netProfit)}) is already inside them — mostly in cash in hand.
+              Every rupee raised is accounted for above. Profit earned
+              ({inr(funds.netProfit)}) is already inside it — mostly in cash in hand.
             </p>
           </div>
         </div>
@@ -1196,6 +1640,14 @@ export default function Dashboard() {
                 // stay there — its repayments are inside "Total repaid", so
                 // removing it would overstate available cash. Naming it here
                 // answers "why is a closed loan still in these figures?".
+                // Ties this row to the Given to Borrowers card: open + settled
+                // = every loan ever funded, so the three figures reconcile.
+                ...(closedDisbursed > 0 ? [{
+                  sign: '', label: 'of which still open',
+                  note: 'Same as the Given to Borrowers card',
+                  value: actualPrincipal, tone: 'text-indigo-600 dark:text-indigo-400',
+                  inset: true,
+                }] : []),
                 ...(closedDisbursed > 0 ? [{
                   sign: '', label: 'of which already settled',
                   note: `${closedCount} closed loan${closedCount === 1 ? '' : 's'} — fully repaid; excluded from the card, kept here because the cash did move`,
@@ -1219,12 +1671,15 @@ export default function Dashboard() {
                 // visible here: principal ties to the Principal Recovered card,
                 // interest to the Interest Earned card. Display-only (sign '')
                 // because both are already inside the total above.
-                { sign: '', label: 'of which principal', note: 'Matches the Principal Recovered card',
+                // ALL-TIME, every loan. It used to say "Matches the Principal
+                // Recovered card", which is true only when that card's period
+                // covers everything and no loan is settled — normally it isn't.
+                { sign: '', label: 'of which principal', note: 'All time, every loan — the Principal Recovered card shows only the selected period',
                   value: Math.max(0, funds.collected - funds.interestEarned),
                   tone: 'text-emerald-600 dark:text-emerald-400', inset: true },
                 // Interest is INSIDE the row above, so this row is display-only
                 // (sign '') — adding it again would double-count the earnings.
-                { sign: '', label: 'of which interest', note: 'Matches the Interest Earned card',
+                { sign: '', label: 'of which interest', note: 'All time, every loan — the Interest Earned card shows only the selected period',
                   value: funds.interestEarned, tone: 'text-amber-600 dark:text-amber-400', inset: true },
                 { sign: '−', label: 'Expenses', note: 'Running costs and investor payouts',
                   value: funds.expenses, tone: 'text-rose-600 dark:text-rose-400' },
@@ -1257,6 +1712,11 @@ export default function Dashboard() {
           </p>
         </div>
       </Dialog>
+
+      {/* Detail popup for the other eight KPI cards (see kpiDetailProps). */}
+      {kpiDetailProps && (
+        <KpiBreakdownDialog key={kpiDetail} open onClose={() => setKpiDetail(null)} {...kpiDetailProps} />
+      )}
 
       {/* Full overdue book — searchable, filterable by loan type, paginated.
           Purely a view over `overdueAll`: the row actions below are the SAME

@@ -167,10 +167,61 @@ func (r *Repository) Update(ctx context.Context, id int64, in domain.UserInput, 
 	if err := syncAgentLoansTx(ctx, tx, id, in, by); err != nil {
 		return nil, err
 	}
+	// A new password answers any open "Forgot password?" request — close it in
+	// the same transaction, so a request never outlives (or precedes) the reset.
+	if passwordHash != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE password_reset_requests SET status = 'RESOLVED', resolved_at = now(), resolved_by = $2
+			WHERE user_id = $1 AND status = 'OPEN'`, id, by); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return u, nil
+}
+
+// OpenPasswordResetRequests lists unresolved "Forgot password?" requests from
+// live, active accounts, oldest first.
+func (r *Repository) OpenPasswordResetRequests(ctx context.Context) ([]*domain.PasswordResetRequest, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id, p.user_id, u.email, u.full_name, u.role, p.request_count, p.requested_at, p.last_requested_at
+		FROM password_reset_requests p
+		JOIN users u ON u.id = p.user_id AND u.deleted_at IS NULL AND u.is_active = TRUE
+		WHERE p.status = 'OPEN'
+		ORDER BY p.requested_at, p.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*domain.PasswordResetRequest{}
+	for rows.Next() {
+		var p domain.PasswordResetRequest
+		var role string
+		if err := rows.Scan(&p.ID, &p.UserID, &p.Email, &p.FullName, &role, &p.RequestCount,
+			&p.RequestedAt, &p.LastRequestedAt); err != nil {
+			return nil, err
+		}
+		p.Role = domain.Role(role)
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+// DismissPasswordResetRequest closes an OPEN request without a reset — it was
+// not really them, or it was handled another way.
+func (r *Repository) DismissPasswordResetRequest(ctx context.Context, id int64, by *int64) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE password_reset_requests SET status = 'DISMISSED', resolved_at = now(), resolved_by = $2
+		WHERE id = $1 AND status = 'OPEN'`, id, by)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.NewNotFound("password reset request")
+	}
+	return nil
 }
 
 // AgentLoans maps each recovery agent to their assigned live loans.

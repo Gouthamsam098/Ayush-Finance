@@ -11,11 +11,13 @@ import {
 } from '@/lib/customerPhoto';
 import { useData } from '@/mock/DataContext';
 import { documentApi } from '@/services/documentApi';
+import { usePermissions } from '@/lib/permissions';
 
 export { bumpCustomerPhotoCache };
 
 export function useCustomerPhotoUrl(customerId?: number | null): string | null {
   const { documents } = useData();
+  const canViewDocuments = usePermissions().canView('Documents');
   const [apiUrl, setApiUrl] = useState<string | null>(null);
   const [cacheVer, setCacheVer] = useState(customerPhotoCacheVersion);
 
@@ -35,7 +37,10 @@ export function useCustomerPhotoUrl(customerId?: number | null): string | null {
   }, [customerId, documents, cachedUrl]);
 
   useEffect(() => {
-    if (!customerId || !config.useApi) {
+    // The documents API is staff-only (Documents permission). A portal customer
+    // or recovery agent would only collect a 403 on every render, so they use
+    // the cached photo (if any) and skip the call.
+    if (!customerId || !config.useApi || !canViewDocuments) {
       setApiUrl(null);
       return;
     }
@@ -73,7 +78,7 @@ export function useCustomerPhotoUrl(customerId?: number | null): string | null {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       setApiUrl(null);
     };
-  }, [customerId, cacheVer]);
+  }, [customerId, cacheVer, canViewDocuments]);
 
   if (config.useApi) return apiUrl ?? cachedUrl;
   return mockUrl;

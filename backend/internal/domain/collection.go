@@ -155,10 +155,11 @@ func (in *CollectionInput) Validate(loan *Loan, collected Collected, now time.Ti
 		}
 	} else {
 		// Latest recordable date: the next scheduled due slot (so a daily loan may
-		// be dated tomorrow and a monthly loan its next 30-day cycle date), or
-		// today + clock-skew tolerance — whichever is later.
+		// be dated tomorrow and a monthly loan its next calendar-month due date),
+		// or today + clock-skew tolerance — whichever is later. Same rule as the
+		// payment form's maxPaymentDate.
 		latest := truncateToDay(now).AddDate(0, 0, clockSkewToleranceDays)
-		if nd := loan.NextDue(collected); nd != nil && truncateToDay(*nd).After(latest) {
+		if nd := loan.NextDue(collected, now); nd != nil && truncateToDay(*nd).After(latest) {
 			latest = truncateToDay(*nd)
 		}
 		if truncateToDay(in.Date).After(latest) {
@@ -192,7 +193,7 @@ func (in *CollectionInput) Validate(loan *Loan, collected Collected, now time.Ti
 			if room <= 0 {
 				fields["amount"] = "This loan is already fully repaid"
 			} else {
-				fields["amount"] = "Amount exceeds the outstanding balance of " + room.String()
+				fields["amount"] = "Amount exceeds the outstanding balance of " + room.INR()
 			}
 		}
 	}

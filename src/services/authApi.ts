@@ -35,6 +35,31 @@ export const authApi = {
     tokenStore.set(tokens.access_token);
   },
 
+  /** "Forgot password?" — asks an administrator to reset the account. Public.
+   *  Resolves with the server's message, which is the same whether or not the
+   *  email has an account (the form must never reveal that). */
+  async requestPasswordReset(email: string): Promise<string> {
+    const res = await api.post<{ message: string }>('/auth/password-reset-requests', { email }, { auth: false });
+    return res.message;
+  },
+
+  /** Login page "Forgot password?" for someone who knows their current password:
+   *  email + current password prove who they are (exactly like login), then the
+   *  new one is saved. Not signed in, so no token; a wrong email or password is
+   *  a 401 with the same message as login. */
+  async changePasswordWithCredentials(email: string, currentPassword: string, newPassword: string): Promise<void> {
+    await api.post('/auth/change-password',
+      { email, current_password: currentPassword, new_password: newPassword },
+      { auth: false });
+  },
+
+  /** The signed-in user changes their OWN password; the current one is checked
+   *  on the server. A wrong current password comes back as a field error
+   *  (`current_password`), never 401, so the session is not ended. */
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await api.post('/me/password', { current_password: currentPassword, new_password: newPassword });
+  },
+
   /** Fetch the current user; used to restore a session on page reload. */
   async me(): Promise<BackendUser> {
     return api.get<BackendUser>('/me');

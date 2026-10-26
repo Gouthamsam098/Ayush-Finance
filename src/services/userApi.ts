@@ -124,4 +124,41 @@ export const userApi = {
   async remove(id: number): Promise<void> {
     await api.delete(`/users/${id}`);
   },
+
+  /** Open "Forgot password?" requests. Setting the user's new password via
+   *  update() closes theirs automatically on the server. */
+  async passwordResetRequests(): Promise<PasswordResetRequest[]> {
+    const rows = (await api.get<PasswordResetRequestWire[]>('/users/password-reset-requests')) ?? [];
+    return rows.map((w) => ({
+      id: w.id, userId: w.user_id, email: w.email, fullName: w.full_name, role: w.role,
+      requestCount: w.request_count, requestedAt: w.requested_at, lastRequestedAt: w.last_requested_at,
+    }));
+  },
+
+  /** Close a request without resetting (it was not them, or handled otherwise). */
+  async dismissPasswordResetRequest(id: number): Promise<void> {
+    await api.post(`/users/password-reset-requests/${id}/dismiss`, {});
+  },
 };
+
+export interface PasswordResetRequest {
+  id: number;
+  userId: number;
+  email: string;
+  fullName: string;
+  role: UserRole;
+  requestCount: number;
+  requestedAt: string;
+  lastRequestedAt: string;
+}
+
+interface PasswordResetRequestWire {
+  id: number;
+  user_id: number;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  request_count: number;
+  requested_at: string;
+  last_requested_at: string;
+}

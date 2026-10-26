@@ -3,6 +3,8 @@ package domain
 import (
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 )
 
 // Paise is a monetary amount stored as an integer count of paise (1 rupee =
@@ -68,4 +70,32 @@ func CalcInterest(principal Paise, rate float64) Paise {
 // String renders the amount as rupees with two decimal places, for logs.
 func (p Paise) String() string {
 	return fmt.Sprintf("%.2f", p.Rupees())
+}
+
+// INR renders the amount for a person to read, the way the frontend's inr()
+// does: ₹ with Indian digit grouping (₹1,23,456), paise only when present
+// (₹1,234.50). Integer arithmetic only — no float touches the value.
+func (p Paise) INR() string {
+	sign := ""
+	v := int64(p)
+	if v < 0 {
+		sign, v = "-", -v
+	}
+	digits := strconv.FormatInt(v/100, 10)
+	if len(digits) > 3 {
+		head, tail := digits[:len(digits)-3], digits[len(digits)-3:]
+		groups := []string{}
+		for len(head) > 2 {
+			groups = append([]string{head[len(head)-2:]}, groups...)
+			head = head[:len(head)-2]
+		}
+		if head != "" {
+			groups = append([]string{head}, groups...)
+		}
+		digits = strings.Join(groups, ",") + "," + tail
+	}
+	if paise := v % 100; paise != 0 {
+		digits += fmt.Sprintf(".%02d", paise)
+	}
+	return sign + "₹" + digits
 }

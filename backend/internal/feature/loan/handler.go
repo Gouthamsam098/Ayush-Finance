@@ -148,7 +148,7 @@ func (h *Handler) toResponse(l *domain.Loan, collected domain.Collected) loanRes
 	}
 	// Live next-due derived from actual payments (domain.NextDue) — the stored
 	// creation-time value would go stale the moment the first payment lands.
-	if nd := l.NextDue(collected); nd != nil {
+	if nd := l.NextDue(collected, now); nd != nil {
 		s := nd.Format("2006-01-02")
 		resp.NextDueDate = &s
 	}

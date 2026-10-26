@@ -354,6 +354,7 @@ func TestClosedLoanOwesNothingExceptDailyCollection(t *testing.T) {
 // type and payment state: fresh, partial, exactly-paid, overdue, paid-ahead,
 // fully-collected, and closed.
 func TestNextDue(t *testing.T) {
+	now := day(2026, 12, 1) // after every slot below, so the accrual cap never binds here
 	iso := func(tt *time.Time) string {
 		if tt == nil {
 			return "<nil>"
@@ -380,22 +381,23 @@ func TestNextDue(t *testing.T) {
 		{"paid ahead advances past today", Collected{Interest: RupeesToPaise(10000)}, "2026-07-21"},
 	}
 	for _, tc := range cases {
-		if got := iso(daily.NextDue(tc.collected)); got != tc.want {
+		if got := iso(daily.NextDue(tc.collected, now)); got != tc.want {
 			t.Errorf("daily %s: got %s, want %s", tc.name, got, tc.want)
 		}
 	}
 	// Every instalment collected → nothing further falls due.
-	if got := daily.NextDue(Collected{Interest: RupeesToPaise(100000)}); got != nil {
+	if got := daily.NextDue(Collected{Interest: RupeesToPaise(100000)}, now); got != nil {
 		t.Errorf("fully collected daily should have no next due, got %s", iso(got))
 	}
 	// Closed → nil regardless of balance.
 	closed := *daily
 	closed.Status = StatusClosed
-	if got := closed.NextDue(Collected{}); got != nil {
+	if got := closed.NextDue(Collected{}, now); got != nil {
 		t.Errorf("closed loan should have no next due, got %s", iso(got))
 	}
 
-	// EMI: 30-day cycles.
+	// EMI: calendar months (same day-of-month), like the ledger schedule and the
+	// frontend nextDueFor — previously 30-day steps (31 Jan, 2 Mar).
 	emi := &Loan{
 		Type:        LoanVehicle,
 		Principal:   RupeesToPaise(100000),
@@ -405,11 +407,11 @@ func TestNextDue(t *testing.T) {
 		LoanDate:    day(2026, 1, 1),
 		Status:      StatusActive,
 	}
-	if got := iso(emi.NextDue(Collected{})); got != "2026-01-31" {
-		t.Errorf("fresh EMI: got %s, want 2026-01-31", got)
+	if got := iso(emi.NextDue(Collected{}, now)); got != "2026-02-01" {
+		t.Errorf("fresh EMI: got %s, want 2026-02-01", got)
 	}
-	if got := iso(emi.NextDue(Collected{Interest: RupeesToPaise(9333)})); got != "2026-03-02" {
-		t.Errorf("one EMI paid: got %s, want 2026-03-02", got)
+	if got := iso(emi.NextDue(Collected{Interest: RupeesToPaise(9333)}, now)); got != "2026-03-01" {
+		t.Errorf("one EMI paid: got %s, want 2026-03-01", got)
 	}
 
 	// Interest-only (daily cadence): periods paid from the interest bucket only;
@@ -421,13 +423,13 @@ func TestNextDue(t *testing.T) {
 		LoanDate:    day(2026, 7, 1),
 		Status:      StatusActive,
 	}
-	if got := iso(di.NextDue(Collected{})); got != "2026-07-02" {
+	if got := iso(di.NextDue(Collected{}, now)); got != "2026-07-02" {
 		t.Errorf("fresh daily-interest: got %s, want 2026-07-02", got)
 	}
-	if got := iso(di.NextDue(Collected{Interest: RupeesToPaise(300)})); got != "2026-07-05" {
+	if got := iso(di.NextDue(Collected{Interest: RupeesToPaise(300)}, now)); got != "2026-07-05" {
 		t.Errorf("3 periods paid: got %s, want 2026-07-05", got)
 	}
-	if got := iso(di.NextDue(Collected{Principal: RupeesToPaise(50000)})); got != "2026-07-02" {
+	if got := iso(di.NextDue(Collected{Principal: RupeesToPaise(50000)}, now)); got != "2026-07-02" {
 		t.Errorf("principal payment must not advance interest due: got %s, want 2026-07-02", got)
 	}
 
@@ -437,11 +439,11 @@ func TestNextDue(t *testing.T) {
 		Interest: RupeesToPaise(4500), DailyAmount: ptrPaise(RupeesToPaise(4500)),
 		NumDays: ptrInt(30), LoanDate: day(2026, 7, 1), Status: StatusActive,
 	}
-	if got := iso(flex.NextDue(Collected{})); got != "2026-07-01" {
+	if got := iso(flex.NextDue(Collected{}, now)); got != "2026-07-01" {
 		t.Errorf("flexible fresh (1st cycle due day 0): got %s, want 2026-07-01", got)
 	}
 	// First cycle's interest paid → next due advances to the second cycle (+30d).
-	if got := iso(flex.NextDue(Collected{Interest: RupeesToPaise(4500)})); got != "2026-07-31" {
+	if got := iso(flex.NextDue(Collected{Interest: RupeesToPaise(4500)}, now)); got != "2026-07-31" {
 		t.Errorf("flexible 1 cycle paid: got %s, want 2026-07-31", got)
 	}
 }

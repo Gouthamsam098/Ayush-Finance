@@ -26,15 +26,95 @@ func (h *Handler) PublicRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/login", h.login)
 	r.Post("/refresh", h.refresh)
+	r.Post("/password-reset-requests", h.requestPasswordReset)
+	r.Post("/change-password", h.changePasswordWithCredentials)
 	return r
 }
 
+type credentialsPasswordChange struct {
+	Email           string `json:"email"`
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// changePasswordWithCredentials: "Forgot password?" on the login page for
+// someone who knows their current password. Public, rate-limited with login.
+func (h *Handler) changePasswordWithCredentials(w http.ResponseWriter, r *http.Request) {
+	var req credentialsPasswordChange
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if err := h.service.ChangePasswordWithCredentials(r.Context(), req.Email, domain.PasswordChangeInput{
+		Current: req.CurrentPassword, New: req.NewPassword,
+	}); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
+}
+
+type passwordResetRequest struct {
+	Email string `json:"email"`
+}
+
+// passwordResetMessage is the single answer to every well-formed request, for
+// an existing account or not, so the form cannot reveal which emails have one.
+// Nothing is emailed: the request shows up for admins inside the app.
+const passwordResetMessage = "If an account exists for this email, your request has been sent to your administrator. " +
+	"They will set a new password and share it with you."
+
+// requestPasswordReset is the login page's "Forgot password?". Public and
+// rate-limited with the rest of /auth; it changes nothing about the account
+// (no lockout), it only asks an administrator to reset it.
+func (h *Handler) requestPasswordReset(w http.ResponseWriter, r *http.Request) {
+	var req passwordResetRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if err := h.service.RequestPasswordReset(r.Context(), req.Email); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusAccepted, map[string]string{"message": passwordResetMessage})
+}
+
 // ProtectedRoutes are mounted at /me by the top-level router, so the handler
-// registers at the mount root.
-func (h *Handler) ProtectedRoutes() chi.Router {
+// registers at the mount root. Password changes get their own per-IP budget
+// (passwordChangesPerMinute, the login limit): the general API budget is far
+// too generous to stop a hijacked session guessing the current password.
+func (h *Handler) ProtectedRoutes(passwordChangesPerMinute int) chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.me)
+	r.With(httpx.RateLimit(passwordChangesPerMinute)).Post("/password", h.changePassword)
 	return r
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// changePassword is the signed-in user changing their OWN password.
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(httpx.UserID(r.Context()), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+		return
+	}
+	var req changePasswordRequest
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if err := h.service.ChangePassword(r.Context(), userID, domain.PasswordChangeInput{
+		Current: req.CurrentPassword, New: req.NewPassword,
+	}); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
 }
 
 type loginRequest struct {

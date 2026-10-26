@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/anush-capitals/lms-backend/internal/crypto"
@@ -22,6 +23,23 @@ type Service struct {
 	now            Clock
 	refreshEnabled bool
 	accessTTL      time.Duration
+
+	// dummyHash is compared against when an email has no account, so that path
+	// costs the same bcrypt work as a wrong password (see equalizeUnknownUser).
+	dummyOnce sync.Once
+	dummyHash string
+}
+
+// equalizeUnknownUser spends the bcrypt work a real password check costs, so
+// "no such account" cannot be told apart from "wrong password" by response
+// time. The dummy hash is made once, at the configured cost, on first use.
+func (s *Service) equalizeUnknownUser(password string) {
+	s.dummyOnce.Do(func() {
+		s.dummyHash, _ = s.hasher.Hash("anush-lms-unknown-account")
+	})
+	if s.dummyHash != "" {
+		_ = s.hasher.Compare(s.dummyHash, password)
+	}
 }
 
 func NewService(repo *Repository, hasher *crypto.Hasher, tokens *crypto.TokenManager, now Clock, refreshEnabled bool, accessTTL time.Duration) *Service {
@@ -48,6 +66,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (*TokenPair
 	user, err := s.repo.FindByEmail(ctx, email)
 	if err != nil {
 		if de, ok := domain.AsError(err); ok && de.Code == domain.CodeNotFound {
+			s.equalizeUnknownUser(password)
 			return nil, nil, domain.NewUnauthorized("invalid email or password")
 		}
 		return nil, nil, err
@@ -93,6 +112,70 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	}
 
 	return s.issueTokens(subjectID)
+}
+
+// RequestPasswordReset files a reset request for an administrator to act on.
+// The result never says whether the email belongs to an account; only a
+// malformed address is reported back.
+func (s *Service) RequestPasswordReset(ctx context.Context, rawEmail string) error {
+	email, err := domain.NormalizeResetEmail(rawEmail)
+	if err != nil {
+		return err
+	}
+	return s.repo.RequestPasswordReset(ctx, email)
+}
+
+// ChangePassword lets a signed-in user replace their own password after proving
+// the current one. A wrong current password is a VALIDATION error, never 401:
+// the client treats 401 as an expired session and signs the user out.
+func (s *Service) ChangePassword(ctx context.Context, userID int64, in domain.PasswordChangeInput) error {
+	if err := in.Validate(); err != nil {
+		return err
+	}
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := s.hasher.Compare(user.PasswordHash, in.Current); err != nil {
+		return domain.NewValidation("Current password is incorrect",
+			map[string]string{"current_password": "Current password is incorrect"})
+	}
+	hash, err := s.hasher.Hash(in.New)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdatePassword(ctx, userID, user.PasswordHash, hash)
+}
+
+// ChangePasswordWithCredentials is the login page's "Forgot password?": the
+// person is NOT signed in, so they prove who they are exactly as login does —
+// email + current password — and set a new one. A wrong email and a wrong
+// password give the same answer as login, so it reveals no accounts.
+func (s *Service) ChangePasswordWithCredentials(ctx context.Context, rawEmail string, in domain.PasswordChangeInput) error {
+	email, err := domain.NormalizeResetEmail(rawEmail)
+	if err != nil {
+		return err
+	}
+	if err := in.Validate(); err != nil {
+		return err
+	}
+	bad := domain.NewUnauthorized("Email or current password is incorrect")
+	user, err := s.repo.FindByEmail(ctx, email)
+	if err != nil {
+		if de, ok := domain.AsError(err); ok && de.Code == domain.CodeNotFound {
+			s.equalizeUnknownUser(in.Current)
+			return bad
+		}
+		return err
+	}
+	if err := s.hasher.Compare(user.PasswordHash, in.Current); err != nil {
+		return bad
+	}
+	hash, err := s.hasher.Hash(in.New)
+	if err != nil {
+		return err
+	}
+	return s.repo.UpdatePassword(ctx, user.ID, user.PasswordHash, hash)
 }
 
 // CurrentUser loads the user identified by a validated access token subject.

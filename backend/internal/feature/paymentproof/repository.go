@@ -4,6 +4,7 @@ package paymentproof
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"strings"
 	"time"
@@ -80,17 +81,52 @@ func (r *Repository) CountPending(ctx context.Context, loanID int64) (int, error
 }
 
 // Create stores a new PENDING proof and returns it.
+//
+// The same screenshot already PENDING or VERIFIED on this loan is the same
+// payment, so it is refused (a REJECTED one may be sent again). Each copy used
+// to become its own proof, and accepting both recorded one payment twice. The
+// loan row is locked for the check-and-insert, so two simultaneous uploads run
+// one after the other and the second sees the first.
 func (r *Repository) Create(ctx context.Context, customerID int64, in domain.PaymentProofInput,
 	fileName, mime string, content []byte, submittedBy *int64,
 ) (*domain.PaymentProof, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM loans WHERE id = $1 FOR UPDATE`, in.LoanID); err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(content)
+	var dup string
+	err = tx.QueryRow(ctx, `
+		SELECT status FROM payment_proofs
+		WHERE loan_id = $1 AND content_sha256 = $2 AND deleted_at IS NULL
+		  AND status IN ('PENDING', 'VERIFIED')
+		ORDER BY (status = 'VERIFIED') DESC
+		LIMIT 1`, in.LoanID, digest[:]).Scan(&dup)
+	switch {
+	case err == nil && dup == "VERIFIED":
+		return nil, domain.NewConflict("This screenshot was already accepted for this loan. Upload the receipt of the new payment.")
+	case err == nil:
+		return nil, domain.NewConflict("This screenshot is already awaiting approval on this loan.")
+	case !errors.Is(err, pgx.ErrNoRows):
+		return nil, err
+	}
+
 	var id int64
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO payment_proofs (loan_id, customer_id, amount, purpose, file_name, mime_type, size_bytes, content, submitted_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO payment_proofs (loan_id, customer_id, amount, purpose, file_name, mime_type, size_bytes, content, content_sha256, submitted_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id`,
 		in.LoanID, customerID, in.Amount.DBRupees(), string(in.Purpose), fileName, mime,
-		len(content), content, submittedBy).Scan(&id)
+		len(content), content, digest[:], submittedBy).Scan(&id)
 	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return r.FindByID(ctx, id, &customerID)

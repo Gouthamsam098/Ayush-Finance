@@ -76,6 +76,12 @@ func (s *Service) Update(ctx context.Context, id, actingUserID int64, in domain.
 	if id == actingUserID && (in.Role != domain.RoleAdmin || !in.IsActive) {
 		return nil, domain.NewConflict("You cannot change your own role or disable yourself")
 	}
+	// Your OWN password changes only through POST /me/password, which proves the
+	// current one first — an unattended admin session must not be enough to
+	// change the admin's password. (Other users' passwords: unchanged.)
+	if id == actingUserID && in.Password != "" {
+		return nil, domain.NewConflict("Change your own password under Settings → Change password — it asks for your current password.")
+	}
 
 	var hash string
 	if in.Password != "" {
@@ -86,6 +92,16 @@ func (s *Service) Update(ctx context.Context, id, actingUserID int64, in domain.
 		hash = h
 	}
 	return s.repo.Update(ctx, id, in, hash, &actingUserID)
+}
+
+// OpenPasswordResetRequests lists "Forgot password?" requests awaiting an admin.
+func (s *Service) OpenPasswordResetRequests(ctx context.Context) ([]*domain.PasswordResetRequest, error) {
+	return s.repo.OpenPasswordResetRequests(ctx)
+}
+
+// DismissPasswordResetRequest closes a request without resetting the password.
+func (s *Service) DismissPasswordResetRequest(ctx context.Context, id, actingUserID int64) error {
+	return s.repo.DismissPasswordResetRequest(ctx, id, &actingUserID)
 }
 
 // SetActive enables/disables a user, with the same last-admin + self guards.

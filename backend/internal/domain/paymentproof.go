@@ -139,8 +139,8 @@ func SplitPortalPayment(l *Loan, collected Collected, amount Paise, now time.Tim
 		return parts, nil
 	}
 	if limit := interestDue.Add(l.InterestPerPeriod()); amount > limit {
-		return nil, NewConflict("Part of this payment (" + amount.String() + ") would repay principal: it is more than the interest due (" +
-			interestDue.String() + ") plus one period ahead, but less than the full balance. Record it from the loan's ledger, " +
+		return nil, NewConflict("Part of this payment (" + amount.INR() + ") would repay principal: it is more than the interest due (" +
+			interestDue.INR() + ") plus one period ahead, but less than the full balance. Record it from the loan's ledger, " +
 			"choosing interest or principal, then reject this request.")
 	}
 	return []PaymentPart{{Kind: KindInterest, Amount: amount}}, nil

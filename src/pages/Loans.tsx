@@ -11,6 +11,7 @@ import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader'
 import { usePermissions } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
 import { computeFunds, interestRealised, cashDisbursedFor } from '@/lib/funds';
+import { useInvestorCapitalVersion } from '@/lib/investments';
 import { inr, inrShort, fmtDate, todayISO, addDays, addMonths, DAILY_TERM } from '@/lib/format';
 import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { emptyNum, matchNum, numActive, type NumFilter } from '@/lib/customerFilters';
@@ -207,6 +208,7 @@ const countLoanFilters = (f: LoanFilters, tab: PortfolioTab) =>
 
 export default function Loans() {
   const d = useData();
+  const capitalVersion = useInvestorCapitalVersion();
   const { canEdit } = usePermissions();
   const toast = useToast();
   const [form, setForm] = useState<LoanForm | null>(null);
@@ -295,8 +297,10 @@ export default function Loans() {
       // Cash IN (total collected) — see computeFunds for why a receivable is wrong.
       d.collections.reduce((s, c) => s + c.amount, 0),
     ),
+    // capitalVersion: recompute when investor capital arrives after the book,
+    // or the guard keeps judging new loans against a stale ₹0.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [d.loans, d.collections, d.expenses],
+    [d.loans, d.collections, d.expenses, capitalVersion],
   );
   const fundsEnforced = funds.enforced;
   const investorCapital = funds.capital;

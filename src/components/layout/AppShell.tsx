@@ -7,6 +7,7 @@ import type { RootState } from '@/store';
 import { useData } from '@/mock/DataContext';
 import { todayISO } from '@/lib/format';
 import { withUiModuleAccess } from '@/lib/uiModuleAccess';
+import { usePasswordResetRequestCount } from '@/hooks/usePasswordResetRequestCount';
 import { cn } from '@/lib/utils';
 import BrandLogo, { BrandMark } from '@/components/BrandLogo';
 import {
@@ -15,7 +16,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-interface NavItem { to: string; label: string; icon: LucideIcon; badgeKey?: 'overdue'; adminOnly?: boolean; module?: string }
+interface NavItem { to: string; label: string; icon: LucideIcon; badgeKey?: 'overdue' | 'resets'; adminOnly?: boolean; module?: string }
 interface NavSection { heading: string; items: NavItem[] }
 
 const NAV: NavSection[] = [
@@ -42,7 +43,7 @@ const NAV: NavSection[] = [
     heading: 'System',
     items: [
       { to: '/documents', label: 'Documents', icon: FolderOpen, module: 'Documents' },
-      { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true, module: 'Settings' },
+      { to: '/settings', label: 'Settings', icon: Settings, badgeKey: 'resets', adminOnly: true, module: 'Settings' },
     ],
   },
 ];
@@ -61,6 +62,8 @@ export function AppShell() {
   const d = useData();
   const user = useSelector((s: RootState) => s.auth.user);
   const isAdmin = user?.role === 'ADMIN';
+  // Open "Forgot password?" requests → badge on Settings (admins resolve them there).
+  const resetRequestCount = usePasswordResetRequestCount(isAdmin);
   const isRecoveryAgent = user?.role === 'RECOVERY_AGENT';
   const isCustomer = user?.role === 'CUSTOMER';
   // Merge UI-only Reports access (backend Modules omit Reports).
@@ -100,7 +103,10 @@ export function AppShell() {
   const overdueCount = d.loans.filter(
     (l) => l.status === 'ACTIVE' && l.nextDueDate && l.nextDueDate < today && d.outstandingFor(l) > 0,
   ).length;
-  const badgeFor = (key?: 'overdue') => (key === 'overdue' && overdueCount > 0 ? overdueCount : null);
+  const badgeFor = (key?: 'overdue' | 'resets') =>
+    key === 'overdue' && overdueCount > 0 ? overdueCount
+      : key === 'resets' && resetRequestCount > 0 ? resetRequestCount
+        : null;
 
   return (
     <OpenSidebarCtx.Provider value={() => setMobileOpen(true)}>

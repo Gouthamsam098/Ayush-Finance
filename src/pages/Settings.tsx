@@ -11,9 +11,12 @@ import { useToast } from '@/components/ui/toast';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { cn } from '@/lib/utils';
 import { config } from '@/lib/config';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, isoLocal } from '@/lib/format';
 import { ApiError } from '@/lib/api';
-import { userApi, MODULES, type ManagedUser, type UserRole, type Access, type Permissions } from '@/services/userApi';
+import {
+  userApi, MODULES, type ManagedUser, type UserRole, type Access, type Permissions, type PasswordResetRequest,
+} from '@/services/userApi';
+import { PASSWORD_RESET_REQUESTS_CHANGED_EVENT } from '@/lib/dataEvents';
 import {
   listMockUsers, saveMockUser, setMockUserActive, removeMockUser, getMockUserLinkedCustomerId,
   findPortalUserForCustomer, mockUserPasswordIsSet, type MockUser,
@@ -26,13 +29,14 @@ import { AgentLoanAssignment } from '@/features/recovery/components/AgentLoanAss
 import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
 import { RecoveryAutoAssignScheduleCard } from '@/features/recovery/components/RecoveryAutoAssignScheduleCard';
 import { TwoFactorSettingsCard } from '@/features/settings/TwoFactorSettingsCard';
+import { ChangePasswordCard } from '@/features/settings/ChangePasswordCard';
 import { SettingsCollapsibleSection } from '@/features/settings/SettingsCollapsibleSection';
 import { isTotpEnabled } from '@/lib/totpStore';
 import { dailyScheduleSummary } from '@/features/recovery/recoveryAutoAssign';
 import { clearUiReportsAccess, setUiReportsAccess, withUiModuleAccess } from '@/lib/uiModuleAccess';
 import {
   UserPlus, Trash2, Settings as SettingsIcon, Pencil, Plus, Users as UsersIcon, Loader2, ShieldCheck,
-  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3, CalendarClock, KeyRound,
+  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3, CalendarClock, KeyRound, Lock,
 } from 'lucide-react';
 
 const MODULE_ICON: Record<string, React.ReactNode> = {
@@ -103,6 +107,10 @@ function fromMock(u: MockUser): ManagedUser {
   };
 }
 
+/** Server timestamp → the LOCAL calendar day (slicing an RFC3339 string
+ *  takes the server's day, which is a day off near midnight IST). */
+const localDay = (ts: string) => isoLocal(new Date(ts));
+
 export default function Settings() {
   const toast = useToast();
   const me = useSelector((s: RootState) => s.auth.user);
@@ -113,6 +121,9 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [confirmDel, setConfirmDel] = useState<ManagedUser | null>(null);
+  // Open "Forgot password?" requests, by user id. Setting that user's new
+  // password closes theirs on the server; Dismiss closes it without a reset.
+  const [resetReqs, setResetReqs] = useState<Map<number, PasswordResetRequest>>(new Map());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -122,12 +133,19 @@ export default function Settings() {
         return;
       }
       // Every account is a server user: staff, recovery agents and customer
-      // portal logins (with their linked customer / assigned loans).
-      const rows = await userApi.list();
+      // portal logins (with their linked customer / assigned loans). Reset
+      // requests are a side list — if they fail to load, users still show.
+      const [rows, resets] = await Promise.all([
+        userApi.list(),
+        userApi.passwordResetRequests().catch(() => [] as PasswordResetRequest[]),
+      ]);
       setUsers(rows.map((u) => ({
         ...u,
         permissions: withUiModuleAccess(u.id, u.role, { ...emptyPerms(), ...u.permissions }),
       })));
+      setResetReqs(new Map(resets.map((r) => [r.userId, r])));
+      // The sidebar shows the same count — refresh it now, not on its next poll.
+      window.dispatchEvent(new Event(PASSWORD_RESET_REQUESTS_CHANGED_EVENT));
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Failed to load users', 'error');
     } finally {
@@ -228,7 +246,7 @@ export default function Settings() {
           customerId: form.linkedCustomerId, assignedLoanIds: form.assignedLoanIds,
         });
         setUiReportsAccess(form.id!, reportsAccess);
-        toast('User updated');
+        toast(form.password && resetReqs.has(form.id!) ? 'Password reset — request closed' : 'User updated');
       }
       setForm(null);
       void refreshRecovery(); // agent list + loan assignments changed
@@ -237,6 +255,16 @@ export default function Settings() {
       toast(e instanceof ApiError ? e.message : 'Failed to save user', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const dismissReset = async (req: PasswordResetRequest) => {
+    try {
+      await userApi.dismissPasswordResetRequest(req.id);
+      toast('Reset request dismissed', 'info');
+      await load();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Failed to dismiss the request', 'error');
     }
   };
 
@@ -327,6 +355,20 @@ export default function Settings() {
             </SettingsCollapsibleSection>
           )}
 
+          {me && (
+            <SettingsCollapsibleSection
+              id="change-password"
+              title="Change password"
+              description="Update your own password — your current password is required."
+              icon={<Lock size={20} strokeWidth={2.25} />}
+              statusLabel="Your account"
+              statusTone="neutral"
+              defaultOpen={false}
+            >
+              <ChangePasswordCard />
+            </SettingsCollapsibleSection>
+          )}
+
           {hasActiveRecoveryAgents() && (
             <SettingsCollapsibleSection
               id="recovery-auto-assign"
@@ -356,6 +398,11 @@ export default function Settings() {
             <div className="flex items-center gap-2 text-[13px] text-muted">
               <ShieldCheck size={15} className="text-emerald-500" />
               {loading ? 'Loading users…' : <><span className="font-semibold text-ink">{users.length}</span> user{users.length === 1 ? '' : 's'} · <span className="font-semibold text-ink">{adminCount}</span> admin{adminCount === 1 ? '' : 's'}</>}
+              {!loading && resetReqs.size > 0 && (
+                <span className="inline-flex items-center gap-1 font-semibold text-amber-600 dark:text-amber-400">
+                  · <KeyRound size={13} aria-hidden /> {resetReqs.size} password reset request{resetReqs.size === 1 ? '' : 's'}
+                </span>
+              )}
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-white/[.06]">
@@ -388,7 +435,16 @@ export default function Settings() {
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-2.5">
                             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-blue-500 to-violet-500 text-[11px] font-bold text-white">{u.fullName.split(' ').map((x) => x[0]).slice(0, 2).join('')}</span>
-                            <span className="font-semibold text-[14.5px] text-ink">{u.fullName}{isSelf && <span className="ml-1.5 text-[11px] font-medium text-muted">(you)</span>}</span>
+                            <div className="min-w-0">
+                              <span className="font-semibold text-[14.5px] text-ink">{u.fullName}{isSelf && <span className="ml-1.5 text-[11px] font-medium text-muted">(you)</span>}</span>
+                              {resetReqs.has(u.id) && (
+                                <button type="button" onClick={() => openEdit(u)}
+                                  title="Asked to reset their password — open to set a new one"
+                                  className="mt-0.5 flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200 transition-colors hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/25 dark:hover:bg-amber-500/15">
+                                  <KeyRound size={11} aria-hidden /> Reset requested · {fmtDate(localDay(resetReqs.get(u.id)!.lastRequestedAt))}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </td>
                         <td className="px-5 py-4 text-[13px] text-muted">{u.email}</td>
@@ -457,22 +513,50 @@ export default function Settings() {
                 }
               />
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Input
-                revealPassword
-                label={form.id ? 'New password' : 'Password *'}
-                placeholder={form.id ? 'Leave blank to keep' : 'Min 8 characters'}
-                value={form.password}
-                onChange={(e) => set('password', e.target.value)}
-              />
-              <Input
-                revealPassword
-                label={form.id ? 'Confirm new password' : 'Confirm password *'}
-                placeholder="Re-enter password"
-                value={form.confirm}
-                onChange={(e) => set('confirm', e.target.value)}
-              />
-            </div>
+            {form.id != null && resetReqs.has(form.id) && (() => {
+              const req = resetReqs.get(form.id)!;
+              return (
+                <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-[12.5px] text-amber-800 sm:flex-row sm:items-start sm:justify-between dark:border-amber-500/25 dark:bg-amber-500/[.08] dark:text-amber-200">
+                  <div className="flex gap-2.5">
+                    <KeyRound size={16} className="mt-0.5 shrink-0" aria-hidden />
+                    <p className="leading-relaxed">
+                      <span className="font-semibold">Password reset requested</span> on {fmtDate(localDay(req.requestedAt))}
+                      {req.requestCount > 1 && ` (${req.requestCount} times, last ${fmtDate(localDay(req.lastRequestedAt))})`}.
+                      {' '}Confirm it is really them — call their registered number — then set a new password below.
+                      Saving closes the request.
+                    </p>
+                  </div>
+                  <Button variant="ghost" className="shrink-0 !px-3 !py-1.5 !text-[12px]" onClick={() => void dismissReset(req)}>
+                    Dismiss request
+                  </Button>
+                </div>
+              );
+            })()}
+            {config.useApi && form.id != null && form.id === me?.id ? (
+              // Your own password changes only with your current one (the
+              // server refuses it here) — point to the section that asks for it.
+              <div className="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-[12.5px] text-muted dark:border-white/[.08] dark:bg-white/[.03]">
+                <Lock size={15} className="mt-0.5 shrink-0" aria-hidden />
+                <span>To change your own password, use <span className="font-semibold text-ink">Change password</span> at the top of Settings — it asks for your current password.</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Input
+                  revealPassword
+                  label={form.id ? 'New password' : 'Password *'}
+                  placeholder={form.id ? 'Leave blank to keep' : 'Min 8 characters'}
+                  value={form.password}
+                  onChange={(e) => set('password', e.target.value)}
+                />
+                <Input
+                  revealPassword
+                  label={form.id ? 'Confirm new password' : 'Confirm password *'}
+                  placeholder="Re-enter password"
+                  value={form.confirm}
+                  onChange={(e) => set('confirm', e.target.value)}
+                />
+              </div>
+            )}
             <Select
               label="Role"
               value={form.role}

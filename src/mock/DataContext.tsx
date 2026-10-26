@@ -561,7 +561,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // Flexible's first cycle is due on the loan date (day 0), so its steps
         // are one earlier than Daily/Monthly Interest (first due at +cadence).
         const step = loan.type === 'FLEXIBLE' ? paid : paid + 1;
-        return loan.type === 'MONTHLY_INTEREST'
+        // Calendar months for every monthly-cadence interest-only loan — Monthly
+        // Interest AND monthly-mode Vehicle/Property — the same predicate the
+        // ledger (hasMonthlyCadence) and statement use, and the same calendar
+        // cycles interestPeriodsElapsed accrues on. Fixed 30-day steps put a
+        // monthly-mode Vehicle/Property's due a day or more BEFORE its interest
+        // accrued, so it read "1 day late" on the day it fell due.
+        return loan.type !== 'FLEXIBLE' && loan.type !== 'DAILY_INTEREST'
           ? addMonths(loan.loanDate, step, 0)
           : addDays(loan.loanDate, step * cadenceDaysForLoan(loan));
       }

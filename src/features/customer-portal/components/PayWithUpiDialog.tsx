@@ -1,15 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/toast';
 import { inr } from '@/lib/format';
 import { config } from '@/lib/config';
-import { openUpiApp, upiAmountString } from '@/lib/upiPay';
+import { detectUpiPlatform, openUpiApp, upiAmountString, type UpiApp } from '@/lib/upiPay';
 import { cn } from '@/lib/utils';
 import type { Loan } from '@/mock/DataContext';
 import type { PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 import { payPurposeSubtitle, payPurposeTitle } from '@/features/customer-portal/loanPortalSummary';
-import { ArrowRight, Lock, ShieldCheck, Smartphone } from 'lucide-react';
+import { ArrowRight, Copy, Info, Lock, ShieldCheck, Smartphone } from 'lucide-react';
+
+const APP_NAME: Record<UpiApp, string> = { phonepe: 'PhonePe', gpay: 'Google Pay' };
+
+/** How long to wait for the app to take over before offering other options. */
+const APP_OPEN_WAIT_MS = 2500;
 
 function PhonePeIcon({ className }: { className?: string }) {
   return (
@@ -44,13 +50,61 @@ interface Props {
 }
 
 export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 'OUTSTANDING' }: Props) {
+  const toast = useToast();
   const [focusApp, setFocusApp] = useState<'phonepe' | 'gpay' | null>(null);
   const note = `Loan ${loan.loanNumber} ${payPurposeTitle(purpose)}`;
   const canPay = amountRupees > 0 && loan.status === 'ACTIVE';
+  const platform = useMemo(() => detectUpiPlatform(), []);
+  // Shown when no app can open here (a computer) or the tapped app did not
+  // take over (not installed, or a browser inside another app).
+  const [help, setHelp] = useState<null | { app: UpiApp; reason: 'desktop' | 'not-opened' }>(null);
+  useEffect(() => { if (open) setHelp(null); }, [open]);
+  // On a phone the help sits below both app cards, out of view — bring it up.
+  const helpRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (help) helpRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [help]);
 
-  const pay = (app: 'phonepe' | 'gpay') => {
+  // The pending "did the app open?" check — cancelled by a new tap, by closing
+  // the dialog and on unmount, so a stale result never lands in a fresh dialog.
+  const pendingCheck = useRef<(() => void) | null>(null);
+  const cancelCheck = () => { pendingCheck.current?.(); pendingCheck.current = null; };
+  useEffect(() => { if (!open) cancelCheck(); }, [open]);
+  useEffect(() => cancelCheck, []);
+
+  const pay = (app: UpiApp) => {
     if (!canPay) return;
+    cancelCheck();
+    if (platform === 'desktop') { setHelp({ app, reason: 'desktop' }); return; }
+    setHelp(null);
     openUpiApp(app, { amountRupees, note });
+    // When the app opens, this page goes to the background. Still in front a
+    // few seconds later means it did not open — offer the manual way to pay.
+    let left = false;
+    const mark = () => { left = true; };
+    const detach = () => {
+      document.removeEventListener('visibilitychange', mark);
+      window.removeEventListener('pagehide', mark);
+      window.removeEventListener('blur', mark);
+    };
+    document.addEventListener('visibilitychange', mark);
+    window.addEventListener('pagehide', mark);
+    window.addEventListener('blur', mark);
+    const timer = window.setTimeout(() => {
+      detach();
+      pendingCheck.current = null;
+      if (!left && document.visibilityState === 'visible') setHelp({ app, reason: 'not-opened' });
+    }, APP_OPEN_WAIT_MS);
+    pendingCheck.current = () => { window.clearTimeout(timer); detach(); };
+  };
+
+  const copy = async (label: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(`${label} copied`);
+    } catch {
+      toast(`${label}: ${value}`, 'info');
+    }
   };
 
   return (
@@ -147,7 +201,9 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
                       {isPhonePe ? 'PhonePe' : 'Google Pay'}
                     </p>
                     <p className="mt-1 text-[12px] leading-snug text-muted">
-                      {isPhonePe ? 'Opens PhonePe with amount filled' : 'Opens GPay with amount filled'}
+                      {platform === 'desktop'
+                        ? 'Use this page on your phone'
+                        : isPhonePe ? 'Opens PhonePe with amount filled' : 'Opens GPay with amount filled'}
                     </p>
                   </div>
                   <span
@@ -165,6 +221,42 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
               );
             })}
           </div>
+
+          {help && (
+            <div ref={helpRef} role="status" aria-live="polite"
+              className="mt-4 scroll-mb-4 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3.5 text-[12.5px] text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/[.08] dark:text-amber-100">
+              <div className="flex gap-2.5">
+                <Info size={16} className="mt-0.5 shrink-0" aria-hidden />
+                <div className="min-w-0">
+                  <p className="font-semibold">
+                    {help.reason === 'desktop'
+                      ? 'Open this page on your phone to pay with PhonePe or Google Pay'
+                      : `${APP_NAME[help.app]} did not open`}
+                  </p>
+                  <p className="mt-1 leading-relaxed">
+                    {help.reason === 'desktop'
+                      ? 'Payment apps open only on a phone. Or pay from any UPI app using these details:'
+                      : `Make sure ${APP_NAME[help.app]} is installed and try again — or pay from any UPI app using these details:`}
+                  </p>
+                  <div className="mt-2.5 flex flex-wrap gap-2">
+                    {[
+                      { label: 'UPI ID', shown: config.merchantUpiVpa, value: config.merchantUpiVpa },
+                      { label: 'Amount', shown: `₹${upiAmountString(amountRupees)}`, value: upiAmountString(amountRupees) },
+                    ].map((c) => (
+                      <button key={c.label} type="button" onClick={() => void copy(c.label, c.value)}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-amber-300/70 bg-surface/80 px-2.5 py-1.5 text-[12px] font-semibold text-amber-900 transition-colors hover:bg-surface dark:border-amber-500/30 dark:text-amber-100"
+                        aria-label={`Copy ${c.label}`}>
+                        <span className="text-amber-700/80 dark:text-amber-200/70">{c.label}</span>
+                        <span className="truncate font-mono">{c.shown}</span>
+                        <Copy size={12} className="shrink-0" aria-hidden />
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11.5px] opacity-80">After paying, upload the payment screenshot on your loan card.</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <p className="rounded-2xl border border-slate-200/80 bg-gradient-to-r from-slate-50/90 via-surface to-primary/[.03] px-4 py-3.5 text-center text-[11.5px] leading-relaxed text-muted dark:border-white/[.08] dark:from-white/[.03]">

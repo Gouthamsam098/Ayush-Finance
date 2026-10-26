@@ -153,7 +153,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				return httpx.RequirePermission(module, authRepo.FindByID)
 			}
 
-			protected.Mount("/me", authHandler.ProtectedRoutes())
+			protected.Mount("/me", authHandler.ProtectedRoutes(deps.Config.AuthRateLimitPerMinute))
 			protected.With(perm("Customers")).Mount("/customers", customerHandler.Routes())
 			protected.With(perm("Documents")).Mount("/customers/{customerId}/documents", documentHandler.Routes())
 			protected.With(perm("Customers")).Mount("/customers/{customerId}/portal-login", userHandler.PortalLoginRoutes())

@@ -120,6 +120,9 @@ export function PaymentProofUpload({
   const [dragOver, setDragOver] = useState(false);
   const [picked, setPicked] = useState<PickedFile | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Synchronous twin of `submitting`: state only changes on the next render,
+  // so two taps inside one frame both read `false` and both upload.
+  const submittingRef = useRef(false);
   const [thankYouOpen, setThankYouOpen] = useState(false);
   const [latest, setLatest] = useState<PaymentProofRecord | null>(() => getLatestPaymentProof(loanId));
 
@@ -173,7 +176,8 @@ export function PaymentProofUpload({
   };
 
   const submit = async () => {
-    if (!picked || submitting) return;
+    if (!picked || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       // Wait for the server: only a saved upload gets the thank-you; a refusal
@@ -197,6 +201,7 @@ export function PaymentProofUpload({
       refreshLatest();
       setThankYouOpen(true);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

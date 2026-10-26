@@ -96,6 +96,9 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
   const [clearDues, setClearDues] = useState(false);
   // In-flight flag for the payment round-trip (see addColl's double-submit guard).
   const [saving, setSaving] = useState(false);
+  // Synchronous twin of `saving`: state only updates on the next render, so two
+  // clicks dispatched inside one frame both read `false` and both post money.
+  const savingRef = useRef(false);
   // Settlement mode (foreclose / settle principal): a lump-sum payoff, not a
   // scheduled slot — exempt from the "next due slot" date discipline below.
   const [isSettlement, setIsSettlement] = useState(false);
@@ -708,7 +711,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
     // on the flexSettle branch, which issues TWO sequential writes — a
     // double-click there produces four records and double-counts the
     // interest/principal split that profit-by-month depends on.
-    if (saving) return;
+    if (saving || savingRef.current) return;
     if (!canCollect) { toast('You have view-only access to Collections', 'error'); return; }
     if (!Number(amount)) { toast('Enter an amount', 'error'); return; }
     if (amountError) { toast(amountError, 'error'); return; }
@@ -720,6 +723,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
     // advance payers' receipts to be future-dated, corrupting profit-by-month.
     // kind only matters for interest-only loans; always send INTEREST otherwise.
     const k: CollectionKind = interestOnly ? kind : 'INTEREST';
+    savingRef.current = true;
     setSaving(true);
     try {
       if (flexSettle && !editId) {
@@ -903,6 +907,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
       toast(e instanceof ApiError ? e.message : 'Failed to save collection', 'error');
       return; // keep the form open so the user can correct it
     } finally {
+      savingRef.current = false;
       setSaving(false); // always released, so a failed save can be retried
     }
     setAddOpen(false); setEditId(null); setFlexSettle(false); setEditSlot(null); setClearDues(false); setPayTarget(null); setEditDay(null); setEditReceipt(null); setEditOriginalAmount(null); setAmount(defaultAmount()); setRemarks('');

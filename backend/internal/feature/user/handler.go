@@ -23,7 +23,58 @@ func (h *Handler) Routes() chi.Router {
 	r.Post("/", h.create)
 	r.Patch("/{id}", h.update)
 	r.Delete("/{id}", h.delete)
+	// "Forgot password?" requests from the login page. Setting the user's new
+	// password through PATCH /{id} closes their request automatically.
+	r.Get("/password-reset-requests", h.listPasswordResetRequests)
+	r.Post("/password-reset-requests/{id}/dismiss", h.dismissPasswordResetRequest)
 	return r
+}
+
+type passwordResetResponse struct {
+	ID              int64     `json:"id"`
+	UserID          int64     `json:"user_id"`
+	Email           string    `json:"email"`
+	FullName        string    `json:"full_name"`
+	Role            string    `json:"role"`
+	RequestCount    int       `json:"request_count"`
+	RequestedAt     time.Time `json:"requested_at"`
+	LastRequestedAt time.Time `json:"last_requested_at"`
+}
+
+func (h *Handler) listPasswordResetRequests(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	reqs, err := h.service.OpenPasswordResetRequests(r.Context())
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	out := make([]passwordResetResponse, 0, len(reqs))
+	for _, p := range reqs {
+		out = append(out, passwordResetResponse{
+			ID: p.ID, UserID: p.UserID, Email: p.Email, FullName: p.FullName, Role: string(p.Role),
+			RequestCount: p.RequestCount, RequestedAt: p.RequestedAt, LastRequestedAt: p.LastRequestedAt,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) dismissPasswordResetRequest(w http.ResponseWriter, r *http.Request) {
+	actingID, ok := h.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("password reset request"))
+		return
+	}
+	if err := h.service.DismissPasswordResetRequest(r.Context(), id, actingID); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
 }
 
 // userRequest is the wire shape for create/update.
