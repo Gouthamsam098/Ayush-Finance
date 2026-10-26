@@ -10,6 +10,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useRecovery } from '../RecoveryContext';
+import { listPaymentProofs, PAYMENT_PROOF_SUBMITTED_EVENT } from '@/features/customer-portal/paymentProofStore';
 import {
   AGENT_ACTIVITY_CHANGED,
   listAgentActivities,
@@ -89,14 +90,16 @@ export function AgentActivityPanel({
     const bump = () => setTick((t) => t + 1);
     window.addEventListener(RECOVERY_SUBMISSIONS_CHANGED, bump);
     window.addEventListener(AGENT_ACTIVITY_CHANGED, bump);
+    window.addEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
     return () => {
       window.removeEventListener(RECOVERY_SUBMISSIONS_CHANGED, bump);
       window.removeEventListener(AGENT_ACTIVITY_CHANGED, bump);
+      window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
     };
   }, []);
 
   const activities = useMemo(
-    () => listAgentActivities(agentUserId, submissions),
+    () => listAgentActivities(agentUserId, submissions, listPaymentProofs()),
     [agentUserId, submissions, tick],
   );
 

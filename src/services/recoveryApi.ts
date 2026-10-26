@@ -32,6 +32,11 @@ interface SubmissionWire {
   created_at: string;
   reviewed_at?: string;
   review_note?: string;
+  /** UPI claims: the UPI ID it was paid to (server-set from Settings on filing). */
+  payee_vpa?: string;
+  payee_name?: string;
+  /** When the agent last edited the pending claim. */
+  edited_at?: string;
 }
 
 export interface RecoveryAgentInfo {
@@ -66,6 +71,7 @@ export function toSubmission(w: SubmissionWire): RecoverySubmission {
     createdAt: w.created_at,
     reviewedAt: w.reviewed_at,
     reviewNote: w.review_note,
+    editedAt: w.edited_at,
   };
   if (w.type === 'COLLECTION_CLAIM') {
     const claim: CollectionClaimSubmission = {
@@ -75,6 +81,7 @@ export function toSubmission(w: SubmissionWire): RecoverySubmission {
       amount: w.amount ?? 0,
       mode: w.mode ?? 'CASH',
       receiptDate: (w.receipt_date ?? '').slice(0, 10),
+      ...(w.mode === 'UPI' && w.payee_vpa ? { payeeVpa: w.payee_vpa, payeeName: w.payee_name } : {}),
     };
     return claim;
   }
@@ -153,5 +160,10 @@ export const recoveryApi = {
     return toSubmission(await api.post<SubmissionWire>('/agent/promises', {
       loan_id: input.loanId, promise_date: input.promiseDate, promised_amount: input.promisedAmount ?? null, note: input.note || null,
     }));
+  },
+
+  /** The agent closes their own open promise (saved on the server for every device). */
+  async closePromise(id: string, status: 'FULFILLED' | 'CANCELLED'): Promise<RecoverySubmission> {
+    return toSubmission(await api.post<SubmissionWire>(`/agent/promises/${id}/close`, { status }));
   },
 };

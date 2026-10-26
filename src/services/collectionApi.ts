@@ -40,6 +40,9 @@ interface CollectionWire {
   collector_type?: Collection['collectorType'];
   collector_name?: string;
   collector_user_id?: number;
+  /** UPI ID the payment was received at (approved agent UPI claims; server-set). */
+  payee_vpa?: string;
+  payee_name?: string;
   created_at: string;
   updated_at: string;
 }
@@ -62,6 +65,8 @@ function toCollection(w: CollectionWire): Collection {
     postedByUserId: w.collector_user_id ?? w.posted_by,
     collectorType: w.collector_type,
     collectorName: w.collector_name,
+    payeeVpa: w.payee_vpa,
+    payeeName: w.payee_name,
   };
 }
 

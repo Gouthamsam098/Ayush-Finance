@@ -17,6 +17,8 @@ export interface RecoverySubmissionBase {
   createdAt: string;
   reviewedAt?: string;
   reviewNote?: string;
+  /** Claims: when the agent last edited it while pending. */
+  editedAt?: string;
 }
 
 export interface CollectionClaimSubmission extends RecoverySubmissionBase {

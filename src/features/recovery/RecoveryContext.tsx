@@ -33,7 +33,7 @@ import { recoveryApi } from '@/services/recoveryApi';
 import { ApiError } from '@/lib/api';
 import { COLLECTIONS_CHANGED_EVENT } from '@/lib/dataEvents';
 import { rememberClaimUpi, rememberCollectionUpi, upiSnapshotFromClaim, enrichCollectionClaim } from '@/lib/recoveryClaimUpi';
-import { setPromiseStatusOverlay } from '@/lib/recoveryPtpOverlay';
+import { clearPromiseStatusOverlay } from '@/lib/recoveryPtpOverlay';
 import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
 import { refreshPaymentProofs, settleClaimProofsLocally } from '@/features/customer-portal/paymentProofStore';
 
@@ -464,11 +464,17 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     if (row.agentUserId !== agentUserId) return 'You can only close your own promises.';
     if (row.status !== 'OPEN' && !config.useApi) return 'This promise is already closed.';
     if (config.useApi) {
-      setPromiseStatusOverlay(id, status);
-      const closed = { ...row, status, reviewedAt: new Date().toISOString() } as PromiseSubmission;
-      upsertCachedSubmission(closed);
-      refresh();
-      return null;
+      // Saved on the server, so every device (and the admin) sees it closed.
+      try {
+        const saved = await recoveryApi.closePromise(id, status);
+        clearPromiseStatusOverlay(id);
+        upsertCachedSubmission(saved);
+        refresh();
+        return null;
+      } catch (e) {
+        void refreshRecovery();
+        return saveErrorText(e, OFFLINE_MSG);
+      }
     }
     updateSubmission(id, {
       status,

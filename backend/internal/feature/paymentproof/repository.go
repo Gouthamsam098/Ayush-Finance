@@ -97,13 +97,17 @@ func (r *Repository) CustomerForAssignedLoan(ctx context.Context, loanID, agentI
 	return customerID, domain.LoanStatus(st), nil
 }
 
+// An agent sees proofs on the loans assigned to them, plus every screenshot they
+// uploaded themselves (their activity history keeps those after a fully paid
+// loan is released from them).
 const agentProofScope = `
-	AND EXISTS (
+	AND (p.submitted_by = $1 OR EXISTS (
 		SELECT 1 FROM loan_assignments a
 		WHERE a.loan_id = p.loan_id AND a.agent_user_id = $1
-	)`
+	))`
 
-// ListForAgent returns proofs on loans assigned to the recovery agent.
+// ListForAgent returns proofs on loans assigned to the recovery agent, and the
+// agent's own uploads.
 func (r *Repository) ListForAgent(ctx context.Context, agentID int64) ([]*domain.PaymentProof, error) {
 	q := `SELECT ` + proofColumns + liveJoin + agentProofScope + `
 		ORDER BY (p.status = 'PENDING') DESC, p.submitted_at DESC, p.id DESC
@@ -124,14 +128,16 @@ func (r *Repository) ListForAgent(ctx context.Context, agentID int64) ([]*domain
 	return out, rows.Err()
 }
 
-// AgentCanAccessProof reports whether the proof belongs to a loan assigned to the agent.
+// AgentCanAccessProof reports whether the agent may see the proof: it is on a
+// loan assigned to them, or they uploaded it.
 func (r *Repository) AgentCanAccessProof(ctx context.Context, proofID, agentID int64) (bool, error) {
 	var ok bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM payment_proofs p
-			JOIN loan_assignments a ON a.loan_id = p.loan_id AND a.agent_user_id = $2
-			WHERE p.id = $1 AND p.deleted_at IS NULL
+			WHERE p.id = $1 AND p.deleted_at IS NULL AND (p.submitted_by = $2 OR EXISTS (
+				SELECT 1 FROM loan_assignments a WHERE a.loan_id = p.loan_id AND a.agent_user_id = $2
+			))
 		)`, proofID, agentID).Scan(&ok)
 	return ok, err
 }

@@ -147,6 +147,37 @@ func (s *Service) SubmitPromise(ctx context.Context, agentID int64, in domain.Pr
 	return s.repo.FindSubmission(ctx, id, &agentID)
 }
 
+// ClosePromise lets the agent close their own open promise: FULFILLED (the
+// customer paid as promised) or CANCELLED. Closing it again with the same
+// status returns it unchanged. Records no money.
+func (s *Service) ClosePromise(ctx context.Context, id, agentID int64, status string) (*domain.RecoverySubmission, error) {
+	if !domain.IsPromiseCloseStatus(status) {
+		return nil, domain.NewValidation("Please fix the highlighted fields",
+			map[string]string{"status": "Choose FULFILLED or CANCELLED"})
+	}
+	cur, err := s.repo.FindSubmission(ctx, id, &agentID)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Type != domain.SubmissionPromise {
+		return nil, domain.NewNotFound("promise")
+	}
+	if cur.Status != domain.PromiseOpen {
+		if cur.Status == status {
+			return cur, nil
+		}
+		return nil, domain.NewConflict("This promise is already closed.")
+	}
+	ok, err := s.repo.ClosePromise(ctx, id, agentID, status)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, domain.NewConflict("This promise is already closed.")
+	}
+	return s.repo.FindSubmission(ctx, id, &agentID)
+}
+
 // ── staff review ─────────────────────────────────────────────────────────────
 
 // maxRemarkNote keeps "Recovery: <note>" inside the collection's 300-char remark.
@@ -192,6 +223,12 @@ func (s *Service) Approve(ctx context.Context, id int64, reviewer *int64) (*doma
 		remarks, reviewer, "claim-"+strconv.FormatInt(sub.ID, 10), collector)
 	if err != nil {
 		return nil, nil, err
+	}
+	// Reports show which UPI ID a UPI collection was paid to.
+	if *sub.Mode == domain.PayUPI {
+		if err := stampCollectionPayeeTx(ctx, tx, sub.LoanID, sub.ID, sub.PayeeVPA, sub.PayeeName); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := markReviewedTx(ctx, tx, sub.ID, domain.ClaimApproved, reviewer, nil); err != nil {
 		return nil, nil, err

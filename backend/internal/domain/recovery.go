@@ -99,14 +99,19 @@ const (
 	SubmissionPromise RecoverySubmissionType = "PROMISE_TO_PAY"
 )
 
-// Submission statuses. Claims: PENDING → APPROVED | REJECTED. Promises: OPEN
-// (FULFILLED / CANCELLED exist in the schema; nothing sets them yet).
+// Submission statuses. Claims: PENDING → APPROVED | REJECTED (staff review).
+// Promises: OPEN → FULFILLED | CANCELLED (closed by the agent).
 const (
-	ClaimPending  = "PENDING"
-	ClaimApproved = "APPROVED"
-	ClaimRejected = "REJECTED"
-	PromiseOpen   = "OPEN"
+	ClaimPending     = "PENDING"
+	ClaimApproved    = "APPROVED"
+	ClaimRejected    = "REJECTED"
+	PromiseOpen      = "OPEN"
+	PromiseFulfilled = "FULFILLED"
+	PromiseCancelled = "CANCELLED"
 )
+
+// IsPromiseCloseStatus reports whether s is a status a promise can be closed with.
+func IsPromiseCloseStatus(s string) bool { return s == PromiseFulfilled || s == PromiseCancelled }
 
 // RecoverySubmission is one agent submission.
 type RecoverySubmission struct {
@@ -128,6 +133,12 @@ type RecoverySubmission struct {
 	CreatedAt      time.Time
 	ReviewedAt     *time.Time
 	ReviewNote     *string
+	// UPI claims: the UPI ID / payee it was paid to, stamped by the server from
+	// the loan type's settings when filed.
+	PayeeVPA  *string
+	PayeeName *string
+	// EditedAt is when the agent last edited the claim while it was pending.
+	EditedAt *time.Time
 }
 
 const (

@@ -40,7 +40,7 @@ func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 const collectionColumns = `
 	id, receipt_no, loan_id, date, amount, mode, kind, remarks, target_due_date, posted_by,
-	collector_type, collector_name, collector_user_id, created_at, updated_at`
+	collector_type, collector_name, collector_user_id, payee_vpa, payee_name, created_at, updated_at`
 
 // Create inserts a payment, minting its RCPT-###### number from the sequence in
 // the same statement so the number is allocated atomically. Amount is stored as
@@ -353,7 +353,7 @@ func scanCollection(row rowScanner) (*domain.Collection, error) {
 	err := row.Scan(
 		&c.ID, &c.ReceiptNo, &c.LoanID, &c.Date, &amount, &mode, &kind,
 		&c.Remarks, &c.TargetDueDate, &c.PostedBy,
-		&c.CollectorType, &c.CollectorName, &c.CollectorUserID, &c.CreatedAt, &c.UpdatedAt,
+		&c.CollectorType, &c.CollectorName, &c.CollectorUserID, &c.PayeeVPA, &c.PayeeName, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

@@ -1,5 +1,14 @@
 import type { RecoverySubmission } from '@/features/recovery/types';
+import type { PaymentProofRecord } from '@/features/customer-portal/paymentProofStore';
+import { config } from '@/lib/config';
 import { fmtDate, inr } from '@/lib/format';
+
+/*
+ * The agent's activity history. API mode: built only from server records —
+ * the agent's claims and promises (filed, edited, reviewed, closed) and the
+ * screenshots they uploaded — so it is the same on every device. Demo mode
+ * also keeps the browser-local extras it always had.
+ */
 
 export type AgentActivityKind =
   | 'COLLECT_SUBMITTED'
@@ -48,6 +57,8 @@ function writeExtras(rows: ExtraRow[]) {
 export function recordAgentActivity(
   row: Omit<AgentActivityRow, 'id' | 'title'> & { title?: string; summary?: string },
 ): void {
+  // API mode derives these events from the server (see listAgentActivities).
+  if (config.useApi) return;
   const title = row.title ?? row.summary ?? 'Activity';
   const entry: ExtraRow = {
     ...row,
@@ -77,6 +88,17 @@ function submissionActivities(s: RecoverySubmission): AgentActivityRow[] {
         amountRupees: s.amount,
       },
     ];
+    if (s.editedAt) {
+      rows.push({
+        id: `${s.id}:collect-updated`,
+        ...base,
+        at: s.editedAt,
+        kind: 'COLLECT_UPDATED',
+        title: 'Collect updated',
+        detail: `${inr(s.amount)} · ${s.mode} · receipt ${fmtDate(s.receiptDate)}`,
+        amountRupees: s.amount,
+      });
+    }
     if (s.reviewedAt && s.status === 'APPROVED') {
       rows.push({
         id: `${s.id}:collect-approved`,
@@ -162,20 +184,59 @@ function extraToRow(e: ExtraRow): AgentActivityRow {
   };
 }
 
+const PROOF_STATE: Record<PaymentProofRecord['status'], string> = {
+  pending: 'awaiting review',
+  verified: 'accepted',
+  rejected: 'rejected',
+};
+
+/** Screenshots the agent attached to their own collections. */
+function proofActivities(
+  agentUserId: number,
+  submissions: RecoverySubmission[],
+  proofs: PaymentProofRecord[],
+): AgentActivityRow[] {
+  const claims = new Map(
+    submissions
+      .filter((s) => s.agentUserId === agentUserId && s.type === 'COLLECTION_CLAIM')
+      .map((s) => [s.id, s]),
+  );
+  return proofs.flatMap((p) => {
+    const claim = p.claimId ? claims.get(p.claimId) : undefined;
+    if (!claim) return [];
+    return [{
+      id: `proof:${p.id}`,
+      agentUserId,
+      at: p.submittedAt,
+      kind: 'PROOF_UPLOADED' as const,
+      loanId: claim.loanId,
+      loanNumber: claim.loanNumber,
+      customerName: claim.customerName,
+      title: 'Screenshot submitted',
+      detail: `For the ${inr(p.amountRupees)} collection · ${PROOF_STATE[p.status]}`,
+      amountRupees: p.amountRupees,
+    }];
+  });
+}
+
 /** Chronological activity for one recovery agent (newest first). */
 export function listAgentActivities(
   agentUserId: number,
   submissions: RecoverySubmission[],
+  proofs: PaymentProofRecord[] = [],
 ): AgentActivityRow[] {
   const fromSubs = submissions
     .filter((s) => s.agentUserId === agentUserId)
     .flatMap(submissionActivities);
-  const fromExtras = readExtras()
-    .filter((e) => e.agentUserId === agentUserId)
-    .map(extraToRow);
+  const fromProofs = proofActivities(agentUserId, submissions, proofs);
+  const fromExtras = config.useApi
+    ? []
+    : readExtras()
+      .filter((e) => e.agentUserId === agentUserId)
+      .map(extraToRow);
 
   const byId = new Map<string, AgentActivityRow>();
-  for (const row of [...fromSubs, ...fromExtras]) {
+  for (const row of [...fromSubs, ...fromProofs, ...fromExtras]) {
     byId.set(row.id, row);
   }
   return [...byId.values()].sort((a, b) => b.at.localeCompare(a.at));

@@ -98,8 +98,11 @@ type collectionResponse struct {
 	CollectorType   *string `json:"collector_type,omitempty"`
 	CollectorName   *string `json:"collector_name,omitempty"`
 	CollectorUserID *int64  `json:"collector_user_id,omitempty"`
-	CreatedAt       string  `json:"created_at"`
-	UpdatedAt       string  `json:"updated_at"`
+	// UPI ID the payment was received at, when known (approved agent UPI claims).
+	PayeeVPA  *string `json:"payee_vpa,omitempty"`
+	PayeeName *string `json:"payee_name,omitempty"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
 }
 
 func toResponse(c *domain.Collection) collectionResponse {
@@ -113,6 +116,7 @@ func toResponse(c *domain.Collection) collectionResponse {
 		Date: c.Date.Format("2006-01-02"), Amount: c.Amount.Rupees(), Mode: string(c.Mode),
 		Kind: string(c.Kind), Remarks: c.Remarks, TargetDueDate: target, PostedBy: c.PostedBy,
 		CollectorType: c.CollectorType, CollectorName: c.CollectorName, CollectorUserID: c.CollectorUserID,
+		PayeeVPA: c.PayeeVPA, PayeeName: c.PayeeName,
 		CreatedAt: c.CreatedAt.Format(time.RFC3339), UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 	}
 }

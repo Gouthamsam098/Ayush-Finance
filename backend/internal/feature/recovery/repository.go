@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -170,7 +171,7 @@ func uniqueIDs(in []int64) []int64 {
 const submissionColumns = `
 	s.id, s.type, s.loan_id, l.loan_number, l.customer_id, c.name, s.agent_user_id, u.full_name,
 	s.status, s.amount, s.mode, s.receipt_date, s.promise_date, s.promised_amount, s.note,
-	s.created_at, s.reviewed_at, s.review_note`
+	s.created_at, s.reviewed_at, s.review_note, s.payee_vpa, s.payee_name, s.edited_at`
 
 const submissionJoin = `
 	FROM recovery_submissions s
@@ -190,7 +191,7 @@ func scanSubmission(row rowScanner) (*domain.RecoverySubmission, error) {
 	var mode *string
 	err := row.Scan(&s.ID, &typ, &s.LoanID, &s.LoanNumber, &s.CustomerID, &s.CustomerName, &s.AgentUserID, &s.AgentName,
 		&s.Status, &amount, &mode, &s.ReceiptDate, &s.PromiseDate, &promised, &s.Note,
-		&s.CreatedAt, &s.ReviewedAt, &s.ReviewNote)
+		&s.CreatedAt, &s.ReviewedAt, &s.ReviewNote, &s.PayeeVPA, &s.PayeeName, &s.EditedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -246,9 +247,17 @@ func (r *Repository) FindSubmission(ctx context.Context, id int64, agentID *int6
 // unique index backs the service's own check against a concurrent double submit.
 func (r *Repository) CreateClaim(ctx context.Context, agentID int64, in domain.ClaimInput) (int64, error) {
 	var id int64
+	// A UPI claim records the UPI ID the loan type's customers pay to (from
+	// Settings, never from the client); other modes record none.
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO recovery_submissions (type, loan_id, agent_user_id, status, amount, mode, receipt_date, note)
-		VALUES ('COLLECTION_CLAIM', $1, $2, 'PENDING', $3, $4, $5, $6) RETURNING id`,
+		INSERT INTO recovery_submissions (type, loan_id, agent_user_id, status, amount, mode, receipt_date, note,
+		                                  payee_vpa, payee_name)
+		SELECT 'COLLECTION_CLAIM', $1::bigint, $2::bigint, 'PENDING', $3::bigint, $4::varchar, $5::date, $6::varchar,
+		       u.payee_vpa, u.payee_name
+		FROM (SELECT 1) one
+		LEFT JOIN loans ln ON ln.id = $1::bigint
+		LEFT JOIN loan_type_upi u ON u.loan_type = ln.type AND $4::varchar = 'UPI'
+		RETURNING id`,
 		in.LoanID, agentID, in.Amount.DBRupees(), string(in.Mode), in.ReceiptDate, nilIfBlank(in.Note)).Scan(&id)
 	if isPendingClaimConflict(err) {
 		return 0, errPendingClaim
@@ -265,10 +274,15 @@ func (r *Repository) UpdatePendingClaim(ctx context.Context, id, agentID int64, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `
-		UPDATE recovery_submissions
-		SET amount = $3, mode = $4, receipt_date = $5, note = $6, updated_at = now()
-		WHERE id = $1 AND agent_user_id = $2 AND type = 'COLLECTION_CLAIM' AND status = 'PENDING' AND deleted_at IS NULL`,
-		id, agentID, in.Amount.DBRupees(), string(in.Mode), in.ReceiptDate, nilIfBlank(in.Note))
+		UPDATE recovery_submissions s
+		SET amount = $3, mode = $4::varchar, receipt_date = $5, note = $6, updated_at = now(), edited_at = now(),
+		    payee_vpa = u.payee_vpa, payee_name = u.payee_name
+		FROM (SELECT 1) one
+		LEFT JOIN loans ln ON ln.id = $7::bigint
+		LEFT JOIN loan_type_upi u ON u.loan_type = ln.type AND $4::varchar = 'UPI'
+		WHERE s.id = $1 AND s.agent_user_id = $2 AND s.loan_id = $7::bigint
+		  AND s.type = 'COLLECTION_CLAIM' AND s.status = 'PENDING' AND s.deleted_at IS NULL`,
+		id, agentID, in.Amount.DBRupees(), string(in.Mode), in.ReceiptDate, nilIfBlank(in.Note), in.LoanID)
 	if err != nil {
 		return false, err
 	}
@@ -281,6 +295,34 @@ func (r *Repository) UpdatePendingClaim(ctx context.Context, id, agentID int64, 
 		return false, err
 	}
 	return true, tx.Commit(ctx)
+}
+
+// ClosePromise closes the agent's own OPEN promise as FULFILLED or CANCELLED,
+// stamping when and by whom. Returns false when it is not the agent's open
+// promise (already closed, or not theirs).
+func (r *Repository) ClosePromise(ctx context.Context, id, agentID int64, status string) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE recovery_submissions
+		SET status = $3, reviewed_by = $2, reviewed_at = now(), updated_at = now()
+		WHERE id = $1 AND agent_user_id = $2 AND type = 'PROMISE_TO_PAY' AND status = 'OPEN' AND deleted_at IS NULL`,
+		id, agentID, status)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// stampCollectionPayeeTx copies an approved UPI claim's payee onto the
+// collection rows its approval just recorded (idempotency key "claim-<id>-<n>").
+func stampCollectionPayeeTx(ctx context.Context, tx pgx.Tx, loanID, claimID int64, vpa, name *string) error {
+	if vpa == nil {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE collections SET payee_vpa = $3, payee_name = $4
+		WHERE loan_id = $1 AND idempotency_key LIKE $2 AND deleted_at IS NULL`,
+		loanID, "claim-"+strconv.FormatInt(claimID, 10)+"-%", *vpa, name)
+	return err
 }
 
 // closeClaimProofsTx settles the screenshots awaiting review for a claim being

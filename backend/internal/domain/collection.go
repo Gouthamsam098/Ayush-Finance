@@ -64,8 +64,12 @@ type Collection struct {
 	CollectorType   *string
 	CollectorName   *string
 	CollectorUserID *int64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// The UPI ID a UPI payment was received at, when known (an approved agent
+	// UPI claim, stamped by the server from Settings). Display only.
+	PayeeVPA  *string
+	PayeeName *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Collected is the split of a loan's recorded collections. Interest and
