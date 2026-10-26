@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/anush-capitals/lms-backend/internal/domain"
 	"github.com/jackc/pgx/v5"
@@ -227,50 +228,70 @@ func (r *Repository) SumByLoan(ctx context.Context, loanID int64) (domain.Collec
 }
 
 // sumByLoan holds the query so it can run on the pool or inside a transaction
-// (see SumByLoanTx) without the SQL being written twice.
+// (see SumByLoanTx) without the SQL being written twice. A loan with no
+// payments sums to the zero Collected.
 func (r *Repository) sumByLoan(ctx context.Context, q querier, loanID int64) (domain.Collected, error) {
-	var interest, principal int64
-	err := q.QueryRow(ctx, `
-		SELECT
-			COALESCE(SUM(amount) FILTER (WHERE kind = 'INTEREST'), 0),
-			COALESCE(SUM(amount) FILTER (WHERE kind = 'PRINCIPAL'), 0)
-		FROM collections WHERE loan_id = $1 AND deleted_at IS NULL`, loanID).
-		Scan(&interest, &principal)
+	m, err := sumByLoans(ctx, q, []int64{loanID})
 	if err != nil {
 		return domain.Collected{}, err
 	}
-	return domain.Collected{
-		Interest:  domain.PaiseFromDBRupees(interest),
-		Principal: domain.PaiseFromDBRupees(principal),
-	}, nil
+	return m[loanID], nil
 }
 
 // SumByLoans returns split collected totals keyed by loan ID for the given
 // loans, in one round-trip — used to render outstanding across a loan list
 // without an N+1 query.
 func (r *Repository) SumByLoans(ctx context.Context, loanIDs []int64) (map[int64]domain.Collected, error) {
+	return sumByLoans(ctx, r.pool, loanIDs)
+}
+
+// sumByLoans is the one query behind SumByLoan(s). Besides the interest and
+// principal buckets it finds PrincipalRepaidOn: the receipt date of the
+// PRINCIPAL payment whose running total (date, then id order) first reaches the
+// loan's principal. Both sides are whole rupees in the DB.
+func sumByLoans(ctx context.Context, q querier, loanIDs []int64) (map[int64]domain.Collected, error) {
 	out := make(map[int64]domain.Collected, len(loanIDs))
 	if len(loanIDs) == 0 {
 		return out, nil
 	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT loan_id,
-			COALESCE(SUM(amount) FILTER (WHERE kind = 'INTEREST'), 0),
-			COALESCE(SUM(amount) FILTER (WHERE kind = 'PRINCIPAL'), 0)
-		FROM collections WHERE loan_id = ANY($1) AND deleted_at IS NULL
-		GROUP BY loan_id`, loanIDs)
+	rows, err := q.Query(ctx, `
+		WITH principal_running AS (
+			SELECT loan_id, date,
+				SUM(amount) OVER (PARTITION BY loan_id ORDER BY date, id) AS running
+			FROM collections
+			WHERE loan_id = ANY($1) AND deleted_at IS NULL AND kind = 'PRINCIPAL'
+		), repaid AS (
+			SELECT p.loan_id, MIN(p.date) AS repaid_on
+			FROM principal_running p JOIN loans l ON l.id = p.loan_id
+			WHERE p.running >= l.principal
+			GROUP BY p.loan_id
+		)
+		SELECT c.loan_id,
+			COALESCE(SUM(c.amount) FILTER (WHERE c.kind = 'INTEREST'), 0),
+			COALESCE(SUM(c.amount) FILTER (WHERE c.kind = 'PRINCIPAL'), 0),
+			r.repaid_on
+		FROM collections c LEFT JOIN repaid r ON r.loan_id = c.loan_id
+		WHERE c.loan_id = ANY($1) AND c.deleted_at IS NULL
+		GROUP BY c.loan_id, r.repaid_on`, loanIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id, interest, principal int64
-		if err := rows.Scan(&id, &interest, &principal); err != nil {
+		var repaidOn *time.Time
+		if err := rows.Scan(&id, &interest, &principal, &repaidOn); err != nil {
 			return nil, err
 		}
+		if repaidOn != nil {
+			// A DATE scans as UTC midnight; keep the calendar day, in local time.
+			d := time.Date(repaidOn.Year(), repaidOn.Month(), repaidOn.Day(), 0, 0, 0, 0, time.Local)
+			repaidOn = &d
+		}
 		out[id] = domain.Collected{
-			Interest:  domain.PaiseFromDBRupees(interest),
-			Principal: domain.PaiseFromDBRupees(principal),
+			Interest:          domain.PaiseFromDBRupees(interest),
+			Principal:         domain.PaiseFromDBRupees(principal),
+			PrincipalRepaidOn: repaidOn,
 		}
 	}
 	return out, rows.Err()

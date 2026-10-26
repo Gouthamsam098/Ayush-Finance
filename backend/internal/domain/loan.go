@@ -235,8 +235,12 @@ func (l *Loan) NextDue(c Collected, now time.Time) *time.Time {
 			return l.NextDueDate
 		}
 		paid := int(int64(c.Interest) / int64(perPeriod))
-		if accrued := l.interestPeriodsElapsed(now); paid > accrued {
+		accrued := l.interestPeriodsElapsed(l.interestAccrualEnd(c, now))
+		if paid > accrued {
 			paid = accrued
+		}
+		if paid >= accrued && l.RemainingPrincipal(c.Principal) == 0 {
+			return nil // principal repaid and every accrued period paid: nothing further falls due
 		}
 		step := paid + 1
 		if l.Type == LoanFlexible {
@@ -447,11 +451,29 @@ func (l *Loan) InterestPerPeriod() Paise {
 	return l.Interest
 }
 
+// interestAccrualEnd is the last day interest accrues on an interest-only loan:
+// `now`, or the day the principal was repaid in full when that is earlier.
+// Interest is the charge for holding the principal; once it is back, no further
+// period falls due. Without this cut-off a settled loan kept accruing on a zero
+// principal, so a later edit or delete of any of its payments re-evaluated it
+// against interest that was never owed, reopened it with phantom arrears and
+// put it in the recovery queue.
+func (l *Loan) interestAccrualEnd(c Collected, now time.Time) time.Time {
+	if c.PrincipalRepaidOn == nil || l.RemainingPrincipal(c.Principal) > 0 {
+		return now
+	}
+	if end := truncateToDay(*c.PrincipalRepaidOn); end.Before(truncateToDay(now)) {
+		return end
+	}
+	return now
+}
+
 // TotalDueForInterestOnly is the accrued-but-unpaid INTEREST for an
-// interest-only loan: accruedInterest − interestPaid. Principal repayments do
-// not reduce this (they settle the principal, tracked separately).
-func (l *Loan) TotalDueForInterestOnly(interestPaid Paise, now time.Time) Paise {
-	return l.AccruedInterest(now).Sub(interestPaid)
+// interest-only loan: interest accrued up to interestAccrualEnd − interest paid.
+// Principal repayments do not reduce this (they settle the principal, tracked
+// separately); repaying it in full only stops further accrual.
+func (l *Loan) TotalDueForInterestOnly(c Collected, now time.Time) Paise {
+	return l.AccruedInterest(l.interestAccrualEnd(c, now)).Sub(c.Interest)
 }
 
 // RemainingPrincipal is the principal still owed on an interest-only loan:
@@ -494,7 +516,7 @@ func (l *Loan) Outstanding(c Collected, now time.Time) Paise {
 	}
 	// Remaining principal (settled via PRINCIPAL payments) plus any
 	// accrued-but-unpaid interest. Interest payments never touch principal.
-	interestDue := l.TotalDueForInterestOnly(c.Interest, now)
+	interestDue := l.TotalDueForInterestOnly(c, now)
 	if interestDue < 0 {
 		interestDue = 0 // paid ahead; surplus interest is not a credit
 	}

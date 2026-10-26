@@ -202,7 +202,20 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
     // Flexible charges its first cycle on the loan date (day 0), so it's one
     // cycle ahead of the other cadences; its slot k is due at loanDate + (k−1)·step.
     const flexSameDay = loan.type === 'FLEXIBLE';
-    const elapsed = Math.min(Math.floor(daysSince / slotStep) + (flexSameDay ? 1 : 0), slotCap); // slots due by today
+    // Interest-only: once the principal is repaid in full, interest stops on
+    // that day (d.interestAccrualEndFor) — no later cycle falls due, so none
+    // renders as Overdue and no Next due row is appended. Otherwise a loan
+    // reopened by a payment edit showed months of interest on a zero principal,
+    // and Clear Overdue / Settle & close prefilled it.
+    const principalRepaid = interestOnly && d.principalCollectedFor(loan.id) >= loan.principal;
+    const accrualEnd = interestOnly ? d.interestAccrualEndFor(loan) : todayStr;
+    let elapsed = Math.min(Math.floor(daysSince / slotStep) + (flexSameDay ? 1 : 0), slotCap); // slots due by today
+    if (accrualEnd < todayStr) {
+      // Exact count of slots due on or before the repayment day — the same
+      // cycles the backend's accrual charges.
+      elapsed = 0;
+      while (elapsed < 100000 && slotDueDateFor(elapsed + 1) <= accrualEnd) elapsed += 1;
+    }
     const loanColls = d.collections.filter((c) => c.loanId === loan.id);
     const pool = interestOnly
       ? loanColls.filter((c) => c.kind !== 'PRINCIPAL').reduce((s, c) => s + c.amount, 0)
@@ -319,7 +332,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
     // renders ONLY regular-funded slots — the Settled row covers the rest.
     const lastFunded = slotAlloc.size ? Math.max(...Array.from(slotAlloc.keys())) : 0;
     let count = collapse ? fundedBefore : Math.max(elapsed, lastFunded);
-    if (!collapse && loan.status === 'ACTIVE') {
+    if (!collapse && loan.status === 'ACTIVE' && !principalRepaid) {
       let hasActionable = false;
       for (let k = 1; k <= count; k++) {
         if (slotDueDate(k) >= todayStr && (slotAlloc.get(k) ?? 0) < slotDue) { hasActionable = true; break; }

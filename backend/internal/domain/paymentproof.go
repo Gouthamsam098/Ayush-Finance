@@ -132,7 +132,7 @@ func SplitPortalPayment(l *Loan, collected Collected, amount Paise, now time.Tim
 	if !l.BehavesInterestOnly() {
 		return []PaymentPart{{Kind: KindInterest, Amount: amount}}, nil
 	}
-	interestDue := l.TotalDueForInterestOnly(collected.Interest, now)
+	interestDue := l.TotalDueForInterestOnly(collected, now)
 	if interestDue < 0 {
 		interestDue = 0 // interest paid ahead is not a credit
 	}

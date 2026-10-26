@@ -114,7 +114,7 @@ func (h *Handler) toResponse(l *domain.Loan, collected domain.Collected) loanRes
 	case l.Type.IsInstalmentLoan():
 		totalDue = l.TotalDueForDaily(collected.Total(), now)
 	case l.BehavesInterestOnly(): // interest-only types AND monthly-mode Vehicle/Property
-		totalDue = l.TotalDueForInterestOnly(collected.Interest, now)
+		totalDue = l.TotalDueForInterestOnly(collected, now)
 	case l.BehavesEMI():
 		totalDue = l.TotalDueForMonthly(collected.Total(), now)
 	}

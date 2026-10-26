@@ -79,6 +79,11 @@ type Collection struct {
 type Collected struct {
 	Interest  Paise
 	Principal Paise
+	// PrincipalRepaidOn is the receipt date of the PRINCIPAL payment that
+	// brought the principal repaid up to the loan's principal (payments taken in
+	// date, then id, order); nil while any principal is still owed. Interest-only
+	// loans stop accruing on this day — see Loan.interestAccrualEnd.
+	PrincipalRepaidOn *time.Time
 }
 
 // Total is the sum of both buckets — the collected figure for loan types that

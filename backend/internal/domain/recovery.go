@@ -15,7 +15,7 @@ func ScheduleShortfall(l *Loan, collected Collected, now time.Time) Paise {
 	var due Paise
 	switch {
 	case l.BehavesInterestOnly():
-		due = l.TotalDueForInterestOnly(collected.Interest, now)
+		due = l.TotalDueForInterestOnly(collected, now)
 	case l.Type.IsDailyLoan():
 		due = l.TotalDueForDaily(collected.Total(), now)
 	default:

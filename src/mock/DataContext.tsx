@@ -59,10 +59,11 @@ export const cadenceDaysForLoan = (loan: Loan) =>
  *  loan interest = principal × rate/100 (once, not per month). */
 export const emiFor = (principal: number, interest: number, months: number) =>
   months > 0 ? Math.round((principal + interest) / months) : 0;
-/** Calendar days elapsed since the loan date, Day 1 = loan date, uncapped. */
-export const elapsedDaysSinceLoan = (loanDate: string) => {
+/** Calendar days elapsed since the loan date, Day 1 = loan date, uncapped.
+ *  `asOf` (default today) lets accrual stop at an earlier day. */
+export const elapsedDaysSinceLoan = (loanDate: string, asOf: string = todayISO()) => {
   const [ly, lm, ld] = loanDate.split('-').map(Number);
-  const [ty, tm, td] = todayISO().split('-').map(Number);
+  const [ty, tm, td] = asOf.split('-').map(Number);
   const start = new Date(ly, lm - 1, ld);
   const today = new Date(ty, tm - 1, td);
   return Math.max(0, Math.round((today.getTime() - start.getTime()) / 86400000) + 1);
@@ -72,8 +73,8 @@ export const elapsedDaysSinceLoan = (loanDate: string) => {
  *  counts from its due day — never a day early: day 30 = 0, day 31 = 1,
  *  day 60 = 1, day 61 = 2. Keeps accrual in lock-step with the ledger's cycle
  *  rows and nextDue (previously a cycle accrued one day before it was due). */
-export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30) =>
-  Math.floor(Math.max(0, elapsedDaysSinceLoan(loanDate) - 1) / cycleDays);
+export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30, asOf: string = todayISO()) =>
+  Math.floor(Math.max(0, elapsedDaysSinceLoan(loanDate, asOf) - 1) / cycleDays);
 /** Number of CALENDAR-MONTH cycles fallen due since the loan date: cycle k is
  *  due on the same day-of-month, k months on (addMonths clamps a 29th/30th/31st
  *  to the last day of a short month). Counts from the due day, never a day
@@ -87,12 +88,39 @@ export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30) =>
  *  Used ONLY for monthly-cadence interest and EMI counting. Daily loans and
  *  Flexible (whose cycle is its own numDays, not a month) keep the day-count
  *  helper above. */
-export const calendarCyclesElapsed = (loanDate: string) => {
-  const today = todayISO();
+export const calendarCyclesElapsed = (loanDate: string, asOf: string = todayISO()) => {
   let k = 0;
   // Loans run for years, not centuries; the guard just bounds the loop.
-  while (k < 1200 && addMonths(loanDate, k + 1, 0) <= today) k += 1;
+  while (k < 1200 && addMonths(loanDate, k + 1, 0) <= asOf) k += 1;
   return k;
+};
+/** Interest periods accrued on an interest-only loan by `asOf` (mirrors the
+ *  backend's Loan.interestPeriodsElapsed):
+ *   • Daily Interest: from the DAY AFTER disbursement (elapsed − 1).
+ *   • Flexible: FIRST cycle on the loan date itself → completed cycles + 1.
+ *   • Monthly Interest & monthly-mode Vehicle/Property: calendar months. */
+const interestPeriodsAsOf = (loan: Loan, asOf: string) => {
+  const cadence = cadenceDaysForLoan(loan);
+  if (loan.type === 'FLEXIBLE') return monthlyCyclesElapsed(loan.loanDate, cadence, asOf) + 1;
+  if (cadence === 1) return Math.max(0, elapsedDaysSinceLoan(loan.loanDate, asOf) - 1);
+  return calendarCyclesElapsed(loan.loanDate, asOf);
+};
+type PrincipalRow = { date: string; id: number; amount: number };
+/** Last day interest accrues on an interest-only loan (mirrors the backend's
+ *  Loan.interestAccrualEnd): today, or the day the principal was repaid in full
+ *  when that is earlier — the PRINCIPAL payment (date, then id order) whose
+ *  running total first reaches the principal. Once the principal is back no
+ *  further period falls due; without this a settled loan kept accruing on a
+ *  zero principal, and any later payment edit reopened it with phantom arrears.
+ *  `principalRows` must be sorted by date, then id. */
+const interestAccrualEnd = (loan: Loan, principalRows: readonly PrincipalRow[]) => {
+  const today = todayISO();
+  let running = 0;
+  for (const p of principalRows) {
+    running += p.amount;
+    if (running >= loan.principal) return p.date < today ? p.date : today;
+  }
+  return today;
 };
 /** Cycle length: Flexible uses its own chosen term, everything else a fixed 30-day cycle. */
 export const cycleDaysFor = (loan: Loan) => (loan.type === 'FLEXIBLE' ? loan.numDays ?? 30 : 30);
@@ -223,6 +251,9 @@ interface DataShape {
   totalDueForDaily: (loan: Loan) => number;
   totalDueForMonthly: (loan: Loan) => number;
   totalDueForInterestOnly: (loan: Loan) => number;
+  /** Last day an interest-only loan accrues interest: today, or the day its
+   *  principal was repaid in full if earlier (YYYY-MM-DD). */
+  interestAccrualEndFor: (loan: Loan) => string;
   outstandingFor: (loan: Loan) => number;
   nextDueForDaily: (loan: Loan) => string | null;
   /** Amount-based live next-due for ANY loan type (mirrors backend Loan.NextDue). */
@@ -417,17 +448,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
    *  separately; a payment with no explicit kind counts as interest (the
    *  historical default), matching the previous filter predicates exactly. */
   const paidByLoan = useMemo(() => {
-    const m = new Map<number, { total: number; interest: number; principal: number }>();
+    const m = new Map<number, { total: number; interest: number; principal: number; principalRows: PrincipalRow[] }>();
     for (const c of collections) {
       let e = m.get(c.loanId);
-      if (!e) { e = { total: 0, interest: 0, principal: 0 }; m.set(c.loanId, e); }
+      if (!e) { e = { total: 0, interest: 0, principal: 0, principalRows: [] }; m.set(c.loanId, e); }
       e.total += c.amount;
-      if (c.kind === 'PRINCIPAL') e.principal += c.amount;
-      else e.interest += c.amount;
+      if (c.kind === 'PRINCIPAL') {
+        e.principal += c.amount;
+        e.principalRows.push({ date: c.date, id: c.id, amount: c.amount });
+      } else e.interest += c.amount;
+    }
+    // Receipt order (date, then id) — what interestAccrualEnd walks.
+    for (const e of m.values()) {
+      if (e.principalRows.length > 1) e.principalRows.sort((a, b) => (a.date === b.date ? a.id - b.id : a.date < b.date ? -1 : 1));
     }
     return m;
   }, [collections]);
-  const ZERO_PAID = { total: 0, interest: 0, principal: 0 };
+  const ZERO_PAID = { total: 0, interest: 0, principal: 0, principalRows: [] as PrincipalRow[] };
   const paidFor = (loanId: number) => paidByLoan.get(loanId) ?? ZERO_PAID;
 
   // Mock-mode auto-close: when a loan's outstanding reaches 0 it is marked
@@ -449,12 +486,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (isInstalmentLoan(l.type)) outstanding = Math.max(0, l.principal - totalPaid);
         else if (behavesEmi(l)) outstanding = Math.max(0, l.principal + l.interest - totalPaid);
         else if (behavesInterestOnly(l)) {
-          const cadence = cadenceDaysForLoan(l);
-          // Flexible: 1st cycle on the loan date → cycles + 1; Daily: elapsed − 1;
-          // Monthly Interest & monthly-mode Vehicle/Property: completed cycles.
-          const periods = l.type === 'FLEXIBLE' ? monthlyCyclesElapsed(l.loanDate, cadence) + 1
-            : cadence === 1 ? Math.max(0, elapsedDaysSinceLoan(l.loanDate) - 1)
-            : calendarCyclesElapsed(l.loanDate);
+          // Accrual stops the day the principal was repaid in full.
+          const periods = interestPeriodsAsOf(l, interestAccrualEnd(l, paid.principalRows));
           const interestDue = Math.max(0, periods * l.interest - interestPaid);
           outstanding = Math.max(0, l.principal - principalPaid) + interestDue;
         } else outstanding = Math.max(0, l.principal + l.interest - totalPaid);
@@ -499,16 +532,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
      *  period, less what's been collected. Interest per period is auto-computed:
      *  loan.interest = principal × rate/100 (per day for Daily Interest, per
      *  month for Monthly Interest). */
-    // Interest cycles accrued by today (mirrors backend Loan.AccruedInterest):
-    //  • Daily Interest: from the DAY AFTER disbursement (elapsed − 1).
-    //  • Monthly Interest: completed 30-day cycles.
-    //  • Flexible: FIRST cycle on the loan date itself → completed cycles + 1.
-    const interestPeriodsElapsed = (loan: Loan) => {
-      const cadence = cadenceDaysForLoan(loan);
-      if (loan.type === 'FLEXIBLE') return monthlyCyclesElapsed(loan.loanDate, cadence) + 1;
-      if (cadence === 1) return Math.max(0, elapsedDaysSinceLoan(loan.loanDate) - 1);
-      return calendarCyclesElapsed(loan.loanDate);
-    };
+    // Interest cycles accrued (mirrors backend Loan.AccruedInterest) — by today,
+    // or by the day the principal was repaid in full if earlier.
+    const interestAccrualEndFor = (loan: Loan) => interestAccrualEnd(loan, paidFor(loan.id).principalRows);
+    const interestPeriodsElapsed = (loan: Loan) => interestPeriodsAsOf(loan, interestAccrualEndFor(loan));
     const totalDueForInterestOnly = (loan: Loan) => {
       // Only interest-kind payments cover accrued interest; principal payments settle separately.
       return Math.max(0, interestPeriodsElapsed(loan) * loan.interest - interestCollectedFor(loan.id));
@@ -557,10 +584,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // that are still unpaid, so a loan in arrears reported a future due date
         // and vanished from the dashboard's overdue list. Advance money still
         // counts once its cycle accrues; it can no longer mask real arrears.
-        const paid = Math.min(
-          Math.floor(interestCollectedFor(loan.id) / per),
-          interestPeriodsElapsed(loan),
-        );
+        const accrued = interestPeriodsElapsed(loan);
+        const paid = Math.min(Math.floor(interestCollectedFor(loan.id) / per), accrued);
+        // Principal repaid and every accrued period paid: nothing further falls due.
+        if (paid >= accrued && principalCollectedFor(loan.id) >= loan.principal) return null;
         // Flexible's first cycle is due on the loan date (day 0), so its steps
         // are one earlier than Daily/Monthly Interest (first due at +cadence).
         const step = loan.type === 'FLEXIBLE' ? paid : paid + 1;
@@ -771,7 +798,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       },
       addDocument: (d) => setDocuments((s) => [{ ...d, id: allocId() }, ...s]),
       deleteDocument: (id) => setDocuments((s) => s.filter((d) => d.id !== id)),
-      collectedFor, interestCollectedFor, principalCollectedFor, outstandingFor, nextDueForDaily, nextDueFor, totalDueForDaily, totalDueForMonthly, totalDueForInterestOnly,
+      collectedFor, interestCollectedFor, principalCollectedFor, outstandingFor, nextDueForDaily, nextDueFor, totalDueForDaily, totalDueForMonthly, totalDueForInterestOnly, interestAccrualEndFor,
     };
     // `paidByLoan` (read via paidFor) is derived from `collections`, which is
     // already a dependency — so the index is never stale here.

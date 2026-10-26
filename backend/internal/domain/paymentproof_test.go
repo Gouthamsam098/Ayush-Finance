@@ -23,7 +23,7 @@ func TestSplitPortalPayment(t *testing.T) {
 		LoanDate: day(2026, 1, 1), Status: StatusActive,
 	}
 	paid := Collected{Interest: rs(2000)}
-	if due := monthly.TotalDueForInterestOnly(paid.Interest, now); due != rs(4000) {
+	if due := monthly.TotalDueForInterestOnly(paid, now); due != rs(4000) {
 		t.Fatalf("fixture: interest due got %s, want ₹4,000", due)
 	}
 	emi := &Loan{
