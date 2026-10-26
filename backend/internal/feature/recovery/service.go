@@ -183,12 +183,29 @@ func (s *Service) ClosePromise(ctx context.Context, id, agentID int64, status st
 // maxRemarkNote keeps "Recovery: <note>" inside the collection's 300-char remark.
 const maxRemarkNote = 280
 
+// ReviewedClaim is a collection claim as a reviewer saw it when deciding.
+type ReviewedClaim struct {
+	Amount      domain.Paise
+	ReceiptDate string // YYYY-MM-DD
+	Mode        domain.PayMode
+}
+
+func (r *ReviewedClaim) matches(sub *domain.RecoverySubmission) bool {
+	return sub.Amount != nil && sub.ReceiptDate != nil && sub.Mode != nil &&
+		*sub.Amount == r.Amount && *sub.Mode == r.Mode && sub.ReceiptDate.Format("2006-01-02") == r.ReceiptDate
+}
+
 // Approve accepts a pending claim: its amount is recorded as collection(s)
 // dated on the agent's receipt date and credited to the agent, the claim is
 // marked APPROVED, and — when nothing is due any more — the loan is released
 // from the agent. All in ONE transaction: the money lands exactly once or not
 // at all. Approving an approved claim returns it unchanged.
-func (s *Service) Approve(ctx context.Context, id int64, reviewer *int64) (*domain.RecoverySubmission, []*domain.Collection, error) {
+//
+// seen, when given, is the claim as the reviewer saw it. A pending claim stays
+// editable by its agent, so between the reviewer opening it and pressing
+// Approve the amount, date or mode could change; approving would then record
+// money nobody reviewed. If the locked claim no longer matches, it is refused.
+func (s *Service) Approve(ctx context.Context, id int64, reviewer *int64, seen *ReviewedClaim) (*domain.RecoverySubmission, []*domain.Collection, error) {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -207,6 +224,11 @@ func (s *Service) Approve(ctx context.Context, id int64, reviewer *int64) (*doma
 		return sub, nil, tx.Commit(ctx)
 	case domain.ClaimRejected:
 		return nil, nil, domain.NewConflict("This submission was rejected and cannot be approved")
+	}
+	if seen != nil && !seen.matches(sub) {
+		return nil, nil, domain.NewConflict("The agent changed this collection after you opened it — it now reads " +
+			sub.Amount.INR() + " by " + string(*sub.Mode) + " on " + sub.ReceiptDate.Format("02 Jan 2006") +
+			". Review it again before accepting.")
 	}
 
 	remarks := "Recovery agent collection (approved)"
@@ -521,6 +543,14 @@ func (s *Service) hasActiveAgent(ctx context.Context) bool {
 // (also after a restart: a missed slot runs on the first check after it).
 func (s *Service) RunScheduler(ctx context.Context, log *slog.Logger) {
 	check := func() {
+		// A panic in one run must not kill the goroutine — and, since this
+		// runs outside any HTTP handler, nothing else would recover it: the
+		// whole API would crash-loop on the same overdue data every restart.
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Error("recovery auto-assign panicked; will retry on the next tick", "panic", rec)
+			}
+		}()
 		sched, err := s.repo.GetSchedule(ctx)
 		if err != nil {
 			log.Warn("recovery auto-assign: schedule read failed", "error", err)

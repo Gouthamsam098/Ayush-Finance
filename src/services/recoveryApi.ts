@@ -115,8 +115,12 @@ export const recoveryApi = {
     return ((await api.get<SubmissionWire[]>('/recovery/submissions')) ?? []).map(toSubmission);
   },
 
-  async approve(id: string): Promise<RecoverySubmission> {
-    return toSubmission(await api.post<SubmissionWire>(`/recovery/submissions/${id}/approve`, {}));
+  /** Approve a claim. `seen` is the claim as the reviewer saw it: the server
+   *  refuses (409) if the agent has changed it since, so nobody approves an
+   *  amount they did not review. */
+  async approve(id: string, seen?: { amount: number; receiptDate: string; mode: string }): Promise<RecoverySubmission> {
+    const body = seen ? { expected_amount: seen.amount, expected_receipt_date: seen.receiptDate, expected_mode: seen.mode } : {};
+    return toSubmission(await api.post<SubmissionWire>(`/recovery/submissions/${id}/approve`, body));
   },
 
   async reject(id: string, reason?: string): Promise<RecoverySubmission> {

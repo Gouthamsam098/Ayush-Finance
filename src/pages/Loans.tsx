@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/toast';
 import { Drawer } from '@/components/ui/drawer';
 import { PageHeader, HeaderPrimaryButton } from '@/components/layout/PageHeader';
 import { usePermissions } from '@/lib/permissions';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { cn } from '@/lib/utils';
 import { computeFunds, interestRealised, cashDisbursedFor } from '@/lib/funds';
 import { useInvestorCapitalVersion } from '@/lib/investments';
@@ -79,7 +80,7 @@ type LoanErrors = Partial<Record<keyof LoanForm, string>>;
 
 /** Map the backend's snake_case field errors onto the form's camelCase fields. */
 const API_FIELD_TO_FORM: Record<string, keyof LoanForm> = {
-  customer_id: 'customerId', type: 'type', principal: 'principal', rate: 'rate',
+  customer_id: 'customerId', type: 'type', repayment_mode: 'repaymentMode', principal: 'principal', rate: 'rate',
   loan_date: 'loanDate', num_days: 'numDays', contact: 'contact', remarks: 'remarks',
   vehicle_number: 'vehicleNumber', vehicle_brand: 'vehicleBrand', vehicle_name: 'vehicleName',
 };
@@ -139,7 +140,10 @@ function validateLoanForm(f: LoanForm): LoanErrors {
   else if (!isNumStr(f.rate)) e.rate = 'Enter a valid rate';
   else if (R <= 0) e.rate = 'Rate must be greater than 0';
   else if (R > MAX_RATE) e.rate = `Rate cannot exceed ${MAX_RATE}%`;
-  else if (Math.round(R * 100) !== R * 100) e.rate = 'Rate can have at most 2 decimals';
+  // Tolerance, not equality: 1.1 × 100 is 110.00000000000001 in floating point,
+  // so an exact test refused 1.10, 1.15, 2.2, 4.35… Mirrors the backend's
+  // domain.HasAtMostTwoDecimals.
+  else if (Math.abs(R * 100 - Math.round(R * 100)) >= 1e-6) e.rate = 'Rate can have at most 2 decimals';
 
   // Tenure — EMI (months) / Flexible (days)
   if (emi) {
@@ -307,6 +311,10 @@ export default function Loans() {
   // On EDIT, this loan's own CASH OUT is already inside the subtraction, so add
   // it back — otherwise editing a funded loan would look unfunded. Uses the
   // cash disbursed (not the receivable), matching computeFunds.
+  // A loan with payments keeps its terms (the server refuses changes too):
+  // changing amount, rate, type or dates would re-price every recorded receipt.
+  const termsLocked = !!form?.id && d.collectedFor(form.id) > 0;
+  const lockedCls = termsLocked ? 'cursor-not-allowed opacity-60' : undefined;
   const editingDisbursed = form?.id ? (() => {
     const orig = d.loans.find((l) => l.id === form.id);
     return orig ? cashDisbursedFor(orig) : 0;
@@ -524,7 +532,12 @@ export default function Loans() {
   const openFilters = () => { setDraft(filters); setFilterOpen(true); };
   const applyDraft = () => { setFilters(draft); setFilterOpen(false); };
 
-  const save = async () => {
+  // One write at a time: the form's Save and the confirm dialogs' actions.
+  const saveGuard = useSubmitGuard();
+  const actionGuard = useSubmitGuard();
+  const failMsg = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
+  const save = () => saveGuard.run(saveInner);
+  const saveInner = async () => {
     if (!form) return;
     // Industrial-standard validation — every field asserted before save.
     const found = validateLoanForm(form);
@@ -613,8 +626,8 @@ export default function Loans() {
         return; // keep the form open so the user can correct it
       }
     } else {
-      if (form.id) { d.updateLoan(form.id, payload); toast('Loan updated'); }
-      else { d.addLoan(payload); toast('Loan created'); }
+      if (form.id) { await d.updateLoan(form.id, payload); toast('Loan updated'); }
+      else { await d.addLoan(payload); toast('Loan created'); }
     }
     setForm(null);
   };
@@ -827,7 +840,13 @@ export default function Loans() {
                       if (outstanding > 0) { toast(`Cannot close — outstanding balance of ${inr(outstanding)} remains`, 'error'); return; }
                       setCloseTarget(l);
                     }}
-                    onReopenLoan={() => { setMenuFor(null); d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }}
+                    onReopenLoan={() => {
+                      setMenuFor(null);
+                      void actionGuard.run(async () => {
+                        try { await d.updateLoan(l.id, { status: 'ACTIVE' }); toast('Loan reopened'); }
+                        catch (e) { toast(failMsg(e, 'Failed to reopen loan'), 'error'); }
+                      });
+                    }}
                   />
                 );
               })}
@@ -997,6 +1016,7 @@ export default function Loans() {
                 already counted in fundsCeiling). */}
             <Button
               onClick={save}
+              loading={saveGuard.busy}
               disabled={fundsEnforced && !form?.id && fundsCeiling <= 0}
               title={fundsEnforced && !form?.id && fundsCeiling <= 0 ? 'No investor funds available to lend' : undefined}
             >
@@ -1007,10 +1027,20 @@ export default function Loans() {
       >
         {form && (
           <div className="space-y-4">
+            {termsLocked && (
+              <div role="note" className="flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3.5 py-3 text-[12.5px] leading-relaxed text-ink">
+                <Lock size={15} className="mt-0.5 shrink-0 text-primary" aria-hidden />
+                <span>
+                  <span className="font-bold">Payments are recorded on this loan</span>, so its customer, type, amount,
+                  rate, loan date and tenure are locked — changing them would re-price every receipt already on the
+                  ledger. Contact, remarks and vehicle details can still be edited.
+                </span>
+              </div>
+            )}
             {/* 1 — Borrower & product */}
             <FormCard icon={<User size={16} />} title="Borrower & product" color="blue">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Select label="Customer *" value={form.customerId} onChange={(e) => {
+                <Select label="Customer *" disabled={termsLocked} className={lockedCls} value={form.customerId} onChange={(e) => {
                     const custId = e.target.value;
                     set('customerId', custId);
                     if (custId) {
@@ -1019,10 +1049,10 @@ export default function Loans() {
                     }
                   }} error={errors.customerId}
                   options={[{ value: '', label: 'Select customer…' }, ...d.customers.map((c) => ({ value: String(c.id), label: `${c.name} (${c.code})` }))]} />
-                <Select label="Loan type *" value={form.type} onChange={(e) => set('type', e.target.value)} options={TYPE_OPTS} />
+                <Select label="Loan type *" disabled={termsLocked} className={lockedCls} value={form.type} onChange={(e) => set('type', e.target.value)} options={TYPE_OPTS} />
                 {/* Repayment mode — Vehicle/Property only. Tenure = EMI; Monthly = interest-only. */}
                 {isEmiLoan(form.type) && (
-                  <Select label="Repayment *" value={form.repaymentMode} onChange={(e) => set('repaymentMode', e.target.value)} options={REPAY_OPTS} />
+                  <Select label="Repayment *" disabled={termsLocked} className={lockedCls} value={form.repaymentMode} onChange={(e) => set('repaymentMode', e.target.value)} options={REPAY_OPTS} />
                 )}
               </div>
               {/* type explainer chip */}
@@ -1057,6 +1087,7 @@ export default function Loans() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Input
                   label="Principal amount *" type="number" placeholder="0"
+                  disabled={termsLocked} className={lockedCls}
                   value={form.principal}
                   onChange={(e) => set('principal', e.target.value)}
                   // Live funding feedback beats waiting for submit; the save
@@ -1069,12 +1100,12 @@ export default function Loans() {
                       : undefined
                   )}
                 />
-                <Input label={preview.emi ? 'Interest rate (% overall) *' : 'Interest rate (%) *'} type="number" step="0.01" placeholder="0" value={form.rate} onChange={(e) => set('rate', e.target.value)} error={errors.rate} />
+                <Input label={preview.emi ? 'Interest rate (% overall) *' : 'Interest rate (%) *'} type="number" step="0.01" placeholder="0" disabled={termsLocked} className={lockedCls} value={form.rate} onChange={(e) => set('rate', e.target.value)} error={errors.rate} />
                 {preview.emi && (
-                  <Input label="Tenure (months) *" type="number" min="1" placeholder="e.g. 12" value={form.numDays} onChange={(e) => set('numDays', e.target.value)} error={errors.numDays} />
+                  <Input label="Tenure (months) *" type="number" min="1" placeholder="e.g. 12" disabled={termsLocked} className={lockedCls} value={form.numDays} onChange={(e) => set('numDays', e.target.value)} error={errors.numDays} />
                 )}
                 {form.type === 'FLEXIBLE' && (
-                  <Input label="Number of days *" type="number" min="1" placeholder="e.g. 30" value={form.numDays} onChange={(e) => set('numDays', e.target.value)} error={errors.numDays} />
+                  <Input label="Number of days *" type="number" min="1" placeholder="e.g. 30" disabled={termsLocked} className={lockedCls} value={form.numDays} onChange={(e) => set('numDays', e.target.value)} error={errors.numDays} />
                 )}
               </div>
 
@@ -1106,7 +1137,7 @@ export default function Loans() {
             {/* 3 — Schedule */}
             <FormCard icon={<Calendar size={16} />} title="Schedule" color="violet">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <DatePicker label="Loan date" value={form.loanDate} onChange={(e) => set('loanDate', e.target.value)} error={errors.loanDate} />
+                <DatePicker label="Loan date" disabled={termsLocked} className={lockedCls} value={form.loanDate} onChange={(e) => set('loanDate', e.target.value)} error={errors.loanDate} />
                 <div>
                   <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">Term (auto)</span>
                   <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-semibold dark:border-white/[.08] dark:bg-white/[.04]">
@@ -1160,13 +1191,21 @@ export default function Loans() {
 
       <Dialog open={!!confirm} onClose={() => setConfirm(null)} title="Delete loan?" subtitle={confirm ? `${confirm.loanNumber} · ${custName(confirm.customerId)}` : ''}
         footer={<><Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
-          <Button variant="danger" onClick={() => { if (confirm) { d.deleteLoan(confirm.id); toast('Loan deleted', 'info'); } setConfirm(null); }}>Delete</Button></>}>
+          <Button variant="danger" loading={actionGuard.busy} onClick={() => actionGuard.run(async () => {
+            if (!confirm) return;
+            try { await d.deleteLoan(confirm.id); toast('Loan deleted', 'info'); setConfirm(null); }
+            catch (e) { toast(failMsg(e, 'Failed to delete loan'), 'error'); }
+          })}>Delete</Button></>}>
         <p className="text-sm text-muted">This removes the loan from the demo dataset. Its collections remain in history.</p>
       </Dialog>
 
       <Dialog open={!!closeTarget} onClose={() => setCloseTarget(null)} title="Close this loan?" subtitle={closeTarget ? `${closeTarget.loanNumber} · ${custName(closeTarget.customerId)}` : ''}
         footer={<><Button variant="ghost" onClick={() => setCloseTarget(null)}>Cancel</Button>
-          <Button variant="success" onClick={() => { if (closeTarget) { d.closeLoan(closeTarget.id); toast('Loan closed'); } setCloseTarget(null); }}>Close Loan</Button></>}>
+          <Button variant="success" loading={actionGuard.busy} onClick={() => actionGuard.run(async () => {
+            if (!closeTarget) return;
+            try { await d.closeLoan(closeTarget.id); toast('Loan closed'); setCloseTarget(null); }
+            catch (e) { toast(failMsg(e, 'Failed to close loan'), 'error'); }
+          })}>Close Loan</Button></>}>
         {closeTarget && (
           <div className="space-y-2 text-sm">
             <div className="flex justify-between"><span className="text-muted">Customer</span><span className="font-semibold">{custName(closeTarget.customerId)}</span></div>

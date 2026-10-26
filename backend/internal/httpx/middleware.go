@@ -2,8 +2,10 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -67,8 +69,11 @@ func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				logger.FromContext(r.Context()).Error("panic recovered", "panic", rec)
-				Error(w, r, domain.NewValidation("An internal error occurred", nil))
+				logger.FromContext(r.Context()).Error("panic recovered", "panic", rec, "stack", string(debug.Stack()))
+				// A non-domain error answers 500 INTERNAL_ERROR with a generic
+				// message — a panic is a server fault, and reporting it as a 400
+				// hid it from 5xx alerting.
+				Error(w, r, errors.New("panic recovered"))
 			}
 		}()
 		next.ServeHTTP(w, r)

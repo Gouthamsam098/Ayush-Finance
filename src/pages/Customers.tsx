@@ -133,6 +133,10 @@ export default function Customers() {
   const [editId, setEditId] = useState<number | null>(null);
   // In-flight flag for the save round-trip (create also uploads documents).
   const [saving, setSaving] = useState(false);
+  // Delete-customer in flight (state for the spinner, ref to block a same-frame
+  // second click) — the delete cascades to loans, payments and documents.
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
   const [view, setView] = useState<Customer | null>(null);
   const [confirm, setConfirm] = useState<Customer | null>(null);
   const [kycKind, setKycKind] = useState<KycKind>('AADHAAR');
@@ -1088,7 +1092,13 @@ export default function Customers() {
       <Dialog open={!!confirm} onClose={() => setConfirm(null)} title="Delete customer?"
         subtitle={confirm ? `${confirm.name} (${confirm.code})` : ''}
         footer={<><Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
-          <Button variant="danger" onClick={() => { if (confirm) { d.deleteCustomer(confirm.id, confirm.code); toast('Customer and related records deleted', 'info'); } setConfirm(null); }}>Delete everything</Button></>}>
+          <Button variant="danger" loading={deleting} onClick={async () => {
+            if (!confirm || deletingRef.current) return;
+            deletingRef.current = true; setDeleting(true);
+            try { await d.deleteCustomer(confirm.id, confirm.code); toast('Customer and related records deleted', 'info'); setConfirm(null); }
+            catch (e) { toast(e instanceof ApiError ? e.message : 'Failed to delete customer', 'error'); }
+            finally { deletingRef.current = false; setDeleting(false); }
+          }}>Delete everything</Button></>}>
         {confirm && (() => {
           const custLoanList = d.loans.filter((l) => l.customerId === confirm.id);
           const loanIds = new Set(custLoanList.map((l) => l.id));

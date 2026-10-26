@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/crypto"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 )
@@ -13,10 +14,25 @@ import (
 type Service struct {
 	repo   *Repository
 	hasher *crypto.Hasher
+	// audits records who changed whose access: role, permissions, active,
+	// password resets, two-factor resets, deletions.
+	audits *audit.Recorder
 }
 
-func NewService(repo *Repository, hasher *crypto.Hasher) *Service {
-	return &Service{repo: repo, hasher: hasher}
+func NewService(repo *Repository, hasher *crypto.Hasher, audits *audit.Recorder) *Service {
+	return &Service{repo: repo, hasher: hasher, audits: audits}
+}
+
+// userSnapshot is the access-relevant view of a user kept in the audit trail.
+func userSnapshot(u *domain.User) map[string]any {
+	return map[string]any{
+		"email": u.Email, "full_name": u.FullName, "role": string(u.Role),
+		"permissions": u.Permissions, "is_active": u.IsActive, "two_factor": u.MFAEnabled,
+	}
+}
+
+func (s *Service) record(ctx context.Context, id int64, action audit.Action, before, after any) {
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityUser, EntityID: id, Action: action, Before: before, After: after})
 }
 
 func (s *Service) List(ctx context.Context) ([]*domain.User, error) { return s.repo.List(ctx) }
@@ -40,7 +56,12 @@ func (s *Service) Create(ctx context.Context, actingUserID int64, in domain.User
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.Create(ctx, in, hash, &actingUserID)
+	u, err := s.repo.Create(ctx, in, hash, &actingUserID)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, u.ID, audit.ActionCreate, nil, userSnapshot(u))
+	return u, nil
 }
 
 // Update edits a user. actingUserID is the authenticated admin making the
@@ -91,7 +112,16 @@ func (s *Service) Update(ctx context.Context, id, actingUserID int64, in domain.
 		}
 		hash = h
 	}
-	return s.repo.Update(ctx, id, in, hash, &actingUserID)
+	u, err := s.repo.Update(ctx, id, in, hash, &actingUserID)
+	if err != nil {
+		return nil, err
+	}
+	after := userSnapshot(u)
+	if hash != "" {
+		after["password"] = "reset by admin"
+	}
+	s.record(ctx, id, audit.ActionUpdate, userSnapshot(existing), after)
+	return u, nil
 }
 
 // OpenPasswordResetRequests lists "Forgot password?" requests awaiting an admin.
@@ -101,7 +131,12 @@ func (s *Service) OpenPasswordResetRequests(ctx context.Context) ([]*domain.Pass
 
 // DismissPasswordResetRequest closes a request without resetting the password.
 func (s *Service) DismissPasswordResetRequest(ctx context.Context, id, actingUserID int64) error {
-	return s.repo.DismissPasswordResetRequest(ctx, id, &actingUserID)
+	if err := s.repo.DismissPasswordResetRequest(ctx, id, &actingUserID); err != nil {
+		return err
+	}
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityPasswordResetRequest, EntityID: id,
+		Action: audit.ActionUpdate, After: map[string]any{"status": "dismissed"}})
+	return nil
 }
 
 // ResetMFA turns another user's two-factor off (lost phone). An admin's own
@@ -111,7 +146,11 @@ func (s *Service) ResetMFA(ctx context.Context, id, actingUserID int64) error {
 	if id == actingUserID {
 		return domain.NewConflict("Turn off your own two-factor under Settings → Two-factor authentication — it asks for a current code.")
 	}
-	return s.repo.ResetMFA(ctx, id)
+	if err := s.repo.ResetMFA(ctx, id); err != nil {
+		return err
+	}
+	s.record(ctx, id, audit.ActionUpdate, nil, map[string]any{"two_factor": "reset by admin"})
+	return nil
 }
 
 // SetActive enables/disables a user, with the same last-admin + self guards.
@@ -134,7 +173,12 @@ func (s *Service) SetActive(ctx context.Context, id, actingUserID int64, active 
 			}
 		}
 	}
-	return s.repo.SetActive(ctx, id, active)
+	u, err := s.repo.SetActive(ctx, id, active)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, id, audit.ActionUpdate, map[string]any{"is_active": existing.IsActive}, map[string]any{"is_active": active})
+	return u, nil
 }
 
 // Delete soft-deletes a user, refusing to remove yourself or the last admin.
@@ -155,7 +199,11 @@ func (s *Service) Delete(ctx context.Context, id, actingUserID int64) error {
 			return domain.NewConflict("Cannot delete the last active admin")
 		}
 	}
-	return s.repo.SoftDelete(ctx, id)
+	if err := s.repo.SoftDelete(ctx, id); err != nil {
+		return err
+	}
+	s.record(ctx, id, audit.ActionDelete, userSnapshot(existing), nil)
+	return nil
 }
 
 // PortalLogin returns a customer's portal login, or NotFound when none exists.
@@ -173,5 +221,11 @@ func (s *Service) CreatePortalLogin(ctx context.Context, customerID int64, in do
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.CreatePortalLogin(ctx, customerID, in.Email, hash)
+	p, err := s.repo.CreatePortalLogin(ctx, customerID, in.Email, hash)
+	if err != nil {
+		return nil, err
+	}
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityCustomer, EntityID: customerID, Action: audit.ActionUpdate,
+		After: map[string]any{"portal_login": "created", "email": p.Email}})
+	return p, nil
 }

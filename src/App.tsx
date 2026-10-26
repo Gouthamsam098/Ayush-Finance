@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useLocation } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { ProtectedRoute, AdminRoute, ModuleRoute, StaffOnlyRoute, CustomerPortalRoute } from '@/routes/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
 import { CustomerPortalShell } from '@/components/layout/CustomerPortalShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
 import { authApi } from '@/services/authApi';
@@ -56,7 +57,10 @@ export default function App() {
   // Each lazy page is wrapped individually rather than the whole <Routes>, so
   // the AppShell (sidebar, header) stays on screen while a page chunk loads —
   // only the content area shows the fallback.
-  const page = (el: React.ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>;
+  // The error boundary sits inside the shell too: a page that fails to render
+  // (or whose chunk vanished after a deploy) shows a recovery card in the
+  // content area instead of blanking the app.
+  const page = (el: React.ReactNode) => <PageBoundary><Suspense fallback={<PageFallback />}>{el}</Suspense></PageBoundary>;
 
   return (
     <Routes>
@@ -92,6 +96,13 @@ export default function App() {
 /** Neutral placeholder shown while a page's chunk downloads. Announced politely
  *  so screen-reader users are told the page is loading rather than hearing
  *  nothing during the fetch. */
+/** Per-page error boundary, reset on navigation (keyed by path) so leaving a
+ *  broken page clears the error. */
+function PageBoundary({ children }: { children: React.ReactNode }) {
+  const { pathname } = useLocation();
+  return <ErrorBoundary key={pathname}>{children}</ErrorBoundary>;
+}
+
 function PageFallback() {
   return (
     <div role="status" aria-live="polite" className="grid min-h-[60vh] place-items-center">

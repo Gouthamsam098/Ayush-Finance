@@ -30,19 +30,32 @@ func TestMiddlewareCapturesClientIPAndUserAgent(t *testing.T) {
 }
 
 // Behind the reverse proxy the socket address is the proxy, so the real client
-// must come from X-Forwarded-For or every audit row would say "the proxy did it".
-func TestMiddlewarePrefersForwardedFor(t *testing.T) {
+// must come from the proxy-set X-Real-IP or every audit row would say "the
+// proxy did it". X-Forwarded-For is client-supplied: trusting it let anyone
+// write a forged address into the audit trail.
+func TestMiddlewareRecordsTheProxiedClient(t *testing.T) {
 	var got RequestMeta
 	h := Middleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		got = metaFromContext(r.Context())
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "10.0.0.5:1234" // the proxy
-	req.Header.Set("X-Forwarded-For", "198.51.100.22, 10.0.0.5")
+	req.Header.Set("X-Real-IP", "198.51.100.22")
+	req.Header.Set("X-Forwarded-For", "6.6.6.6, 10.0.0.5") // forged leftmost entry
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
 	if got.IP != "198.51.100.22" {
-		t.Errorf("IP = %q, want the leftmost forwarded client 198.51.100.22", got.IP)
+		t.Errorf("IP = %q, want the proxied client 198.51.100.22", got.IP)
+	}
+
+	// From a public peer (not our proxy) the header is ignored: the real TCP
+	// peer is recorded, never a value the caller chose.
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.50:999"
+	req.Header.Set("X-Real-IP", "1.2.3.4")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if got.IP != "203.0.113.50" {
+		t.Errorf("IP = %q, want the TCP peer 203.0.113.50 (forged X-Real-IP ignored)", got.IP)
 	}
 }
 

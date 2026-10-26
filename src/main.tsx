@@ -7,6 +7,7 @@ import { DataProvider } from '@/mock/DataContext';
 import { RecoveryProvider } from '@/features/recovery/RecoveryContext';
 import { ToastProvider } from '@/components/ui/toast';
 import App from '@/App';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { hydrateMockUsersFromBook } from '@/lib/mockUsers';
 import './index.css';
 
@@ -19,7 +20,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <RecoveryProvider>
           <ToastProvider>
             <BrowserRouter>
-              <App />
+              {/* Last line of defence: if the shell itself fails to render. */}
+              <ErrorBoundary fullScreen>
+                <App />
+              </ErrorBoundary>
             </BrowserRouter>
           </ToastProvider>
         </RecoveryProvider>

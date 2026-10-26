@@ -14,6 +14,7 @@
  * envelope. This is the only module that knows the wire format.
  */
 
+import { clearCachedCustomerPhotos } from '@/lib/customerPhoto';
 import { config } from './config';
 import { tokenStore } from './tokenStore';
 
@@ -70,6 +71,7 @@ interface RequestOptions {
 function forceReLogin(): void {
   if (!config.useApi) return;
   tokenStore.clear();
+  clearCachedCustomerPhotos();
   if (window.location.pathname !== '/login') {
     window.location.assign('/login');
   }

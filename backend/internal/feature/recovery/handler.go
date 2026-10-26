@@ -231,7 +231,25 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sub, colls, err := h.service.Approve(r.Context(), id, callerID(r))
+	// What the reviewer saw (optional): the claim is approved only if it still
+	// says exactly that — an agent's edit after the review must be looked at.
+	var req struct {
+		ExpectedAmount      *float64 `json:"expected_amount"`
+		ExpectedReceiptDate *string  `json:"expected_receipt_date"`
+		ExpectedMode        *string  `json:"expected_mode"`
+	}
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(r, &req); err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+	}
+	var seen *ReviewedClaim
+	if req.ExpectedAmount != nil && req.ExpectedReceiptDate != nil && req.ExpectedMode != nil {
+		seen = &ReviewedClaim{Amount: domain.RupeesToPaise(*req.ExpectedAmount),
+			ReceiptDate: *req.ExpectedReceiptDate, Mode: domain.PayMode(*req.ExpectedMode)}
+	}
+	sub, colls, err := h.service.Approve(r.Context(), id, callerID(r), seen)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return

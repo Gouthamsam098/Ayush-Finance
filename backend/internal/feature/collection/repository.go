@@ -93,6 +93,9 @@ func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, in domain.Collecti
 		if existing, err := r.findByIdempotencyKey(ctx, tx, in.LoanID, idempotencyKey); err != nil {
 			return nil, false, err
 		} else if existing != nil {
+			if !existing.SameMoneyAs(in) {
+				return nil, false, domain.NewConflict("This Idempotency-Key was already used for a different payment")
+			}
 			return existing, false, nil
 		}
 	}

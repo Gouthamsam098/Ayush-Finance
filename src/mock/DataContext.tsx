@@ -219,14 +219,16 @@ interface DataShape {
   updateCustomer: (id: number, c: Partial<Customer>) => void;
   /** `customerCode` disambiguates when legacy data reused the same numeric id twice. */
   deleteCustomer: (id: number, customerCode?: string) => void | Promise<void>;
-  addLoan: (l: Omit<Loan, 'id' | 'loanNumber' | 'interest' | 'status'>) => void;
+  addLoan: (l: Omit<Loan, 'id' | 'loanNumber' | 'interest' | 'status'>) => Promise<void> | void;
   /** Prepend an authoritative loan record (from the API) without a second call. */
   addLoanRecord: (l: Loan) => void;
   /** Replace an existing loan with an authoritative record (from the API). */
   updateLoanRecord: (l: Loan) => void;
-  updateLoan: (id: number, l: Partial<Loan>) => void;
-  deleteLoan: (id: number) => void;
-  closeLoan: (id: number) => void;
+  // API mode returns the request's promise so callers can await it and report
+  // a failure instead of a false success.
+  updateLoan: (id: number, l: Partial<Loan>) => Promise<void> | void;
+  deleteLoan: (id: number) => Promise<void> | void;
+  closeLoan: (id: number) => Promise<void> | void;
   addCollection: (c: Omit<Collection, 'id' | 'receiptNo'>) => Promise<Collection> | Collection;
   updateCollection: (id: number, c: Partial<Collection>) => Promise<void> | void;
   deleteCollection: (id: number) => Promise<void> | void;
@@ -258,6 +260,10 @@ interface DataShape {
   nextDueForDaily: (loan: Loan) => string | null;
   /** Amount-based live next-due for ANY loan type (mirrors backend Loan.NextDue). */
   nextDueFor: (loan: Loan) => string | null;
+  /** Set when the book could not be loaded from the server (API mode): every
+   *  total on screen would be incomplete, so the shell shows it with Retry. */
+  loadError: string | null;
+  retryLoad: () => void;
 }
 const DataCtx = createContext<DataShape | null>(null);
 export const useData = () => {
@@ -335,6 +341,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Bumped when money is recorded server-side outside DataContext (a portal
   // payment proof accepted), so the book below is refetched.
   const [serverSyncTick, setServerSyncTick] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     if (!config.useApi) return;
     const onChanged = () => setServerSyncTick((n) => n + 1);
@@ -359,13 +366,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const sessionKey = `${sessionUserId}:${isPortalSession}:${isAgentSession}`;
     const newSession = fetchedSessionRef.current !== sessionKey;
     fetchedSessionRef.current = sessionKey;
+    // A failed load must not pass for an empty book: ₹0 KPIs and "no loans"
+    // look exactly like real data. Cleared on every (re)load attempt.
+    setLoadError(null);
+    const loadFailed = () => setLoadError('Some of your data could not be loaded, so figures on this screen may be incomplete.');
     // A borrower may read only their own record, loans and payments; every
     // staff list below would 403 for them. Load the portal scope instead.
     // A recovery agent reads only their assigned loans, those customers and
     // those payments; the staff lists below would 403 for them.
     if (isAgentSession) {
       if (newSession) { setCustomers([]); setLoans([]); setCollections([]); setExpenses([]); }
-      customerApi.agentList().then(setCustomers).catch(() => { /* agent view shows its empty state */ });
+      customerApi.agentList().then(setCustomers).catch(loadFailed);
       Promise.all([loanApi.agentList(), collectionApi.agentList()])
         .then(([loanRows, collRows]) => {
           setLoans(loanRows);
@@ -378,21 +389,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Drop anything a previous staff session left in memory on this tab
       // (only on a new session — a refetch must not blank the portal).
       if (newSession) { setCustomers([]); setLoans([]); setCollections([]); setExpenses([]); }
-      customerApi.portalProfile().then((c) => setCustomers([c])).catch(() => { /* portal shows its empty state */ });
+      customerApi.portalProfile().then((c) => setCustomers([c])).catch(loadFailed);
       Promise.all([loanApi.portalList(), collectionApi.portalList()])
         .then(([loanRows, collRows]) => {
           setLoans(loanRows);
           setCollections(collRows);
         })
-        .catch(() => { /* portal shows its empty state */ });
+        .catch(loadFailed);
       return;
     }
     // fetchAll everywhere: the plain list() calls take ONE server page (loans
     // and customers cap at 100, expenses at 500) and drop the rest silently,
     // which understates every derived total. Paging costs one extra request
     // per 100-200 rows and is the only way these stay correct as the book grows.
-    customerApi.fetchAll().then(setCustomers).catch(() => { /* surfaced per-action */ });
-    expenseApi.fetchAll().then(setExpenses).catch(() => { /* surfaced per-action */ });
+    customerApi.fetchAll().then(setCustomers).catch(loadFailed);
+    expenseApi.fetchAll().then(setExpenses).catch(loadFailed);
     // INVESTOR CAPITAL — fetched on login, not left to a page visit.
     //
     // The Dashboard and Loans pages read this figure SYNCHRONOUSLY through
@@ -422,7 +433,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setLoans(loanRows);
         setCollections(collRows.filter((c) => ids.has(c.loanId)));
       })
-      .catch(() => { /* surfaced per-action */ });
+      .catch(loadFailed);
   }, [accessToken, sessionUserId, isPortalSession, isAgentSession, serverSyncTick]);
 
   // Drop payments whose loan no longer exists (customer/loan delete, or seed
@@ -672,8 +683,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           // Server mints the number/id and derives all money math; prepend the
           // authoritative record it returns.
-          loanApi.create(l).then((created) => setLoans((s) => [created, ...s]));
-          return;
+          return loanApi.create(l).then((created) => setLoans((s) => [created, ...s]));
         }
         const interest = calcInterest(l.principal, l.rate);
         // Daily Collection retains 3 months of interest upfront; other instalment
@@ -686,8 +696,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       updateLoanRecord: (l) => setLoans((s) => s.map((x) => (x.id === l.id ? l : x))),
       closeLoan: (id) => {
         if (config.useApi) {
-          loanApi.close(id).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
-          return;
+          return loanApi.close(id).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
         }
         setLoans((s) => s.map((l) => (l.id === id ? { ...l, status: 'CLOSED' } : l)));
       },
@@ -695,11 +704,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           // Reopen is a dedicated endpoint; a plain status→ACTIVE patch maps to it.
           if (patch.status === 'ACTIVE' && Object.keys(patch).length === 1) {
-            loanApi.reopen(id).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
-            return;
+            return loanApi.reopen(id).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
           }
-          loanApi.update(id, patch).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
-          return;
+          return loanApi.update(id, patch).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
         }
         setLoans((s) => s.map((l) => {
           if (l.id !== id) return l;
@@ -799,11 +806,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       addDocument: (d) => setDocuments((s) => [{ ...d, id: allocId() }, ...s]),
       deleteDocument: (id) => setDocuments((s) => s.filter((d) => d.id !== id)),
       collectedFor, interestCollectedFor, principalCollectedFor, outstandingFor, nextDueForDaily, nextDueFor, totalDueForDaily, totalDueForMonthly, totalDueForInterestOnly, interestAccrualEndFor,
+      loadError,
+      retryLoad: () => setServerSyncTick((n) => n + 1),
     };
     // `paidByLoan` (read via paidFor) is derived from `collections`, which is
     // already a dependency — so the index is never stale here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customers, loans, collections, expenses, documents, codeSeq, loanSeq, rcptSeq]);
+  }, [customers, loans, collections, expenses, documents, codeSeq, loanSeq, rcptSeq, loadError]);
 
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }

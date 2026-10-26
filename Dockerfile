@@ -8,7 +8,8 @@
 # ──────────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: build ────────────────────────────────────────────────────────
-FROM node:20-alpine AS build
+# Node 22 LTS (Node 20 reached end of life in April 2026); build stage only.
+FROM node:22-alpine AS build
 WORKDIR /app
 
 # Copy manifests first so the dependency layer caches independently of source.
@@ -30,20 +31,26 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 # ── Stage 2: serve ────────────────────────────────────────────────────────
-FROM nginx:1.27-alpine AS runtime
+# nginx stable branch (1.27 was a mainline release no longer patched).
+FROM nginx:1.28-alpine AS runtime
 
 # Drop the default site and install our SPA config (history fallback, gzip,
 # cache policy, security headers).
 RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx/nginx.conf /etc/nginx/conf.d/app.conf
+COPY nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 
 # Only the built assets — no source, no node_modules, no source maps.
 COPY --from=build /app/dist /usr/share/nginx/html
 
 # Run as the unprivileged nginx user. nginx needs write access to its runtime
 # dirs and must bind an unprivileged port (8080, not 80) as non-root.
+# The pid line is matched by directive, not by path: nginx 1.28 moved it from
+# /var/run to /run, and an exact-path match silently stopped applying (nginx
+# then exits with "Permission denied" at start-up).
 RUN sed -i 's/^user  nginx;/# user directive removed: container runs as nginx/' /etc/nginx/nginx.conf \
-    && sed -i 's#pid        /var/run/nginx.pid;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
+    && sed -i -E 's#^pid[[:space:]]+[^;]+;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
+    && grep -q '^pid /tmp/nginx.pid;' /etc/nginx/nginx.conf \
     && chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx
 USER nginx
 

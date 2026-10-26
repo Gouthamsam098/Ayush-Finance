@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 )
 
@@ -47,10 +48,22 @@ func (p Page) offset() int { return (p.Number - 1) * p.Limit }
 type Service struct {
 	repo *Repository
 	now  Clock
+	// audits records investment changes and every interest payout.
+	audits *audit.Recorder
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo, now: time.Now}
+func NewService(repo *Repository, audits *audit.Recorder) *Service {
+	return &Service{repo: repo, now: time.Now, audits: audits}
+}
+
+func investmentSnapshot(inv *domain.Investment) map[string]any {
+	return map[string]any{"code": inv.Code, "investor": inv.InvestorName, "principal": inv.Principal.Rupees(),
+		"rate": inv.Rate, "frequency": string(inv.Frequency), "start_date": inv.StartDate.Format("2006-01-02"),
+		"status": string(inv.Status)}
+}
+
+func (s *Service) record(ctx context.Context, id int64, action audit.Action, before, after any) {
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityInvestment, EntityID: id, Action: action, Before: before, After: after})
 }
 
 // Create validates and persists an investment.
@@ -58,7 +71,12 @@ func (s *Service) Create(ctx context.Context, in domain.InvestmentInput) (*domai
 	if err := in.Validate(s.now()); err != nil {
 		return nil, err
 	}
-	return s.repo.Create(ctx, in)
+	inv, err := s.repo.Create(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, inv.ID, audit.ActionCreate, nil, investmentSnapshot(inv))
+	return inv, nil
 }
 
 // Update validates and rewrites an investment's details.
@@ -75,7 +93,12 @@ func (s *Service) Update(ctx context.Context, id int64, in domain.InvestmentInpu
 	if existing.Status == domain.InvestmentClosed {
 		return nil, domain.NewConflict("A settled investment cannot be edited")
 	}
-	return s.repo.Update(ctx, id, in)
+	inv, err := s.repo.Update(ctx, id, in)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, id, audit.ActionUpdate, investmentSnapshot(existing), investmentSnapshot(inv))
+	return inv, nil
 }
 
 // View is an investment plus its derived money figures, computed server-side so
@@ -154,8 +177,12 @@ func (s *Service) ListPayouts(ctx context.Context, id int64) ([]*domain.Investor
 // must commit together or not at all — a payout without its expense would
 // understate costs (and inflate available funds), while an expense without its
 // payout would double-count when the payout was retried.
+//
+// idempotencyKey (optional, from the Idempotency-Key header) makes a retry
+// safe: replaying the same key returns the payout already recorded instead of
+// paying the investor — and booking the expense — a second time.
 func (s *Service) PayInterest(
-	ctx context.Context, in domain.PayoutInput, postedBy *int64,
+	ctx context.Context, in domain.PayoutInput, postedBy *int64, idempotencyKey string,
 ) (*domain.InvestorPayout, error) {
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
@@ -169,6 +196,20 @@ func (s *Service) PayInterest(
 	// concurrent payouts could each pass the ceiling check on a stale sum.
 	if err := LockInvestmentForUpdate(ctx, tx, in.InvestmentID); err != nil {
 		return nil, err
+	}
+	// A replay is answered before any other check: the original payout may have
+	// used up the ceiling or settled the investment.
+	if idempotencyKey != "" {
+		prior, err := s.repo.FindPayoutByKeyTx(ctx, tx, in.InvestmentID, idempotencyKey)
+		if err != nil {
+			return nil, err
+		}
+		if prior != nil {
+			if prior.Amount != in.Amount || prior.Date.Format("2006-01-02") != in.Date.Format("2006-01-02") {
+				return nil, domain.NewConflict("This Idempotency-Key was already used for a different payout")
+			}
+			return prior, nil
+		}
 	}
 	inv, err := s.repo.FindByID(ctx, in.InvestmentID)
 	if err != nil {
@@ -204,8 +245,13 @@ func (s *Service) PayInterest(
 	if err != nil {
 		return nil, err
 	}
-	payout, err := s.repo.CreatePayoutTx(ctx, tx, in, expenseID, postedBy)
+	payout, err := s.repo.CreatePayoutTx(ctx, tx, in, expenseID, postedBy, idempotencyKey)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.audits.RecordTx(ctx, tx, audit.Entry{EntityType: audit.EntityInvestorPayout, EntityID: payout.ID,
+		Action: audit.ActionPost, After: map[string]any{"investment_id": in.InvestmentID, "amount": payout.Amount.Rupees(),
+			"date": payout.Date.Format("2006-01-02"), "mode": string(payout.Mode), "expense_id": expenseID}}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -235,6 +281,10 @@ func (s *Service) DeletePayout(ctx context.Context, id int64) error {
 	if err := s.repo.DeletePayoutTx(ctx, tx, id); err != nil {
 		return err
 	}
+	if err := s.audits.RecordTx(ctx, tx, audit.Entry{EntityType: audit.EntityInvestorPayout, EntityID: id,
+		Action: audit.ActionDelete, Before: map[string]any{"investment_id": investmentID}}); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -252,19 +302,37 @@ func (s *Service) Settle(ctx context.Context, id int64) (*domain.Investment, err
 	if on.Before(inv.StartDate) {
 		on = inv.StartDate
 	}
-	return s.repo.Settle(ctx, id, on.Format("2006-01-02"))
+	settled, err := s.repo.Settle(ctx, id, on.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, id, audit.ActionUpdate, map[string]any{"status": string(inv.Status)}, map[string]any{"status": string(settled.Status)})
+	return settled, nil
 }
 
 // Reopen undoes a settlement (an operator correction).
 func (s *Service) Reopen(ctx context.Context, id int64) (*domain.Investment, error) {
-	return s.repo.Reopen(ctx, id)
+	inv, err := s.repo.Reopen(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, id, audit.ActionUpdate, nil, map[string]any{"status": string(inv.Status)})
+	return inv, nil
 }
 
 // Delete soft-deletes an investment. Its payouts go with it, but the EXPENSES
 // they posted are deliberately kept: that money really did leave the business,
 // so removing the expense would falsify spending history.
 func (s *Service) Delete(ctx context.Context, id int64) error {
-	return s.repo.SoftDelete(ctx, id)
+	inv, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SoftDelete(ctx, id); err != nil {
+		return err
+	}
+	s.record(ctx, id, audit.ActionDelete, investmentSnapshot(inv), nil)
+	return nil
 }
 
 // Totals is the portfolio roll-up backing the dashboard/page KPIs.

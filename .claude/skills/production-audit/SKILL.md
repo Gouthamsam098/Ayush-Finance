@@ -24,7 +24,7 @@ Do NOT assume AI-generated code is correct. Do NOT make changes immediately. Fir
 - **Documents**: stored **in-DB as `bytea`** (no object store). §5/§14/§40's signed-URL/object-storage guidance is therefore an ARCHITECTURE RECOMMENDATION here, not a config check — audit size limits, MIME/extension validation, download authorization (IDOR by customerId/documentId), and DB bloat/backup implications instead.
 - **Money**: backend integer paise everywhere, rupees only at the JSON boundary; frontend plain-number rupees via `inr()`. ANY float in balance math is a CRITICAL finding.
 - **Dates**: `YYYY-MM-DD` strings parsed as LOCAL time on both sides (never `new Date(isoString)`); backend normalizes to local midnight. Audit for UTC-shift bugs and timezone assumptions (server TZ vs IST).
-- **Migrations**: embedded in the binary, applied idempotently on boot (`internal/database/migrations/*.up.sql`); never edit an applied one. `audit_log` table EXISTS BUT IS NOT WRITTEN TO — a standing §21 finding until wired.
+- **Migrations**: embedded in the binary, applied idempotently on boot (`internal/database/migrations/*.up.sql`); never edit an applied one. `audit_log` is append-only (trigger) and written by payments, sign-ins, user/2FA changes, KYC documents, loans, customers, expenses and investments — verify coverage of any NEW sensitive action (§21).
 - **Binding money rules**: CLAUDE.md sections "Loan domain model", "Collections, profit & ledger" (receipt-date rule, FIFO allocation, profit-last band, slot-ledger contract, edge-case matrix). Verify code still conforms; violations are HIGH+.
 - **Verification commands** (run them; do not claim results you didn't produce):
   - Frontend: `npm run build` (tsc + vite — the only frontend gate; there is no FE test runner)
@@ -149,7 +149,7 @@ Logs should diagnose login failures, API failures, document access, transactions
 
 ## 21. AUDIT LOGGING
 
-Finance app: audit login/logout/failed login, user create/update/role changes, document upload/download/delete, financial transaction create/update, payment status changes, config changes. Audit records must be hard for normal users to modify/delete. (This repo: `audit_log` table exists but is not written to — standing finding until wired.)
+Finance app: audit login/logout/failed login, user create/update/role changes, document upload/download/delete, financial transaction create/update, payment status changes, config changes. Audit records must be hard for normal users to modify/delete. (This repo: `audit_log` is written for the actions above and protected by an append-only trigger — check that new mutations are covered and that the app's DB role cannot disable the trigger.)
 
 ## 22. BACKUP & DISASTER RECOVERY
 

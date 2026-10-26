@@ -9,6 +9,7 @@
  */
 
 import { api, type ListResult } from '@/lib/api';
+import { withRetrySafeKey } from '@/lib/idempotency';
 import type { Investment, InvestorPayout, PayoutFrequency, PayMode } from '@/lib/investments';
 
 interface InvestmentWire {
@@ -172,11 +173,13 @@ export const investmentApi = {
 
   /** Pay interest. The server writes the payout AND its Expenses row in ONE
    *  transaction, so a cost can never exist without the expense accounting for
-   *  it — the frontend does not (and must not) post the expense separately. */
+   *  it — the frontend does not (and must not) post the expense separately.
+   *  Retry-safe: saving the same payout again after a lost response reuses its
+   *  Idempotency-Key, so the investor is not paid twice. */
   async payInterest(id: number, p: { amount: number; date: string; mode: PayMode; remarks?: string }): Promise<InvestorPayout> {
-    return toPayout(await api.post<PayoutWire>(`/investments/${id}/payouts`, {
-      amount: p.amount, date: p.date, mode: p.mode, remarks: p.remarks ?? null,
-    }));
+    const body = { amount: p.amount, date: p.date, mode: p.mode, remarks: p.remarks ?? null };
+    return toPayout(await withRetrySafeKey(`payout:${id}`, body, (key) =>
+      api.post<PayoutWire>(`/investments/${id}/payouts`, body, { headers: { 'Idempotency-Key': key } })));
   },
 
   async deletePayout(payoutId: number): Promise<void> {

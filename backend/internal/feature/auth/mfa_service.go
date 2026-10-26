@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"time"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 )
 
@@ -95,6 +96,14 @@ func (s *Service) LoginMFA(ctx context.Context, token, code string) (*TokenPair,
 			if err != nil {
 				return nil, domain.NewUnauthorized(errMFAExpiredLogin)
 			}
+			// A wrong code also counts against the account, so fresh challenges
+			// (each allowing a few tries) cannot be opened to keep guessing.
+			s.accounts.fail(user.Email, now)
+			s.loginRefused(ctx, user.ID, "wrong_2fa_code")
+			if s.accounts.locked(user.Email, now) {
+				_, _ = s.repo.DeleteMFAChallenge(ctx, hash)
+				return nil, domain.NewTooManyRequests(lockedMessage)
+			}
 			if n >= mfaMaxWrongCodes {
 				_, _ = s.repo.DeleteMFAChallenge(ctx, hash)
 				return nil, domain.NewUnauthorized("Too many wrong codes. Please sign in again.")
@@ -116,6 +125,8 @@ func (s *Service) LoginMFA(ctx context.Context, token, code string) (*TokenPair,
 		return nil, err
 	}
 	_ = s.repo.TouchLastLogin(ctx, user.ID, s.now())
+	s.accounts.succeed(user.Email)
+	s.loggedIn(ctx, user.ID, user.MFAEnabled)
 	return pair, nil
 }
 
@@ -172,7 +183,12 @@ func (s *Service) MFAEnable(ctx context.Context, userID int64, code string) erro
 	if !ok {
 		return wrongCode("That code is not right. Check the time on your phone and enter the current code.")
 	}
-	return s.repo.EnableMFA(ctx, userID, step)
+	if err := s.repo.EnableMFA(ctx, userID, step); err != nil {
+		return err
+	}
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityUser, EntityID: userID, Action: audit.ActionMFASetup,
+		After: map[string]any{"two_factor": "enabled"}})
+	return nil
 }
 
 // MFADisable turns two-factor off; it takes a current, unused code, so an
@@ -206,5 +222,10 @@ func (s *Service) MFADisable(ctx context.Context, userID int64, code string) err
 	if !used {
 		return wrongCode("That code was already used. Wait for the next code.")
 	}
-	return s.repo.DisableMFA(ctx, userID)
+	if err := s.repo.DisableMFA(ctx, userID); err != nil {
+		return err
+	}
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityUser, EntityID: userID, Action: audit.ActionUpdate,
+		After: map[string]any{"two_factor": "disabled"}})
+	return nil
 }

@@ -3,6 +3,8 @@
  * Login and refresh are unauthenticated; /me uses the stored access token.
  */
 
+import { config } from '@/lib/config';
+import { clearCachedCustomerPhotos } from '@/lib/customerPhoto';
 import { api } from '@/lib/api';
 import { tokenStore } from '@/lib/tokenStore';
 
@@ -102,8 +104,10 @@ export const authApi = {
     return api.get<BackendUser>('/me');
   },
 
-  /** Discard local tokens. (Server-side revocation is a later hardening step.) */
+  /** Discard local tokens and cached customer photos. (Server-side revocation
+   *  is a later hardening step.) */
   logout(): void {
     tokenStore.clear();
+    if (config.useApi) clearCachedCustomerPhotos();
   },
 };

@@ -1,3 +1,4 @@
+import { ApiError } from '@/lib/api';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { useRecovery } from '../RecoveryContext';
@@ -295,8 +296,11 @@ export function RecoveryQueuePanel() {
     try {
       await approveClaim(submission.id);
       toast('Collection accepted — ledger updated', 'success');
-    } catch {
-      toast('Could not accept — try again', 'error');
+    } catch (e) {
+      // e.g. the agent changed the claim after it was opened: say so and show
+      // the current version for a fresh review.
+      toast(e instanceof ApiError ? e.message : 'Could not accept — try again', 'error');
+      refresh();
     } finally {
       setBusy(null);
     }

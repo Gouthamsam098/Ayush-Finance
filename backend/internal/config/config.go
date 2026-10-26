@@ -5,6 +5,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -37,8 +38,15 @@ type Config struct {
 	Database DatabaseConfig
 	JWT      JWTConfig
 
-	BcryptCost              int
-	AuthRateLimitPerMinute  int
+	// MFAEncryptionKey seals two-factor secrets at rest (≥ 32 random bytes,
+	// base64 in MFA_ENCRYPTION_KEY). Required in production: a key of its own
+	// that is backed up with the database, so a restore onto a new server — or
+	// rotating the JWT signing key — does not lock every 2FA user out. Empty
+	// (development only) falls back to a key derived from the JWT signing key.
+	MFAEncryptionKey []byte
+
+	BcryptCost             int
+	AuthRateLimitPerMinute int
 	// APIRateLimitPerMinute bounds AUTHENTICATED traffic per client IP. It is a
 	// separate, far larger budget than the auth limit: login is a handful of
 	// attempts, but one dashboard render legitimately fires dozens of API calls,
@@ -97,6 +105,17 @@ func Load() (*Config, error) {
 	}
 	if cfg.JWT, err = loadJWTConfig(); err != nil {
 		return nil, err
+	}
+
+	if raw := strings.TrimSpace(os.Getenv("MFA_ENCRYPTION_KEY")); raw != "" {
+		key, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			key, err = base64.RawStdEncoding.DecodeString(raw)
+		}
+		if err != nil || len(key) < 32 {
+			return nil, fmt.Errorf("config: MFA_ENCRYPTION_KEY must be base64 of at least 32 random bytes (openssl rand -base64 32)")
+		}
+		cfg.MFAEncryptionKey = key
 	}
 
 	if cfg.BcryptCost, err = getEnvInt("BCRYPT_COST", 12); err != nil {
@@ -195,6 +214,9 @@ func (c *Config) validate() error {
 		}
 		if len(c.CORSAllowedOrigins) == 0 {
 			return fmt.Errorf("config: CORS_ALLOWED_ORIGINS must be set in production")
+		}
+		if len(c.MFAEncryptionKey) == 0 {
+			return fmt.Errorf("config: MFA_ENCRYPTION_KEY must be set in production (openssl rand -base64 32) — and backed up with the database")
 		}
 	}
 

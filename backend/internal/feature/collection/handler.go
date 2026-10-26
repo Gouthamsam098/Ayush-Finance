@@ -147,6 +147,10 @@ func (h *Handler) record(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, domain.NewValidation("Idempotency-Key is too long", nil))
 		return
 	}
+	if domain.IsReservedIdempotencyKey(idempotencyKey) {
+		httpx.Error(w, r, domain.NewValidation("Idempotency-Key uses a reserved prefix", nil))
+		return
+	}
 
 	c, err := h.service.Record(r.Context(), in, postedBy, idempotencyKey)
 	if err != nil {

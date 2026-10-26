@@ -319,15 +319,22 @@ function groupCollectionsByLoan(
   loans: Loan[],
   customers: Customer[],
   dueForLoan: (loan: Loan) => number,
+  allCollections: Collection[],
 ): LoanCollectionGroup[] {
   const nameById = new Map(customers.map((c) => [c.id, c.name] as const));
   const loanById = new Map(loans.map((l) => [l.id, l] as const));
-  const byLoan = new Map<number, Collection[]>();
-  for (const c of rows) {
-    const arr = byLoan.get(c.loanId) ?? [];
-    arr.push(c);
-    byLoan.set(c.loanId, arr);
-  }
+  const group = (list: Collection[]) => {
+    const m = new Map<number, Collection[]>();
+    for (const c of list) {
+      const arr = m.get(c.loanId) ?? [];
+      arr.push(c);
+      m.set(c.loanId, arr);
+    }
+    return m;
+  };
+  const byLoan = group(rows);
+  // Each loan's WHOLE payment history, for the profit band below.
+  const historyByLoan = group(allCollections);
   const out: LoanCollectionGroup[] = [];
   for (const [loanId, list] of byLoan) {
     const loan = loanById.get(loanId);
@@ -340,11 +347,20 @@ function groupCollectionsByLoan(
     } else {
       const disbursed = loan.disbursed ?? Math.max(0, loan.principal - (loan.deduction ?? 0));
       const margin = (loan.deduction ?? 0) > 0 ? (loan.deduction ?? 0) : loan.interest;
+      // The band is cumulative over the loan's WHOLE history: a receipt's
+      // profit share depends on everything received before it, not only on
+      // the receipts the date/collector filter shows. Walking just the filtered
+      // ones treated the first visible receipt as the loan's first payment, so
+      // a filtered report booked profit to receipts that were really recovering
+      // principal (and the reverse). Unfiltered, the result is unchanged.
+      const shown = new Set(list.map((c) => c.id));
+      const history = [...(historyByLoan.get(loanId) ?? list)]
+        .sort((a, b) => (a.date === b.date ? a.id - b.id : a.date < b.date ? -1 : 1));
       let cum = 0;
-      for (const c of ordered) {
+      for (const c of history) {
         const before = cum;
         cum += c.amount;
-        interest += Math.max(0, Math.min(cum, disbursed + margin) - Math.max(before, disbursed));
+        if (shown.has(c.id)) interest += Math.max(0, Math.min(cum, disbursed + margin) - Math.max(before, disbursed));
       }
     }
     out.push({
@@ -434,7 +450,7 @@ export default function Reports() {
           || who.roleLabel.toLowerCase().includes(q);
       });
     }
-    return groupCollectionsByLoan(rows, d.loans, d.customers, (loan) => scheduleShortfall(d, loan));
+    return groupCollectionsByLoan(rows, d.loans, d.customers, (loan) => scheduleShortfall(d, loan), d.collections);
   }, [tab, since, q, filters.collector, d]);
 
   const agentSummaries = useMemo(() => {

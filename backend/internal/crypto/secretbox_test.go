@@ -36,3 +36,29 @@ func TestSecretBoxRoundTripAndTamper(t *testing.T) {
 		t.Error("a different purpose must derive a different key")
 	}
 }
+
+// Moving to a dedicated MFA key must not lock out users enrolled under the old
+// (JWT-derived) key: those secrets still open, new ones are sealed under the
+// new key only.
+func TestSecretBoxFallbackKey(t *testing.T) {
+	legacy, _ := NewSecretBox([]byte("jwt-derived material"), "anush-lms/mfa-secret/v1")
+	current, _ := NewSecretBox([]byte("dedicated 32-byte mfa key ......"), "anush-lms/mfa-secret/v2")
+	box := current.WithFallback(legacy)
+
+	old, _ := legacy.Seal("OLDSECRET")
+	if got, err := box.Open(old); err != nil || got != "OLDSECRET" {
+		t.Fatalf("a secret sealed under the old key must still open: %q %v", got, err)
+	}
+	fresh, _ := box.Seal("NEWSECRET")
+	if got, err := current.Open(fresh); err != nil || got != "NEWSECRET" {
+		t.Fatalf("new secrets must be sealed under the current key: %q %v", got, err)
+	}
+	if _, err := legacy.Open(fresh); err == nil {
+		t.Error("a new secret must not be readable with the old key")
+	}
+	stranger, _ := NewSecretBox([]byte("unrelated"), "anush-lms/mfa-secret/v1")
+	alien, _ := stranger.Seal("X")
+	if _, err := box.Open(alien); err == nil {
+		t.Error("a value sealed under neither key must not open")
+	}
+}

@@ -42,7 +42,7 @@ func RateLimit(perMinute int) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !lim.allow(clientIP(r)) {
+			if !lim.allow(bucketKey(ClientIP(r))) {
 				w.Header().Set("Retry-After", "60")
 				Error(w, r, domain.NewTooManyRequests(
 					"Too many attempts. Please wait a minute and try again."))
@@ -98,39 +98,45 @@ func (l *limiter) reap() {
 	}
 }
 
-// clientIP resolves the caller's address, preferring the reverse proxy's
-// X-Forwarded-For (leftmost = original client) and falling back to the socket.
-func clientIP(r *http.Request) string {
-	// X-Real-IP FIRST. The reverse proxy sets this from the socket address it
-	// actually accepted, so a caller cannot forge it — Caddy overwrites any
-	// inbound value (`header_up X-Real-IP {remote_host}`).
-	//
-	// X-Forwarded-For is deliberately NOT preferred. It is a client-supplied
-	// header and the proxy appends to it rather than replacing it, so trusting
-	// its leftmost entry let an attacker send a different value per request:
-	// every login attempt landed in a fresh rate-limit bucket and brute-force
-	// protection was bypassed completely. (Caddy now also strips the inbound
-	// header — see the Caddyfile — so this is defence in depth: the limiter
-	// stays sound even if the proxy config drifts or the backend is reached
-	// directly.)
-	if xr := r.Header.Get("X-Real-IP"); xr != "" {
-		return trimSpace(xr)
-	}
-	// NO X-Forwarded-For fallback. If the trusted proxy header is absent, the
-	// request did not come through our proxy, so every forwarding header on it
-	// is attacker-controlled. Honouring XFF here would reopen the bypass for
-	// anyone who can reach the backend directly — which is precisely the
-	// failure this guard exists to prevent, and cannot be ruled out from inside
-	// the process (a firewall gap, a port-forward, a future ingress change).
-	//
-	// Falling through to RemoteAddr is always safe: it is the real TCP peer.
-	// Behind the proxy that is the proxy's own address, which is correct —
-	// X-Real-IP above already handled the genuine client.
+// ClientIP resolves the caller's address for rate limiting and the audit trail.
+//
+// X-Real-IP is honoured ONLY when the TCP peer is our reverse proxy — a
+// loopback or private-network address (Caddy on the Docker network). The proxy
+// sets it from the socket it accepted (`header_up X-Real-IP {remote_host}`), so
+// it cannot be forged through the proxy; but a caller reaching the backend
+// directly could send any value and land every login attempt in a fresh
+// rate-limit bucket, so from a public peer the header is ignored.
+//
+// X-Forwarded-For is never trusted: it is client-supplied and the proxy appends
+// to it rather than replacing it, so its leftmost entry is attacker-controlled.
+// Falling back to RemoteAddr is always safe — it is the real TCP peer.
+func ClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if xr := trimSpace(r.Header.Get("X-Real-IP")); xr != "" && isProxyPeer(host) && net.ParseIP(xr) != nil {
+		return xr
 	}
 	return host
+}
+
+// isProxyPeer reports whether the TCP peer is on loopback or a private network,
+// i.e. could be our own reverse proxy rather than an internet client.
+func isProxyPeer(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
+}
+
+// bucketKey groups IPv6 clients by their /64: one subscriber is routinely
+// handed a whole /64, so per-address buckets would let a single attacker rotate
+// through 2^64 fresh limits. IPv4 addresses are used as they are.
+func bucketKey(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.To4() != nil {
+		return ip
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 func trimSpace(s string) string {

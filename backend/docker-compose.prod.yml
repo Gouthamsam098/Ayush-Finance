@@ -83,6 +83,8 @@ services:
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-1h}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-0}
       JWT_ISSUER: ${JWT_ISSUER:-anush-lms}
+      # Encrypts 2FA secrets. Required; back it up with the database (see .env.production.example).
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?set MFA_ENCRYPTION_KEY in .env.production (openssl rand -base64 32)}
 
       BCRYPT_COST: ${BCRYPT_COST:-12}
       AUTH_RATE_LIMIT_PER_MINUTE: ${AUTH_RATE_LIMIT_PER_MINUTE:-10}

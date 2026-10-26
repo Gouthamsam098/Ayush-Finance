@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 )
 
@@ -47,10 +48,21 @@ func (p Page) offset() int { return (p.Number - 1) * p.Limit }
 type Service struct {
 	repo *Repository
 	now  Clock
+	// audits records expense create/edit/delete — money leaving the books.
+	audits *audit.Recorder
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo, now: time.Now}
+func NewService(repo *Repository, audits *audit.Recorder) *Service {
+	return &Service{repo: repo, now: time.Now, audits: audits}
+}
+
+func expenseSnapshot(e *domain.Expense) map[string]any {
+	return map[string]any{"category": string(e.Category), "name": e.Name, "amount": e.Amount.Rupees(),
+		"mode": string(e.Mode), "date": e.Date.Format("2006-01-02")}
+}
+
+func (s *Service) record(ctx context.Context, id int64, action audit.Action, before, after any) {
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityExpense, EntityID: id, Action: action, Before: before, After: after})
 }
 
 // Create validates and persists an expense.
@@ -58,7 +70,12 @@ func (s *Service) Create(ctx context.Context, in domain.ExpenseInput) (*domain.E
 	if err := in.Validate(s.now()); err != nil {
 		return nil, err
 	}
-	return s.repo.Create(ctx, in)
+	e, err := s.repo.Create(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, e.ID, audit.ActionCreate, nil, expenseSnapshot(e))
+	return e, nil
 }
 
 // List returns a page of expenses matching the filter, plus the total count.
@@ -91,10 +108,23 @@ func (s *Service) Update(ctx context.Context, id int64, patch domain.ExpensePatc
 	if err := in.Validate(s.now()); err != nil {
 		return nil, err
 	}
-	return s.repo.Update(ctx, id, in)
+	e, err := s.repo.Update(ctx, id, in)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, id, audit.ActionUpdate, expenseSnapshot(existing), expenseSnapshot(e))
+	return e, nil
 }
 
 // Delete soft-deletes an expense.
 func (s *Service) Delete(ctx context.Context, id int64) error {
-	return s.repo.SoftDelete(ctx, id)
+	existing, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SoftDelete(ctx, id); err != nil {
+		return err
+	}
+	s.record(ctx, id, audit.ActionDelete, expenseSnapshot(existing), nil)
+	return nil
 }

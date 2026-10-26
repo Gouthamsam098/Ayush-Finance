@@ -23,7 +23,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/anush-capitals/lms-backend/internal/httpx"
 	"github.com/anush-capitals/lms-backend/internal/logger"
@@ -43,16 +42,28 @@ const (
 	ActionPost    Action = "POST"    // a money movement (payment recorded)
 	ActionApprove Action = "APPROVE" // a reviewed item accepted (e.g. portal payment proof)
 	ActionLogin   Action = "LOGIN"
+	// A sign-in (or credential check) that was refused — wrong password, unknown
+	// account, wrong two-factor code. entity_id is the user when known, else 0.
+	ActionLoginFailed Action = "LOGIN_FAILED"
+	ActionMFASetup    Action = "MFA_SETUP"
+	// A KYC document's file was served to a staff member.
+	ActionDownload Action = "DOWNLOAD"
 )
 
 // Entity types. Kept as constants so a typo cannot fragment the trail.
 const (
-	EntityCollection   = "collection"
-	EntityLoan         = "loan"
-	EntityCustomer     = "customer"
-	EntityDocument     = "document"
-	EntityUser         = "user"
-	EntityPaymentProof = "payment_proof"
+	EntityCollection = "collection"
+	EntityLoan       = "loan"
+	EntityCustomer   = "customer"
+	EntityDocument   = "document"
+	EntityUser       = "user"
+	EntityExpense    = "expense"
+	EntityInvestment = "investment"
+	// An interest payout to an investor (and the expense it posts).
+	EntityInvestorPayout = "investor_payout"
+	// A "Forgot password?" request filed for an admin.
+	EntityPasswordResetRequest = "password_reset_request"
+	EntityPaymentProof         = "payment_proof"
 	// Recovery agent claims/promises and the daily auto-assign job.
 	EntityRecoverySubmission = "recovery_submission"
 	EntityRecoveryAutoAssign = "recovery_auto_assign"
@@ -83,7 +94,12 @@ const insertSQL = `
 // Record writes an entry outside any transaction. Failures are logged, never
 // returned: losing the trail is bad, but failing the user's operation because
 // the trail could not be written is worse.
+//
+// A nil Recorder records nothing, so services can be built without one in tests.
 func (r *Recorder) Record(ctx context.Context, e Entry) {
+	if r == nil {
+		return
+	}
 	if err := r.write(ctx, r.pool, e); err != nil {
 		logger.FromContext(ctx).Error("audit write failed — change is NOT in the audit trail",
 			"entity_type", e.EntityType, "entity_id", e.EntityID, "action", string(e.Action), "error", err)
@@ -94,6 +110,9 @@ func (r *Recorder) Record(ctx context.Context, e Entry) {
 // describes commit or roll back together. Errors ARE returned: if the caller
 // chose transactional auditing, a missing trail should abort the change.
 func (r *Recorder) RecordTx(ctx context.Context, tx pgx.Tx, e Entry) error {
+	if r == nil {
+		return nil
+	}
 	return r.write(ctx, tx, e)
 }
 
@@ -162,7 +181,7 @@ const metaKey ctxKey = "audit.meta"
 // Mounted globally; it stores nothing sensitive (no headers, no body).
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		meta := RequestMeta{IP: clientIP(r), UserAgent: truncate(r.UserAgent(), 400)}
+		meta := RequestMeta{IP: httpx.ClientIP(r), UserAgent: truncate(r.UserAgent(), 400)}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), metaKey, meta)))
 	})
 }
@@ -190,20 +209,6 @@ func userAgentFromContext(ctx context.Context) *string {
 		return nil
 	}
 	return &ua
-}
-
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 func truncate(s string, n int) string {

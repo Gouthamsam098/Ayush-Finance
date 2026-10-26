@@ -248,6 +248,17 @@ func (r *Repository) Create(ctx context.Context, customerID int64, in domain.Pay
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM loans WHERE id = $1 FOR UPDATE`, in.LoanID); err != nil {
 		return nil, err
 	}
+	// The pending cap, re-checked under the loan lock: the services' earlier
+	// count is a friendly fast path, but parallel uploads could each pass it.
+	var pending int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM payment_proofs WHERE loan_id = $1 AND status = 'PENDING' AND deleted_at IS NULL`,
+		in.LoanID).Scan(&pending); err != nil {
+		return nil, err
+	}
+	if pending >= domain.MaxPendingProofsPerLoan {
+		return nil, domain.NewConflict("This loan already has payments awaiting approval. Please wait for them to be reviewed.")
+	}
 	digest := sha256.Sum256(content)
 	var dup string
 	err = tx.QueryRow(ctx, `

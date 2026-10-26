@@ -1,6 +1,37 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// Idempotency keys the server mints for approvals: "claim-<id>-<n>" (agent
+// claims) and "proof-<id>-<n>" (portal payment proofs). A client must never be
+// able to send one — an insider could pre-plant a ₹1 payment under
+// "claim-77-1", and approving claim 77 would then "replay" that row instead of
+// recording the real amount.
+var reservedIdempotencyPrefixes = []string{"claim-", "proof-"}
+
+// IsReservedIdempotencyKey reports whether a client-supplied key collides with
+// the server's own approval keys (case-insensitive).
+func IsReservedIdempotencyKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, p := range reservedIdempotencyPrefixes {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// SameMoneyAs reports whether a stored payment is the one `in` describes —
+// same amount, kind and receipt day. A replayed Idempotency-Key must carry the
+// payment it was first used for; anything else is refused, never silently
+// answered with the old row.
+func (c *Collection) SameMoneyAs(in CollectionInput) bool {
+	return c.Amount == in.Amount && c.Kind == in.Kind &&
+		c.Date.Format("2006-01-02") == in.Date.Format("2006-01-02")
+}
 
 // PayMode is how a collection was paid. The DB enforces the same set
 // (collections_mode_valid CHECK).

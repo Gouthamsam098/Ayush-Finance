@@ -24,10 +24,10 @@ handling real customer money.
 | Risk | Status | Impact |
 |---|---|---|
 | **Documents stored in Postgres** | `bytea` rows, no object storage | DB and every backup grow with file volume |
-| **Single-replica rate limiting** | The login limiter is in-process (`internal/httpx/ratelimit.go`) | Counters reset on restart, and the limit is per replica — needs a shared store before scaling out |
-| **Audit trail covers payments only** | `POST /collections` writes `audit_log`; loan/customer/document mutations do not yet | A deleted loan or a KYC download still leaves no trail |
+| **Single-replica rate limiting** | The per-IP limiter and the per-account sign-in lockout are in-process (`internal/httpx/ratelimit.go`, `internal/feature/auth/lockout.go`) | Counters reset on restart, and the limits are per replica — needs a shared store before scaling out |
+| **Two-factor is optional** | Each user turns it on in Settings | Turn it on for **every admin before go-live** (Settings → Two-factor authentication); an admin password alone then cannot open the system |
 | **Nothing has been deployed yet** | The prod compose, Caddy TLS, nginx image and backup script are written but have **never been executed** | Expect first-run issues; TLS, backup **and restore** must be proven before real data |
-| **Existing rows keep old money figures** | The rounding fix applies to new writes only | A live loan's stored interest may sit ₹1 below what the UI computes until re-saved |
+| **Existing rows keep old money figures** | The rounding fixes apply to new loans and to edits that change a loan's terms; an edit that changes no term keeps the stored figures exactly | A loan created before a rounding fix keeps the figures it was created with |
 
 Fixed since the audit (listed so the history is clear): **documents IDOR**
 (download/delete scoped by `customerId`); **logout** clears the persisted token;
@@ -199,6 +199,11 @@ docker compose --env-file .env.production -f docker-compose.prod.yml logs backen
   based — changing this shifts what "today" means and mis-dates receipts.
 - **JWT keys**: live in the `jwt_keys` volume. Deleting it invalidates all
   sessions (everyone re-logs in); it does not affect data.
+- **`MFA_ENCRYPTION_KEY`** (in `.env.production`): encrypts every user's
+  two-factor secret. **Back it up together with the database dumps** (e.g. in
+  the password manager). A restore without it leaves every 2FA user unable to
+  sign in until an admin resets their two-factor — and if the only admins have
+  2FA on, nobody can. Never change it after users have enrolled.
 - **Sessions**: hard 1-hour expiry, no refresh. Users re-login hourly by design.
 - **`docker compose down -v` destroys the database.** Never run it in
   production. Use `down` without `-v`.

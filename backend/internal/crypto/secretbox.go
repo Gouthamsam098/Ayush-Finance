@@ -18,6 +18,16 @@ import (
 // leaked dump — does not reveal them.
 type SecretBox struct {
 	aead cipher.AEAD
+	// fallback, when set, opens values sealed under an earlier key (see
+	// WithFallback). Sealing always uses this box's own key.
+	fallback *SecretBox
+}
+
+// WithFallback returns b with `old` tried when b's own key cannot open a value
+// — so secrets sealed under a previous key keep working after a key change,
+// while every new secret is sealed under b's key.
+func (b *SecretBox) WithFallback(old *SecretBox) *SecretBox {
+	return &SecretBox{aead: b.aead, fallback: old}
 }
 
 // NewSecretBox derives the encryption key from keyMaterial with HKDF-SHA256,
@@ -64,15 +74,20 @@ func (b *SecretBox) Open(sealed string) (string, error) {
 	}
 	plain, err := b.aead.Open(nil, raw[:n], raw[n:], nil)
 	if err != nil {
+		if b.fallback != nil {
+			return b.fallback.Open(sealed)
+		}
 		return "", err
 	}
 	return string(plain), nil
 }
 
 // SecretKeyMaterial returns key material for SecretBox derived from the token
-// signing key: a server secret that never enters the database. Rotating the
-// signing key makes earlier sealed values unreadable (users then set up
-// two-factor again; an admin can reset it).
+// signing key: a server secret that never enters the database. It is the
+// fallback when no MFA_ENCRYPTION_KEY is configured (development), and is kept
+// as a read-only fallback key after one is, so secrets sealed under it still
+// open. Rotating the signing key makes values sealed under it unreadable
+// (users then set up two-factor again; an admin can reset it).
 func (m *TokenManager) SecretKeyMaterial() []byte {
 	return x509.MarshalPKCS1PrivateKey(m.privateKey)
 }

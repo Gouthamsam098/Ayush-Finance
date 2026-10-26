@@ -13,17 +13,8 @@
  */
 
 import { api, type ListResult } from '@/lib/api';
+import { withRetrySafeKey } from '@/lib/idempotency';
 import type { Collection, CollectionKind, PayMode } from '@/mock/DataContext';
-
-/** Unique key for one logical payment write, so a retry is de-duplicated
- *  server-side. crypto.randomUUID is unavailable on older Safari and on
- *  non-secure origins, so fall back to random+timestamp — uniqueness per
- *  request is all that is required (the key is never a secret). */
-function newIdempotencyKey(): string {
-  const c = globalThis.crypto as Crypto | undefined;
-  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
-  return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-}
 
 interface CollectionWire {
   id: number;
@@ -139,17 +130,16 @@ export const collectionApi = {
 
   /** Record a payment.
    *
-   *  Sends a fresh Idempotency-Key per call. If the response is lost to a
-   *  network timeout and the request is retried with the same key, the server
-   *  returns the payment it already recorded instead of creating a second one —
-   *  so a flaky connection can never double-charge a borrower. The UI's
-   *  in-flight button guard covers double-clicks; this covers the network. */
+   *  The Idempotency-Key is tied to the payment's content (withRetrySafeKey):
+   *  if the response is lost and the same payment is saved again, the retry
+   *  carries the SAME key and the server returns the payment it already
+   *  recorded instead of creating a second one — so a flaky connection can never
+   *  double-charge a borrower. The UI's in-flight button guard covers
+   *  double-clicks; this covers the network. */
   async record(loanId: number, c: Partial<Collection>): Promise<Collection> {
-    return toCollection(await api.post<CollectionWire>(
-      `/loans/${loanId}/collections`,
-      toWire(c),
-      { headers: { 'Idempotency-Key': newIdempotencyKey() } },
-    ));
+    const body = toWire(c);
+    return toCollection(await withRetrySafeKey(`collection:${loanId}`, body, (key) =>
+      api.post<CollectionWire>(`/loans/${loanId}/collections`, body, { headers: { 'Idempotency-Key': key } })));
   },
 
   /** Atomically swap `replaceIds` for `payments` on one loan.
@@ -158,7 +148,8 @@ export const collectionApi = {
    *  as separate delete + record calls has no atomicity: a dropped connection
    *  part-way either destroys that day's money or leaves it double-counted.
    *  The server does the whole swap in ONE transaction, so the ledger can never
-   *  be observed mid-edit. */
+   *  be observed mid-edit. A retry after a lost response cannot double-count
+   *  either: the originals are already deleted, so the server refuses it. */
   async replace(loanId: number, replaceIds: number[], payments: Partial<Collection>[]): Promise<Collection[]> {
     const rows = await api.post<CollectionWire[]>(
       `/loans/${loanId}/collections/replace`,

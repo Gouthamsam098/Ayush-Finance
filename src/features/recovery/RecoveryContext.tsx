@@ -311,7 +311,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       // The server records the collection (credited to the agent), marks the
       // claim approved and releases the loan once nothing is due — atomically.
       // A refusal throws, which the queue shows as "Could not accept".
-      const saved = await recoveryApi.approve(id);
+      const saved = await recoveryApi.approve(id, { amount: claim.amount, receiptDate: claim.receiptDate, mode: claim.mode });
       const merged = claim.mode === 'UPI' && upiSnap
         ? { ...saved, payeeVpa: upiSnap.payeeVpa, payeeName: upiSnap.payeeName } as RecoverySubmission
         : saved;

@@ -10,6 +10,7 @@ import { withUiModuleAccess } from '@/lib/uiModuleAccess';
 import { usePasswordResetRequestCount } from '@/hooks/usePasswordResetRequestCount';
 import { cn } from '@/lib/utils';
 import BrandLogo, { BrandMark } from '@/components/BrandLogo';
+import { LoadErrorBanner } from '@/components/layout/LoadErrorBanner';
 import {
   LayoutDashboard, Users, FileText, HandCoins, Wallet, BarChart3, Landmark,
   FolderOpen, Settings, ChevronsLeft, LogOut, Moon, Sun,
@@ -274,6 +275,7 @@ export function AppShell() {
       {/* ── Main content ────────────────────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain pb-safe">
+          <LoadErrorBanner />
           <Outlet />
         </main>
       </div>

@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/config"
@@ -44,23 +45,39 @@ type Dependencies struct {
 // NewRouter builds the full HTTP handler with global middleware, a public
 // health check, public auth routes, and protected business routes.
 func NewRouter(deps Dependencies) http.Handler {
+	// Append-only trail (audit_log): payments, sign-ins, access changes, KYC
+	// documents, loans, customers, expenses, investments. Money writes record
+	// inside their own transaction; the rest best-effort, logged on failure.
+	auditor := audit.New(deps.Pool)
+
 	authRepo := auth.NewRepository(deps.Pool)
-	// Two-factor secrets are sealed with a key derived from the token signing
-	// key (a server secret that never enters the database).
-	mfaBox, err := crypto.NewSecretBox(deps.Tokens.SecretKeyMaterial(), "anush-lms/mfa-secret/v1")
+	// Two-factor secrets are sealed with MFA_ENCRYPTION_KEY — a server secret of
+	// its own, backed up with the database, that never enters it. Without one
+	// (development) the key is derived from the token signing key; with one,
+	// that derived key stays as a read-only fallback so secrets sealed under it
+	// keep opening.
+	legacyBox, err := crypto.NewSecretBox(deps.Tokens.SecretKeyMaterial(), "anush-lms/mfa-secret/v1")
 	if err != nil {
 		panic("mfa secret box: " + err.Error())
 	}
+	mfaBox := legacyBox
+	if len(deps.Config.MFAEncryptionKey) > 0 {
+		box, err := crypto.NewSecretBox(deps.Config.MFAEncryptionKey, "anush-lms/mfa-secret/v2")
+		if err != nil {
+			panic("mfa secret box: " + err.Error())
+		}
+		mfaBox = box.WithFallback(legacyBox)
+	}
 	authService := auth.NewService(authRepo, deps.Hasher, deps.Tokens, deps.Now,
-		deps.Config.JWT.RefreshEnabled(), deps.Config.JWT.AccessTTL, mfaBox)
+		deps.Config.JWT.RefreshEnabled(), deps.Config.JWT.AccessTTL, mfaBox, auditor)
 	authHandler := auth.NewHandler(authService)
 
 	customerRepo := customer.NewRepository(deps.Pool)
-	customerService := customer.NewService(customerRepo)
+	customerService := customer.NewService(customerRepo, auditor)
 	customerHandler := customer.NewHandler(customerService)
 
 	documentRepo := document.NewRepository(deps.Pool)
-	documentService := document.NewService(documentRepo)
+	documentService := document.NewService(documentRepo, auditor)
 	documentHandler := document.NewHandler(documentService)
 
 	collectionRepo := collection.NewRepository(deps.Pool)
@@ -68,12 +85,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	loanRepo := loan.NewRepository(deps.Pool)
 	// The loan service reads collected totals so outstanding/close reflect real
 	// payments; collectionRepo.SumByLoan/SumByLoans satisfy loan.CollectedReader.
-	loanService := loan.NewService(loanRepo, collectionRepo)
+	loanService := loan.NewService(loanRepo, collectionRepo, auditor)
 	loanHandler := loan.NewHandler(loanService)
-
-	// Append-only trail for money movements (audit_log). Passed into the
-	// collection service so a payment and its audit row commit atomically.
-	auditor := audit.New(deps.Pool)
 
 	// authRepo.FindByID attributes each directly-entered payment to the staff
 	// member who posted it (Reports' "Collected by").
@@ -97,17 +110,17 @@ func NewRouter(deps Dependencies) http.Handler {
 	}
 
 	expenseRepo := expense.NewRepository(deps.Pool)
-	expenseService := expense.NewService(expenseRepo)
+	expenseService := expense.NewService(expenseRepo, auditor)
 	expenseHandler := expense.NewHandler(expenseService)
 
 	// Investor capital + the interest payouts it costs. Paying interest writes
 	// the payout and its expense in ONE transaction (see investment.Service).
 	investmentRepo := investment.NewRepository(deps.Pool)
-	investmentService := investment.NewService(investmentRepo)
+	investmentService := investment.NewService(investmentRepo, auditor)
 	investmentHandler := investment.NewHandler(investmentService)
 
 	userRepo := user.NewRepository(deps.Pool)
-	userService := user.NewService(userRepo, deps.Hasher)
+	userService := user.NewService(userRepo, deps.Hasher, auditor)
 	userHandler := user.NewHandler(userService)
 
 	// The UPI ID borrowers pay to, per loan type (Settings; read by the portal
@@ -134,9 +147,17 @@ func NewRouter(deps Dependencies) http.Handler {
 		MaxAge:           300,
 	}))
 
-	// Unauthenticated liveness probe.
+	// Unauthenticated health probe (container healthcheck; not public behind
+	// Caddy). It also pings the database, so "API up, database down" shows as
+	// unhealthy (503) instead of a green check while every request fails.
 	r.Get("/health", func(w http.ResponseWriter, req *http.Request) {
-		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
+		defer cancel()
+		if err := deps.Pool.Ping(ctx); err != nil {
+			httpx.JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded", "database": "down"})
+			return
+		}
+		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok", "database": "ok"})
 	})
 
 	r.Route("/api/v1", func(api chi.Router) {

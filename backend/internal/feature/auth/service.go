@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/crypto"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 )
@@ -25,6 +26,10 @@ type Service struct {
 	accessTTL      time.Duration
 	// mfaBox seals two-factor secrets at rest.
 	mfaBox *crypto.SecretBox
+	// audits records sign-ins (and refused ones), password and 2FA changes.
+	audits *audit.Recorder
+	// accounts locks an account after repeated failed sign-ins (lockout.go).
+	accounts *accountGuard
 
 	// dummyHash is compared against when an email has no account, so that path
 	// costs the same bcrypt work as a wrong password (see equalizeUnknownUser).
@@ -45,10 +50,23 @@ func (s *Service) equalizeUnknownUser(password string) {
 }
 
 func NewService(repo *Repository, hasher *crypto.Hasher, tokens *crypto.TokenManager, now Clock, refreshEnabled bool,
-	accessTTL time.Duration, mfaBox *crypto.SecretBox,
+	accessTTL time.Duration, mfaBox *crypto.SecretBox, audits *audit.Recorder,
 ) *Service {
 	return &Service{repo: repo, hasher: hasher, tokens: tokens, now: now, refreshEnabled: refreshEnabled,
-		accessTTL: accessTTL, mfaBox: mfaBox}
+		accessTTL: accessTTL, mfaBox: mfaBox, audits: audits, accounts: newAccountGuard()}
+}
+
+// loginRefused records a refused credential check. userID is 0 when the email
+// matched no account — the attempted address is not stored.
+func (s *Service) loginRefused(ctx context.Context, userID int64, reason string) {
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityUser, EntityID: userID,
+		Action: audit.ActionLoginFailed, After: map[string]any{"reason": reason}})
+}
+
+// loggedIn records a completed sign-in.
+func (s *Service) loggedIn(ctx context.Context, userID int64, withMFA bool) {
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityUser, EntityID: userID,
+		Action: audit.ActionLogin, After: map[string]any{"two_factor": withMFA}})
 }
 
 // RefreshEnabled reports whether silent renewal is available. When false, the
@@ -76,16 +94,24 @@ type LoginResult struct {
 // such user" and "wrong password" return the same generic unauthorized error.
 // With two-factor on, no session is issued until LoginMFA verifies the code.
 func (s *Service) Login(ctx context.Context, email, password string) (*LoginResult, *domain.User, error) {
+	if s.accounts.locked(email, s.now()) {
+		s.loginRefused(ctx, 0, "account_locked")
+		return nil, nil, domain.NewTooManyRequests(lockedMessage)
+	}
 	user, err := s.repo.FindByEmail(ctx, email)
 	if err != nil {
 		if de, ok := domain.AsError(err); ok && de.Code == domain.CodeNotFound {
 			s.equalizeUnknownUser(password)
+			s.accounts.fail(email, s.now())
+			s.loginRefused(ctx, 0, "unknown_account")
 			return nil, nil, domain.NewUnauthorized("invalid email or password")
 		}
 		return nil, nil, err
 	}
 
 	if err := s.hasher.Compare(user.PasswordHash, password); err != nil {
+		s.accounts.fail(email, s.now())
+		s.loginRefused(ctx, user.ID, "wrong_password")
 		return nil, nil, domain.NewUnauthorized("invalid email or password")
 	}
 
@@ -106,6 +132,8 @@ func (s *Service) Login(ctx context.Context, email, password string) (*LoginResu
 	// login itself, but it is logged by the caller via the returned error path
 	// only when fatal. Here we ignore a non-fatal update error deliberately.
 	_ = s.repo.TouchLastLogin(ctx, user.ID, s.now())
+	s.accounts.succeed(email)
+	s.loggedIn(ctx, user.ID, false)
 
 	return &LoginResult{Tokens: pair}, user, nil
 }
@@ -172,6 +200,8 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, in domain.Pa
 	if err := s.repo.UpdatePassword(ctx, userID, user.PasswordHash, hash, s.now()); err != nil {
 		return nil, err
 	}
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityUser, EntityID: userID, Action: audit.ActionUpdate,
+		After: map[string]any{"password": "changed", "via": "settings"}})
 	// Every other session (other devices, anyone who knew the old password) is
 	// now refused; this one continues on a fresh token issued after the change.
 	return s.issueTokens(userID)
@@ -190,22 +220,44 @@ func (s *Service) ChangePasswordWithCredentials(ctx context.Context, rawEmail st
 		return err
 	}
 	bad := domain.NewUnauthorized("Email or current password is incorrect")
+	// Same lockout as sign-in: this form is also a password check.
+	if s.accounts.locked(email, s.now()) {
+		s.loginRefused(ctx, 0, "account_locked")
+		return domain.NewTooManyRequests(lockedMessage)
+	}
 	user, err := s.repo.FindByEmail(ctx, email)
 	if err != nil {
 		if de, ok := domain.AsError(err); ok && de.Code == domain.CodeNotFound {
 			s.equalizeUnknownUser(in.Current)
+			s.accounts.fail(email, s.now())
+			s.loginRefused(ctx, 0, "change_password_unknown_account")
 			return bad
 		}
 		return err
 	}
 	if err := s.hasher.Compare(user.PasswordHash, in.Current); err != nil {
+		s.accounts.fail(email, s.now())
+		s.loginRefused(ctx, user.ID, "change_password_wrong_password")
 		return bad
+	}
+	// With two-factor on, the password alone is not enough to sign in — so it
+	// must not be enough to replace the password (and end every session) either.
+	// Checked only after the password matched, so it reveals nothing to someone
+	// guessing.
+	if user.MFAEnabled {
+		return domain.NewConflict("This account uses two-factor sign-in. Sign in with your authenticator code, " +
+			"then change your password under Settings → Change password.")
 	}
 	hash, err := s.hasher.Hash(in.New)
 	if err != nil {
 		return err
 	}
-	return s.repo.UpdatePassword(ctx, user.ID, user.PasswordHash, hash, s.now())
+	if err := s.repo.UpdatePassword(ctx, user.ID, user.PasswordHash, hash, s.now()); err != nil {
+		return err
+	}
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityUser, EntityID: user.ID, Action: audit.ActionUpdate,
+		After: map[string]any{"password": "changed", "via": "sign-in page"}})
+	return nil
 }
 
 // CurrentUser loads the user identified by a validated access token subject.

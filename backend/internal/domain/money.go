@@ -40,6 +40,19 @@ func (p Paise) DBRupees() int64 {
 	return int64(math.Round(float64(p) / 100))
 }
 
+// WholeRupees rounds to the nearest whole rupee (half away from zero, which for
+// positive amounts is the frontend's Math.round) — the value DBRupees stores.
+func (p Paise) WholeRupees() Paise { return PaiseFromDBRupees(p.DBRupees()) }
+
+// HasAtMostTwoDecimals reports whether a rate such as 1.10 or 12.25 has no more
+// than two decimal places. A rate arrives as a float, and 1.1 × 100 is
+// 110.00000000000001, so an exact equality test refused one valid rate in nine
+// (1.10, 1.15, 2.2, 4.35, …); the tolerance is far below the 0.01 step.
+func HasAtMostTwoDecimals(rate float64) bool {
+	scaled := rate * 100
+	return math.Abs(scaled-math.Round(scaled)) < 1e-6
+}
+
 // PaiseFromDBRupees converts a whole-rupee value read from the database back
 // into internal Paise. The inverse of DBRupees.
 func PaiseFromDBRupees(rupees int64) Paise { return Paise(rupees * 100) }
