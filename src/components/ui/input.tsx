@@ -4,20 +4,23 @@ import { cn } from '@/lib/utils';
 
 interface Props extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
+  labelClassName?: string;
   error?: string;
   /** Shows an eye toggle; input type is forced to password/text when enabled. */
   revealPassword?: boolean;
 }
 
 export const Input = forwardRef<HTMLInputElement, Props>(
-  ({ className, label, error, id, revealPassword, type = 'text', ...props }, ref) => {
+  ({ className, label, labelClassName, error, id, revealPassword, type = 'text', ...props }, ref) => {
     const [showPassword, setShowPassword] = useState(false);
     const resolvedType = revealPassword ? (showPassword ? 'text' : 'password') : type;
 
     return (
       <label className="block min-w-0">
         {label && (
-          <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">{label}</span>
+          <span className={cn('mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted', labelClassName)}>
+            {label}
+          </span>
         )}
         <div className={cn(revealPassword && 'relative')}>
           <input

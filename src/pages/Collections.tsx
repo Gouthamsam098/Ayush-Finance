@@ -6,6 +6,7 @@ import { config } from '@/lib/config';
 import { useData, LOAN_LABELS, isDailyLoan, isMonthlyLike, isInterestOnly, behavesInterestOnly, isEmiLoan, type LoanType, type Loan } from '@/mock/DataContext';
 import { CollectionsAgentView } from '@/features/recovery/CollectionsAgentView';
 import { RecoveryQueuePanel } from '@/features/recovery/components/RecoveryQueuePanel';
+import { RecoveryPtpPanel } from '@/features/recovery/components/RecoveryPtpPanel';
 import { useRecovery } from '@/features/recovery/RecoveryContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +25,7 @@ import {
   pendingProofCountByLoanId,
   PAYMENT_PROOF_SUBMITTED_EVENT,
 } from '@/features/customer-portal/paymentProofStore';
+import { ADMIN_DISMISSALS_CHANGED, isRecoverySubmissionDismissed } from '@/lib/adminDismissals';
 import { recoveryAgentNameByLoanId } from '@/features/recovery/agentLookup';
 import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign';
 import { CustomerPortalProofsPanel } from '@/features/customer-portal/components/CustomerPortalProofsPanel';
@@ -79,7 +81,7 @@ export default function Collections() {
   const pendingRecovery = recoveryDemo
     ? recovery.submissions.filter((s) => s.type === 'COLLECTION_CLAIM' && s.status === 'PENDING').length
     : 0;
-  const [staffTab, setStaffTab] = useState<'portfolio' | 'recovery' | 'portal-proofs'>('portfolio');
+  const [staffTab, setStaffTab] = useState<'portfolio' | 'recovery' | 'ptp' | 'portal-proofs'>('portfolio');
   const [proofTick, setProofTick] = useState(0);
   const [typeFilter, setTypeFilter] = useState<LoanType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
@@ -149,12 +151,28 @@ export default function Collections() {
 
   useEffect(() => {
     const bump = () => setProofTick((n) => n + 1);
+    const onDismiss = () => {
+      setProofTick((n) => n + 1);
+      refreshRecoveryQueue();
+    };
     window.addEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
-    return () => window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
-  }, []);
+    window.addEventListener(ADMIN_DISMISSALS_CHANGED, onDismiss);
+    return () => {
+      window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
+      window.removeEventListener(ADMIN_DISMISSALS_CHANGED, onDismiss);
+    };
+  }, [refreshRecoveryQueue]);
 
   const pendingPortalProofs = useMemo(() => countPendingPaymentProofs(), [proofTick]);
   const portalProofTotal = useMemo(() => listPaymentProofs().length, [proofTick]);
+  const openPtpCount = useMemo(() => {
+    if (!recoveryDemo) return 0;
+    return recovery.submissions.filter(
+      (s) => s.type === 'PROMISE_TO_PAY'
+        && s.status === 'OPEN'
+        && !isRecoverySubmissionDismissed(s.id),
+    ).length;
+  }, [recoveryDemo, recovery.submissions, proofTick]);
   const pendingProofsByLoan = useMemo(() => pendingProofCountByLoanId(), [proofTick]);
   const showRecoveryTab = recoveryDemo && isAdmin;
 
@@ -207,7 +225,9 @@ export default function Collections() {
             ? `${pendingRecovery} pending agent submission${pendingRecovery === 1 ? '' : 's'}`
             : staffTab === 'portal-proofs'
               ? `${portalProofTotal} submission${portalProofTotal === 1 ? '' : 's'}${pendingPortalProofs > 0 ? ` · ${pendingPortalProofs} pending review` : ''}`
-              : `${d.collections.length} payments recorded · ${kpis.activeCount} active loans`
+              : staffTab === 'ptp' && showRecoveryTab
+                ? `${openPtpCount} open promise${openPtpCount === 1 ? '' : 's'} to pay`
+                : `${d.collections.length} payments recorded · ${kpis.activeCount} active loans`
         }
       />
 
@@ -270,6 +290,32 @@ export default function Collections() {
             )}
           </button>
         )}
+        {showRecoveryTab && (
+          <button
+            type="button"
+            onClick={() => setStaffTab('ptp')}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all',
+              staffTab === 'ptp'
+                ? 'bg-gradient-to-r from-[#022999] to-violet-600 text-white shadow-[0_4px_14px_rgba(79,70,229,.35)]'
+                : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
+            )}
+          >
+            <CalendarClock size={14} />
+            <span className="xs:hidden">PTP</span>
+            <span className="hidden xs:inline">Promise to pay</span>
+            {openPtpCount > 0 && (
+              <span
+                className={cn(
+                  'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                  staffTab === 'ptp' ? 'bg-white/25' : 'bg-primary/15 text-primary',
+                )}
+              >
+                {openPtpCount}
+              </span>
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setStaffTab('portal-proofs')}
@@ -296,6 +342,8 @@ export default function Collections() {
 
       {staffTab === 'recovery' && showRecoveryTab ? (
         <RecoveryQueuePanel />
+      ) : staffTab === 'ptp' && showRecoveryTab ? (
+        <RecoveryPtpPanel />
       ) : staffTab === 'portal-proofs' ? (
         <CustomerPortalProofsPanel
           canReview={canCollect}

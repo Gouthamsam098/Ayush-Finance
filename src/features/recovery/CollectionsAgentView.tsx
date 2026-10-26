@@ -8,16 +8,23 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { StatCard } from '@/components/ui/stat-card';
 import { inrShort, todayISO } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { HandCoins, Search, X, CalendarClock, AlertCircle, Clock, Layers } from 'lucide-react';
+import { HandCoins, Search, X, CalendarClock, AlertCircle, Clock, Layers, ScrollText } from 'lucide-react';
+import { AgentActivityPanel } from './components/AgentActivityPanel';
+import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
 import { RecoveryAssignmentCard } from './components/RecoveryAssignmentCard';
-import { ReportCollectionDialog } from './components/ReportCollectionDialog';
+import { ReportCollectionDialog, type CollectionClaimSubmitPayload } from './components/ReportCollectionDialog';
+import { submitPaymentProof } from '@/features/customer-portal/paymentProofStore';
+import { enrichCollectionClaim } from '@/lib/recoveryClaimUpi';
 import { PromiseToPayDialog } from './components/PromiseToPayDialog';
 import { useToast } from '@/components/ui/toast';
-import { latestCollectionClaimForAgent, latestOpenPromiseForLoan } from './recoveryStore';
+import { latestCollectionClaimForAgent, latestOpenPromiseForLoan, openPromisesForAgent } from './recoveryStore';
 import type { CollectionClaimSubmission, PromiseSubmission } from './types';
 import { LedgerDialog } from '@/components/LedgerDialog';
+import { AgentPtpPanel } from './components/AgentPtpPanel';
+import { classifyPtpTiming, type PtpTiming } from '@/lib/recoveryPtp';
 
-type AgentListFilter = 'all' | 'pending';
+type AgentListFilter = 'all' | 'pending' | 'ptp' | 'history';
+type PtpSubFilter = 'ALL' | PtpTiming;
 
 export function CollectionsAgentView() {
   const user = useSelector((s: RootState) => s.auth.user)!;
@@ -29,17 +36,32 @@ export function CollectionsAgentView() {
   const [ptpLoan, setPtpLoan] = useState<Loan | null>(null);
   const [statementLoan, setStatementLoan] = useState<Loan | null>(null);
   const [listFilter, setListFilter] = useState<AgentListFilter>('all');
+  const [ptpSubFilter, setPtpSubFilter] = useState<PtpSubFilter>('ALL');
   const [editPending, setEditPending] = useState<{ loan: Loan; claim: CollectionClaimSubmission } | null>(null);
-  // Stable between renders: the edit dialog resets its fields (and any error it
-  // is showing) whenever these values change identity.
-  const editInitial = useMemo(() => (editPending ? {
-    amount: editPending.claim.amount,
-    mode: editPending.claim.mode,
-    receiptDate: editPending.claim.receiptDate,
-    note: editPending.claim.note,
-  } : undefined), [editPending]);
+  const editInitial = useMemo(() => {
+    if (!editPending) return undefined;
+    const claim = enrichCollectionClaim(editPending.claim);
+    return {
+      amount: claim.amount,
+      mode: claim.mode,
+      receiptDate: claim.receiptDate,
+      note: claim.note,
+      payeeVpa: claim.payeeVpa,
+      payeeName: claim.payeeName,
+    };
+  }, [editPending]);
 
   const assignedIds = useMemo(() => recovery.getAssignments(user.id), [recovery, user.id]);
+
+  const openPromises = useMemo(
+    () => openPromisesForAgent(user.id, recovery.submissions),
+    [user.id, recovery.submissions],
+  );
+
+  const ptpTodayCount = useMemo(
+    () => openPromises.filter((p) => classifyPtpTiming(p.promiseDate) === 'TODAY').length,
+    [openPromises],
+  );
 
   const loanHasPendingClaim = useCallback((loanId: number) => (
     recovery.submissions.some(
@@ -73,10 +95,13 @@ export function CollectionsAgentView() {
       overdueCount: overdue.length,
       overdueAmt: overdue.reduce((s, l) => s + recoveryDueNow(d, l), 0),
       pending,
+      ptpToday: ptpTodayCount,
+      ptpOpen: openPromises.length,
     };
-  }, [d, assignedIds, recovery.submissions, user.id]);
+  }, [d, assignedIds, recovery.submissions, user.id, ptpTodayCount, openPromises.length]);
 
-  const submitClaim = async (loan: Loan, payload: { amount: number; mode: import('@/mock/DataContext').PayMode; receiptDate: string; note: string }) => {
+  const submitClaim = async (loan: Loan, payload: CollectionClaimSubmitPayload) => {
+    const { proofFile, ...claimPayload } = payload;
     const c = d.customers.find((x) => x.id === loan.customerId);
     const err = await recovery.submitCollectionClaim({
       agentUserId: user.id,
@@ -84,11 +109,54 @@ export function CollectionsAgentView() {
       loanId: loan.id,
       customerName: c?.name ?? '—',
       loanNumber: loan.loanNumber,
-      ...payload,
+      ...claimPayload,
     });
     if (err) return err;
+    if (proofFile && claimPayload.mode === 'UPI') {
+      const proofErr = await submitPaymentProof({
+        customerId: loan.customerId,
+        loanId: loan.id,
+        loanNumber: loan.loanNumber,
+        fileName: proofFile.fileName,
+        mimeType: proofFile.mimeType,
+        dataUrl: proofFile.dataUrl,
+        amountRupees: claimPayload.amount,
+        purpose: 'CUSTOM',
+        recoveryAgentName: user.fullName || user.username,
+        submittedByName: user.fullName || user.username,
+        submittedByRole: user.role,
+      });
+      if (proofErr) {
+        return `Collection submitted, but screenshot failed: ${proofErr}. Open loan details to upload again.`;
+      }
+      recordAgentActivity({
+        agentUserId: user.id,
+        at: new Date().toISOString(),
+        kind: 'PROOF_UPLOADED',
+        loanId: loan.id,
+        loanNumber: loan.loanNumber,
+        customerName: c?.name ?? '—',
+        title: 'Screenshot submitted',
+        detail: `With Collect · ${claimPayload.mode}`,
+        amountRupees: claimPayload.amount,
+      });
+    }
     toast('Submitted for admin approval', 'success');
     return null;
+  };
+
+  const collectForLoanId = (loanId: number) => {
+    const loan = d.loans.find((l) => l.id === loanId);
+    if (loan) setPayLoan(loan);
+  };
+
+  const closePtp = async (id: string, status: 'FULFILLED' | 'CANCELLED') => {
+    const err = await recovery.closePromiseToPay(id, user.id, status);
+    if (err) {
+      toast(err, 'error');
+      return;
+    }
+    toast(status === 'FULFILLED' ? 'Promise marked fulfilled' : 'Promise cancelled', 'success');
   };
 
   return (
@@ -100,7 +168,7 @@ export function CollectionsAgentView() {
       />
 
       <div className="flex min-w-0 w-full flex-1 flex-col gap-4 px-safe pb-safe pt-1 sm:gap-5 sm:px-5 md:px-6 lg:px-8">
-        <div className="grid grid-cols-2 gap-2 sm:gap-2.5 md:grid-cols-4 [&>*]:min-w-0">
+        <div className="grid grid-cols-2 gap-2 sm:gap-2.5 md:grid-cols-4 lg:grid-cols-5 [&>*]:min-w-0">
           <StatCard
             label="Assigned"
             value={String(kpis.assigned)}
@@ -118,6 +186,17 @@ export function CollectionsAgentView() {
             icon={<Clock size={16} />}
             active={listFilter === 'pending'}
             onClick={() => setListFilter('pending')}
+          />
+          <StatCard
+            label="PTP today"
+            value={String(kpis.ptpToday)}
+            accent="#d97706"
+            icon={<CalendarClock size={16} />}
+            active={listFilter === 'ptp' && ptpSubFilter === 'TODAY'}
+            onClick={() => {
+              setListFilter('ptp');
+              setPtpSubFilter('TODAY');
+            }}
           />
         </div>
 
@@ -149,6 +228,38 @@ export function CollectionsAgentView() {
               <span className="rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-bold">{kpis.pending}</span>
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => { setListFilter('ptp'); setPtpSubFilter('ALL'); }}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all min-h-11',
+              listFilter === 'ptp'
+                ? 'bg-gradient-to-r from-[#022999] to-violet-600 text-white shadow-[0_4px_14px_rgba(79,70,229,.35)]'
+                : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
+            )}
+          >
+            <CalendarClock size={14} /> Promise to pay
+            {kpis.ptpOpen > 0 && (
+              <span className={cn(
+                'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                listFilter === 'ptp' ? 'bg-white/25' : 'bg-violet-500/15 text-violet-700 dark:text-violet-200',
+              )}>
+                {kpis.ptpOpen}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setListFilter('history')}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all min-h-11',
+              listFilter === 'history'
+                ? 'bg-gradient-to-r from-slate-700 to-slate-500 text-white shadow-[0_4px_14px_rgba(71,85,105,.35)]'
+                : 'border border-slate-200/90 bg-surface text-muted dark:border-white/[.07]',
+            )}
+          >
+            <ScrollText size={14} /> Activity
+          </button>
         </div>
 
         <div className="relative">
@@ -156,7 +267,13 @@ export function CollectionsAgentView() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search your assignments…"
+            placeholder={
+              listFilter === 'ptp'
+                ? 'Search promises…'
+                : listFilter === 'history'
+                  ? 'Search activity…'
+                  : 'Search your assignments…'
+            }
             className="h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-surface pl-10 pr-10 text-base outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-white/[.08] sm:h-11 sm:text-sm"
           />
           {search && (
@@ -166,7 +283,20 @@ export function CollectionsAgentView() {
           )}
         </div>
 
-        {assignedIds.length === 0 ? (
+        {listFilter === 'history' ? (
+          <AgentActivityPanel agentUserId={user.id} search={search} />
+        ) : listFilter === 'ptp' ? (
+          <AgentPtpPanel
+            agentUserId={user.id}
+            promises={openPromises}
+            search={search}
+            filter={ptpSubFilter}
+            onFilterChange={setPtpSubFilter}
+            onCollect={collectForLoanId}
+            onFulfill={(id) => void closePtp(id, 'FULFILLED')}
+            onCancel={(id) => void closePtp(id, 'CANCELLED')}
+          />
+        ) : assignedIds.length === 0 ? (
           <div className="rounded-card border border-slate-200/90 bg-surface px-6 py-16 text-center shadow-card dark:border-white/[.07]">
             <p className="font-display text-lg font-bold text-ink">No loans assigned yet</p>
             <p className="mt-2 text-[13px] text-muted">Ask an admin to assign accounts to you in Settings.</p>
@@ -178,7 +308,7 @@ export function CollectionsAgentView() {
             </p>
             <p className="mt-2 text-[13px] text-muted">
               {listFilter === 'pending'
-                ? 'Payments you send with Collect will appear here until admin approves.'
+                ? 'Collections waiting for admin approval. UPI screenshots are reviewed separately under Portal proofs.'
                 : 'Try another search term.'}
             </p>
             {listFilter === 'pending' && (
@@ -194,6 +324,7 @@ export function CollectionsAgentView() {
               const due = recoveryDueNow(d, l);
               const claim = latestCollectionClaimForAgent(l.id, user.id, recovery.submissions) as CollectionClaimSubmission | undefined;
               const ptp = latestOpenPromiseForLoan(l.id, user.id, recovery.submissions) as PromiseSubmission | undefined;
+              const ptpToday = ptp && classifyPtpTiming(ptp.promiseDate) === 'TODAY' ? ptp : undefined;
               const nd = d.nextDueFor(l);
               const today = todayISO();
               const scheduleOverdue = !!nd && nd < today;
@@ -205,7 +336,7 @@ export function CollectionsAgentView() {
                   agentName={user.fullName || user.username}
                   due={due}
                   claim={claim}
-                  ptp={ptp}
+                  ptpToday={ptpToday}
                   nd={nd}
                   scheduleOverdue={scheduleOverdue}
                   animationDelay={Math.min(i, 6) * 50}

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
+import type { RootState } from '@/store';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, CircleX, Clock, ImagePlus, ShieldCheck, Sparkles, Upload, X } from 'lucide-react';
 import { inr, fmtDate } from '@/lib/format';
@@ -15,6 +17,7 @@ import {
   PAYMENT_PROOF_SUBMITTED_EVENT,
   type PaymentProofRecord,
 } from '@/features/customer-portal/paymentProofStore';
+import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
 
 interface Props {
   customerId: number;
@@ -22,11 +25,23 @@ interface Props {
   loanNumber: string;
   amountRupees: number;
   purpose: PortalPayPurpose;
+  /** Recovery card: true while a Collect submission is awaiting admin approval. */
+  collectionClaimPending?: boolean;
+  /** For recovery agent activity log (recovery portal only). */
+  activityCustomerName?: string;
 }
 
 type PickedFile = { name: string; mime: string; dataUrl: string; sizeLabel: string };
 
-function PaymentThankYouModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function PaymentThankYouModal({
+  open,
+  onClose,
+  agent,
+}: {
+  open: boolean;
+  onClose: () => void;
+  agent?: boolean;
+}) {
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -87,12 +102,16 @@ function PaymentThankYouModal({ open, onClose }: { open: boolean; onClose: () =>
                   Thank you!
                 </p>
                 <p className="mt-2 text-[13px] leading-relaxed text-muted sm:text-[14px]">
-                  Your payment will be confirmed once admin approves.
+                  {agent
+                    ? 'The screenshot is queued for admin review in Portal proofs.'
+                    : 'Your payment will be confirmed once admin approves.'}
                 </p>
-                <p className="mt-3 inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-primary">
-                  <Sparkles size={12} aria-hidden />
-                  We&apos;ll notify you after verification
-                </p>
+                {!agent && (
+                  <p className="mt-3 inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-primary">
+                    <Sparkles size={12} aria-hidden />
+                    We&apos;ll notify you after verification
+                  </p>
+                )}
               </motion.div>
               <motion.div
                 className="mt-6"
@@ -113,9 +132,11 @@ function PaymentThankYouModal({ open, onClose }: { open: boolean; onClose: () =>
 }
 
 export function PaymentProofUpload({
-  customerId, loanId, loanNumber, amountRupees, purpose,
+  customerId, loanId, loanNumber, amountRupees, purpose, collectionClaimPending, activityCustomerName,
 }: Props) {
   const toast = useToast();
+  const authUser = useSelector((s: RootState) => s.auth.user);
+  const isAgent = authUser?.role === 'RECOVERY_AGENT';
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [picked, setPicked] = useState<PickedFile | null>(null);
@@ -134,7 +155,7 @@ export function PaymentProofUpload({
     refreshLatest();
     const onSubmitted = (e: Event) => {
       const detail = (e as CustomEvent<PaymentProofRecord>).detail;
-      if (detail?.loanId === loanId) refreshLatest();
+      if (!detail || detail.loanId === loanId) refreshLatest();
     };
     const onStorage = (e: StorageEvent) => {
       if (e.key === PAYMENT_PROOF_STORAGE_KEY) refreshLatest();
@@ -191,6 +212,9 @@ export function PaymentProofUpload({
         dataUrl: picked.dataUrl,
         amountRupees,
         purpose,
+        recoveryAgentName: isAgent ? authUser?.fullName ?? null : null,
+        submittedByName: authUser?.fullName ?? null,
+        submittedByRole: authUser?.role ?? null,
       });
       if (err) {
         toast(`Screenshot not submitted: ${err}`, 'error');
@@ -199,6 +223,19 @@ export function PaymentProofUpload({
       setPicked(null);
       if (inputRef.current) inputRef.current.value = '';
       refreshLatest();
+      if (isAgent && authUser && activityCustomerName) {
+        recordAgentActivity({
+          agentUserId: authUser.id,
+          at: new Date().toISOString(),
+          kind: 'PROOF_UPLOADED',
+          loanId,
+          loanNumber,
+          customerName: activityCustomerName,
+          title: 'Screenshot submitted',
+          detail: 'Payment proof queued for admin review',
+          amountRupees,
+        });
+      }
       setThankYouOpen(true);
     } finally {
       submittingRef.current = false;
@@ -210,10 +247,18 @@ export function PaymentProofUpload({
   const pending = status === 'pending';
   const rejected = status === 'rejected';
   const accepted = status === 'verified';
+  const recoveryAgentFlow = collectionClaimPending !== undefined;
+  const awaitingNewCollect =
+    recoveryAgentFlow && accepted && !collectionClaimPending;
+  const canAddScreenshot = !pending && !awaitingNewCollect;
 
   return (
     <>
-    <PaymentThankYouModal open={thankYouOpen} onClose={() => setThankYouOpen(false)} />
+    <PaymentThankYouModal
+      open={thankYouOpen}
+      onClose={() => setThankYouOpen(false)}
+      agent={isAgent}
+    />
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
@@ -230,6 +275,7 @@ export function PaymentProofUpload({
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
+        if (!canAddScreenshot) return;
         ingestFile(e.dataTransfer.files?.[0]);
       }}
     >
@@ -270,7 +316,9 @@ export function PaymentProofUpload({
               {rejected ? (
                 <>
                   <CircleX size={10} className="mr-0.5 inline text-danger" aria-hidden />
-                  Admin could not verify your screenshot. Please upload again.
+                  {isAgent
+                    ? 'Admin could not verify this screenshot. Upload again.'
+                    : 'Admin could not verify your screenshot. Please upload again.'}
                 </>
               ) : pending ? (
                 <>
@@ -289,11 +337,16 @@ export function PaymentProofUpload({
               )}
             </p>
           )}
+          {awaitingNewCollect && !picked && (
+            <p className="mt-0.5 text-[10px] leading-relaxed text-muted">
+              Use <span className="font-semibold text-ink">Collect</span> for the next payment before adding another screenshot.
+            </p>
+          )}
         </div>
         </div>
 
         <AnimatePresence mode="wait">
-          {!picked ? (
+          {!picked && canAddScreenshot ? (
             <motion.button
               key="pick"
               type="button"
@@ -310,6 +363,14 @@ export function PaymentProofUpload({
               <ImagePlus size={14} aria-hidden />
               {rejected ? 'Upload again' : 'Add'}
             </motion.button>
+          ) : !picked && awaitingNewCollect ? (
+            <span
+              className="inline-flex h-9 w-full shrink-0 cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-slate-200/80 px-3 text-[11px] font-semibold text-muted opacity-55 xs:w-auto dark:border-white/[.08]"
+              title="Submit Collect first"
+            >
+              <ImagePlus size={14} aria-hidden />
+              Add
+            </span>
           ) : null}
         </AnimatePresence>
       </div>

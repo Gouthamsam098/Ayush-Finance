@@ -30,13 +30,15 @@ import { hasActiveRecoveryAgents } from '@/features/recovery/recoveryAutoAssign'
 import { RecoveryAutoAssignScheduleCard } from '@/features/recovery/components/RecoveryAutoAssignScheduleCard';
 import { TwoFactorSettingsCard } from '@/features/settings/TwoFactorSettingsCard';
 import { ChangePasswordCard } from '@/features/settings/ChangePasswordCard';
+import { LoanTypeUpiSettingsCard } from '@/features/settings/LoanTypeUpiSettingsCard';
+import { isPortalLoanTypeUpiReady, LOAN_TYPE_UPI_CHANGED } from '@/lib/loanTypeUpiStore';
 import { SettingsCollapsibleSection } from '@/features/settings/SettingsCollapsibleSection';
 import { isTotpEnabled } from '@/lib/totpStore';
 import { dailyScheduleSummary } from '@/features/recovery/recoveryAutoAssign';
 import { clearUiReportsAccess, setUiReportsAccess, withUiModuleAccess } from '@/lib/uiModuleAccess';
 import {
   UserPlus, Trash2, Settings as SettingsIcon, Pencil, Plus, Users as UsersIcon, Loader2, ShieldCheck,
-  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3, CalendarClock, KeyRound, Lock,
+  LayoutDashboard, FileText, Receipt, Wallet, FolderOpen, BarChart3, CalendarClock, KeyRound, Lock, Smartphone,
 } from 'lucide-react';
 
 const MODULE_ICON: Record<string, React.ReactNode> = {
@@ -118,12 +120,23 @@ export default function Settings() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState | null>(null);
+  /** Bumped on “Add user” so fields remount and browsers don’t autofill login credentials. */
+  const [userFormKey, setUserFormKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [confirmDel, setConfirmDel] = useState<ManagedUser | null>(null);
   // Open "Forgot password?" requests, by user id. Setting that user's new
   // password closes theirs on the server; Dismiss closes it without a reset.
   const [resetReqs, setResetReqs] = useState<Map<number, PasswordResetRequest>>(new Map());
+  const [upiSettingsTick, setUpiSettingsTick] = useState(0);
+
+  const portalUpiReady = useMemo(() => isPortalLoanTypeUpiReady(), [upiSettingsTick]);
+
+  useEffect(() => {
+    const bump = () => setUpiSettingsTick((n) => n + 1);
+    window.addEventListener(LOAN_TYPE_UPI_CHANGED, bump);
+    return () => window.removeEventListener(LOAN_TYPE_UPI_CHANGED, bump);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -158,7 +171,10 @@ export default function Settings() {
   const adminCount = useMemo(() => users.filter((u) => u.role === 'ADMIN' && u.isActive).length, [users]);
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
-  const openCreate = () => setForm(blankForm());
+  const openCreate = () => {
+    setUserFormKey((k) => k + 1);
+    setForm(blankForm());
+  };
   const openEdit = (u: ManagedUser) => setForm({
     id: u.id,
     email: u.email,
@@ -382,6 +398,18 @@ export default function Settings() {
               <RecoveryAutoAssignScheduleCard assignmentVersion={recovery.assignmentVersion} embedded />
             </SettingsCollapsibleSection>
           )}
+
+          <SettingsCollapsibleSection
+            id="loan-type-upi"
+            title="Customer portal · UPI IDs"
+            description="UPI ID and payee name per loan type for borrower payments."
+            icon={<Smartphone size={20} strokeWidth={2.25} />}
+            statusLabel={portalUpiReady ? 'Portal ready' : 'Incomplete'}
+            statusTone={portalUpiReady ? 'success' : 'warn'}
+            defaultOpen={!portalUpiReady}
+          >
+            <LoanTypeUpiSettingsCard embedded />
+          </SettingsCollapsibleSection>
         </div>
 
         <Card className="anim-pop overflow-hidden border-slate-200/80 shadow-card dark:border-white/[.08]">
@@ -497,15 +525,29 @@ export default function Settings() {
         }
       >
         {form && (
-          <div className="space-y-4">
+          <form
+            key={form.id ?? `create-${userFormKey}`}
+            className="space-y-4"
+            autoComplete="off"
+            onSubmit={(e) => e.preventDefault()}
+          >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Input label="Full name *" placeholder="e.g. Ramesh Kumar" value={form.fullName} onChange={(e) => set('fullName', e.target.value)} />
+              <Input
+                label="Full name *"
+                placeholder="e.g. Ramesh Kumar"
+                value={form.fullName}
+                onChange={(e) => set('fullName', e.target.value)}
+                autoComplete={form.id ? 'name' : 'off'}
+                name={form.id ? undefined : `settings-full-name-${userFormKey}`}
+              />
               <Input
                 label="Email *"
                 type="email"
                 placeholder="user@example.com"
                 value={form.email}
                 onChange={(e) => set('email', e.target.value)}
+                autoComplete={form.id ? 'email' : 'off'}
+                name={form.id ? undefined : `settings-email-${userFormKey}`}
                 error={
                   emailHasComma(form.email)
                     ? 'Commas are not allowed. Use a single email address (not a list).'
@@ -526,7 +568,7 @@ export default function Settings() {
                       Saving closes the request.
                     </p>
                   </div>
-                  <Button variant="ghost" className="shrink-0 !px-3 !py-1.5 !text-[12px]" onClick={() => void dismissReset(req)}>
+                  <Button type="button" variant="ghost" className="shrink-0 !px-3 !py-1.5 !text-[12px]" onClick={() => void dismissReset(req)}>
                     Dismiss request
                   </Button>
                 </div>
@@ -547,6 +589,8 @@ export default function Settings() {
                   placeholder={form.id ? 'Leave blank to keep' : 'Min 8 characters'}
                   value={form.password}
                   onChange={(e) => set('password', e.target.value)}
+                  autoComplete="new-password"
+                  name={form.id ? undefined : `settings-password-${userFormKey}`}
                 />
                 <Input
                   revealPassword
@@ -554,6 +598,8 @@ export default function Settings() {
                   placeholder="Re-enter password"
                   value={form.confirm}
                   onChange={(e) => set('confirm', e.target.value)}
+                  autoComplete="new-password"
+                  name={form.id ? undefined : `settings-password-confirm-${userFormKey}`}
                 />
               </div>
             )}
@@ -617,7 +663,7 @@ export default function Settings() {
                 </div>
               </div>
             )}
-          </div>
+          </form>
         )}
       </Dialog>
 

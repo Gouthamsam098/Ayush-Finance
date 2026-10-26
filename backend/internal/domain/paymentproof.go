@@ -60,6 +60,9 @@ type PaymentProof struct {
 	SubmittedAt time.Time
 	ReviewedAt  *time.Time
 	ReceiptDate *time.Time
+	// Filled on list reads when joined to users (submitted_by).
+	SubmitterName string
+	SubmitterRole Role
 }
 
 // PaymentProofInput is the borrower's upload, validated before storing.

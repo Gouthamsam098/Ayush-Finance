@@ -18,7 +18,8 @@ import {
 } from './recoveryStore';
 import { recoveryDueNow } from './recoveryDue';
 import {
-  isPastTodaysTestSchedule,
+  hasActiveRecoveryAgents,
+  isPastTodaysScheduledRun,
   msUntilNextAutoAssignRun,
   runRecoveryAutoAssign,
   type RecoveryAutoAssignResult,
@@ -31,6 +32,9 @@ import {
 import { recoveryApi } from '@/services/recoveryApi';
 import { ApiError } from '@/lib/api';
 import { COLLECTIONS_CHANGED_EVENT } from '@/lib/dataEvents';
+import { rememberClaimUpi, rememberCollectionUpi, upiSnapshotFromClaim, enrichCollectionClaim } from '@/lib/recoveryClaimUpi';
+import { setPromiseStatusOverlay } from '@/lib/recoveryPtpOverlay';
+import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
 
 interface RecoveryContextValue {
   submissions: RecoverySubmission[];
@@ -48,6 +52,8 @@ interface RecoveryContextValue {
     mode: PayMode;
     receiptDate: string;
     note?: string;
+    payeeVpa?: string;
+    payeeName?: string;
   }) => Promise<string | null>;
   submitPromise: (input: {
     agentUserId: number;
@@ -64,8 +70,17 @@ interface RecoveryContextValue {
   updatePendingCollectionClaim: (
     id: string,
     agentUserId: number,
-    patch: { amount: number; mode: PayMode; receiptDate: string; note?: string },
+    patch: {
+      amount: number;
+      mode: PayMode;
+      receiptDate: string;
+      note?: string;
+      payeeVpa?: string;
+      payeeName?: string;
+    },
   ) => Promise<string | null>;
+  /** Mark promise fulfilled or cancelled (demo: persisted; API: local overlay until backend). */
+  closePromiseToPay: (id: string, agentUserId: number, status: 'FULFILLED' | 'CANCELLED') => Promise<string | null>;
   /** Demo only: run overdue balancing (respects once-per-day unless force). */
   runOverdueAutoAssign: (force?: boolean) => RecoveryAutoAssignResult;
   assignmentVersion: number;
@@ -151,7 +166,9 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     if (!dataReady || config.useApi) return;
     const tick = () => {
       if (dRef.current.loans.length === 0) return;
-      if (isPastTodaysTestSchedule()) runRecoveryAutoAssign(dRef.current);
+      if (!isPastTodaysScheduledRun()) return;
+      if (!hasActiveRecoveryAgents()) return;
+      runRecoveryAutoAssign(dRef.current);
     };
     tick();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -195,6 +212,8 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     mode: PayMode;
     receiptDate: string;
     note?: string;
+    payeeVpa?: string;
+    payeeName?: string;
   }): Promise<string | null> => {
     const pending = listSubmissions().find(
       (s) => s.loanId === input.loanId && s.type === 'COLLECTION_CLAIM' && s.status === 'PENDING',
@@ -204,7 +223,14 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       // Wait for the server so a refusal reaches the agent (the dialog shows
       // the message and stays open) instead of silently vanishing.
       try {
-        upsertCachedSubmission(await recoveryApi.submitClaim(input));
+        const saved = await recoveryApi.submitClaim(input);
+        const withUpi = input.mode === 'UPI' && input.payeeVpa
+          ? { ...saved, payeeVpa: input.payeeVpa, payeeName: input.payeeName } as RecoverySubmission
+          : saved;
+        if (withUpi.type === 'COLLECTION_CLAIM' && withUpi.mode === 'UPI' && withUpi.payeeVpa) {
+          rememberClaimUpi(withUpi.id, { payeeVpa: withUpi.payeeVpa, payeeName: withUpi.payeeName ?? '' });
+        }
+        upsertCachedSubmission(withUpi);
         refresh();
         return null;
       } catch (e) {
@@ -224,8 +250,13 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       mode: input.mode,
       receiptDate: input.receiptDate,
       note: input.note,
+      payeeVpa: input.mode === 'UPI' ? input.payeeVpa : undefined,
+      payeeName: input.mode === 'UPI' ? input.payeeName : undefined,
       createdAt: new Date().toISOString(),
     };
+    if (row.mode === 'UPI' && row.payeeVpa) {
+      rememberClaimUpi(row.id, { payeeVpa: row.payeeVpa, payeeName: row.payeeName ?? '' });
+    }
     addSubmission(row);
     refresh();
     return null;
@@ -272,12 +303,19 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
   const approveClaim = useCallback(async (id: string) => {
     const row = listSubmissions().find((s) => s.id === id);
     if (!row || row.type !== 'COLLECTION_CLAIM' || row.status !== 'PENDING') return;
+    const claim = enrichCollectionClaim(row);
+    const upiSnap = upiSnapshotFromClaim(claim);
+
     if (config.useApi) {
       // The server records the collection (credited to the agent), marks the
       // claim approved and releases the loan once nothing is due — atomically.
       // A refusal throws, which the queue shows as "Could not accept".
       const saved = await recoveryApi.approve(id);
-      upsertCachedSubmission(saved);
+      const merged = claim.mode === 'UPI' && upiSnap
+        ? { ...saved, payeeVpa: upiSnap.payeeVpa, payeeName: upiSnap.payeeName } as RecoverySubmission
+        : saved;
+      if (merged.type === 'COLLECTION_CLAIM' && upiSnap) rememberClaimUpi(merged.id, upiSnap);
+      upsertCachedSubmission(merged);
       window.dispatchEvent(new Event(COLLECTIONS_CHANGED_EVENT));
       void refreshRecovery();
       refresh();
@@ -293,6 +331,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       remarks: row.note ? `Recovery: ${row.note}` : 'Recovery agent collection (approved)',
       collectorType: 'RECOVERY_AGENT',
       collectorName: row.agentName,
+      ...(upiSnap ? { payeeVpa: upiSnap.payeeVpa, payeeName: upiSnap.payeeName } : {}),
     }));
     const collectionId = created && typeof created === 'object' && 'id' in created
       ? (created as { id: number }).id
@@ -300,6 +339,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
         const rows = d.collections.filter((c) => c.loanId === row.loanId);
         return rows.length ? rows[rows.length - 1].id : undefined;
       })();
+    if (collectionId && upiSnap) rememberCollectionUpi(collectionId, upiSnap);
     updateSubmission(id, {
       status: 'APPROVED',
       reviewedAt: new Date().toISOString(),
@@ -333,7 +373,14 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
   const updatePendingCollectionClaim = useCallback(async (
     id: string,
     agentUserId: number,
-    patch: { amount: number; mode: PayMode; receiptDate: string; note?: string },
+    patch: {
+      amount: number;
+      mode: PayMode;
+      receiptDate: string;
+      note?: string;
+      payeeVpa?: string;
+      payeeName?: string;
+    },
   ): Promise<string | null> => {
     const row = listSubmissions().find((s) => s.id === id);
     if (!row || row.type !== 'COLLECTION_CLAIM' || row.status !== 'PENDING') {
@@ -343,7 +390,25 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     if (!patch.amount || patch.amount <= 0) return 'Enter a valid amount.';
     if (config.useApi) {
       try {
-        upsertCachedSubmission(await recoveryApi.updateClaim(id, patch));
+        const saved = await recoveryApi.updateClaim(id, patch);
+        const withUpi = patch.mode === 'UPI' && patch.payeeVpa
+          ? { ...saved, payeeVpa: patch.payeeVpa, payeeName: patch.payeeName } as RecoverySubmission
+          : saved;
+        if (withUpi.type === 'COLLECTION_CLAIM' && withUpi.mode === 'UPI' && withUpi.payeeVpa) {
+          rememberClaimUpi(withUpi.id, { payeeVpa: withUpi.payeeVpa, payeeName: withUpi.payeeName ?? '' });
+        }
+        upsertCachedSubmission(withUpi);
+        recordAgentActivity({
+          agentUserId,
+          at: new Date().toISOString(),
+          kind: 'COLLECT_UPDATED',
+          loanId: row.loanId,
+          loanNumber: row.loanNumber,
+          customerName: row.customerName,
+          title: 'Collect updated',
+          detail: `${patch.mode} · ${patch.receiptDate}`,
+          amountRupees: patch.amount,
+        });
         refresh();
         return null;
       } catch (e) {
@@ -352,12 +417,54 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
         return saveErrorText(e, OFFLINE_MSG);
       }
     }
+    const nextUpi = patch.mode === 'UPI' && patch.payeeVpa
+      ? { payeeVpa: patch.payeeVpa, payeeName: patch.payeeName }
+      : { payeeVpa: undefined, payeeName: undefined };
+    if (patch.mode === 'UPI' && patch.payeeVpa) {
+      rememberClaimUpi(id, { payeeVpa: patch.payeeVpa, payeeName: patch.payeeName ?? '' });
+    }
     updateSubmission(id, {
       amount: patch.amount,
       mode: patch.mode,
       receiptDate: patch.receiptDate,
       note: patch.note,
+      ...nextUpi,
     } as Partial<CollectionClaimSubmission>);
+    recordAgentActivity({
+      agentUserId,
+      at: new Date().toISOString(),
+      kind: 'COLLECT_UPDATED',
+      loanId: row.loanId,
+      loanNumber: row.loanNumber,
+      customerName: row.customerName,
+      title: 'Collect updated',
+      detail: `${patch.mode} · ${patch.receiptDate}`,
+      amountRupees: patch.amount,
+    });
+    refresh();
+    return null;
+  }, [refresh]);
+
+  const closePromiseToPay = useCallback(async (
+    id: string,
+    agentUserId: number,
+    status: 'FULFILLED' | 'CANCELLED',
+  ): Promise<string | null> => {
+    const row = listSubmissions().find((s) => s.id === id);
+    if (!row || row.type !== 'PROMISE_TO_PAY') return 'Promise not found.';
+    if (row.agentUserId !== agentUserId) return 'You can only close your own promises.';
+    if (row.status !== 'OPEN' && !config.useApi) return 'This promise is already closed.';
+    if (config.useApi) {
+      setPromiseStatusOverlay(id, status);
+      const closed = { ...row, status, reviewedAt: new Date().toISOString() } as PromiseSubmission;
+      upsertCachedSubmission(closed);
+      refresh();
+      return null;
+    }
+    updateSubmission(id, {
+      status,
+      reviewedAt: new Date().toISOString(),
+    } as Partial<PromiseSubmission>);
     refresh();
     return null;
   }, [refresh]);
@@ -374,10 +481,11 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       approveClaim,
       rejectClaim,
       updatePendingCollectionClaim,
+      closePromiseToPay,
       runOverdueAutoAssign,
       assignmentVersion,
     }),
-    [submissions, refresh, assignLoans, getAssignments, clearAgent, submitCollectionClaim, submitPromise, approveClaim, rejectClaim, updatePendingCollectionClaim, runOverdueAutoAssign, assignmentVersion],
+    [submissions, refresh, assignLoans, getAssignments, clearAgent, submitCollectionClaim, submitPromise, approveClaim, rejectClaim, updatePendingCollectionClaim, closePromiseToPay, runOverdueAutoAssign, assignmentVersion],
   );
 
   return <RecoveryCtx.Provider value={value}>{children}</RecoveryCtx.Provider>;

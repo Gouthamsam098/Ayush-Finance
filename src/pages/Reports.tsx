@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   useData, LOAN_LABELS, EXPENSE_CATEGORIES, behavesInterestOnly, type LoanType,
@@ -7,6 +7,7 @@ import {
 import { cashDisbursedFor } from '@/lib/funds';
 import { StatCard } from '@/components/ui/stat-card';
 import { ResponsiveTableFrame } from '@/components/ui/responsive-table';
+import { TruncatedTapPopoverText } from '@/components/ui/tap-popover-text';
 import { Button } from '@/components/ui/button';
 import { Drawer } from '@/components/ui/drawer';
 import { Dialog } from '@/components/ui/dialog';
@@ -42,6 +43,8 @@ import {
   filterAgentCollections,
   type AgentCollectionSummary,
 } from '@/lib/agentCollectionReport';
+import { formatUpiReportCells, syncApprovedClaimUpiToCollections } from '@/lib/recoveryClaimUpi';
+import { useRecovery } from '@/features/recovery/RecoveryContext';
 
 type ReportKey = 'loans' | 'customers' | 'collections' | 'agents' | 'expenses';
 type Period = 'THIS_MONTH' | 'LAST_6M' | 'LAST_1Y' | 'ALL';
@@ -235,16 +238,19 @@ function buildReport(tab: ReportKey, data: Dataset, f: BuildArgs): BuiltReport {
     }).reduce((s, c) => s + c.amount, 0);
     const customerTotal = rows.filter((c) => resolveCollector(c).type === 'CUSTOMER').reduce((s, c) => s + c.amount, 0);
     return {
-      head: ['Receipt', 'Customer', 'Loan #', 'Amount', 'Mode', 'Date', 'Collected by', 'Role'],
+      head: ['Receipt', 'Customer', 'Loan #', 'Amount', 'Mode', 'UPI ID', 'Payee name', 'Date', 'Collected by', 'Role'],
       body: rows.map((c) => {
         const loan = loanById.get(c.loanId);
         const who = resolveCollector(c);
+        const [upiId, payeeName] = formatUpiReportCells(c);
         return [
           c.receiptNo,
           loan ? custName(loan.customerId) : '—',
           loan?.loanNumber ?? '—',
           inr(c.amount),
           c.mode,
+          upiId,
+          payeeName,
           fmtDate(c.date),
           who.name,
           who.roleLabel,
@@ -376,6 +382,13 @@ export default function Reports() {
   // Collections drill-down: the loan whose receipts are being inspected.
   const [detail, setDetail] = useState<LoanCollectionGroup | null>(null);
   const [agentDetail, setAgentDetail] = useState<AgentCollectionSummary | null>(null);
+  const recovery = useRecovery();
+  const [upiLinkTick, setUpiLinkTick] = useState(0);
+
+  useEffect(() => {
+    syncApprovedClaimUpiToCollections(d.collections, recovery.submissions);
+    setUpiLinkTick((t) => t + 1);
+  }, [d.collections, recovery.submissions]);
 
   // Portfolio KPI band — real figures, no fabricated trends.
   const portfolio = useMemo(() => {
@@ -398,7 +411,7 @@ export default function Reports() {
   const report = useMemo(
     () => buildReport(tab, { customers: d.customers, loans: d.loans, collections: d.collections, expenses: d.expenses }, buildArgs),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tab, filters, query, d],
+    [tab, filters, query, d, upiLinkTick],
   );
 
   // Collections tab PREVIEW is grouped by loan (319 raw receipts are unreadable);
@@ -759,7 +772,9 @@ export default function Reports() {
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetail(g); } }}
                       className="group cursor-pointer border-t border-[#EEF2F7] transition-colors odd:bg-slate-50/30 hover:bg-blue-50/50 focus:outline-none focus-visible:bg-blue-50/60 dark:border-white/[.05] dark:odd:bg-white/[.015] dark:hover:bg-blue-500/[.06]"
                     >
-                      <td className="h-[60px] whitespace-nowrap px-6 align-middle font-semibold text-ink">{g.customer}</td>
+                      <td className="h-[60px] max-w-[9rem] px-6 align-middle sm:max-w-none sm:whitespace-nowrap">
+                        <TruncatedTapPopoverText className="font-semibold text-ink">{g.customer}</TruncatedTapPopoverText>
+                      </td>
                       <td className="h-[60px] whitespace-nowrap px-6 align-middle">
                         <div className="font-mono text-xs text-ink">{g.loan.loanNumber}</div>
                         <div className="text-[11.5px] text-muted">{LOAN_LABELS[g.loan.type]}</div>
@@ -787,7 +802,7 @@ export default function Reports() {
                       <td className="h-[60px] whitespace-nowrap px-6 align-middle">
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
                           <span className="text-[13px] font-medium tabular-nums text-ink">{g.lastDate ? fmtDate(g.lastDate) : '—'}</span>
-                          <Badge tone={closed ? 'ok' : 'info'}>{closed ? 'Closed' : 'Active'}</Badge>
+                          <Badge tone={closed ? 'err' : 'ok'}>{closed ? 'Closed' : 'Active'}</Badge>
                         </div>
                       </td>
                     </tr>
@@ -839,8 +854,15 @@ export default function Reports() {
                     {row.map((cell, ci) => {
                       const header = report.head[ci];
                       const money = report.rightAlignCols.includes(ci);
+                      const textTip =
+                        (header === 'Customer' || (tab === 'customers' && header === 'Name'))
+                        && cell && cell !== '—'
+                          ? String(cell)
+                          : undefined;
                       return (
-                        <td key={ci} className={cn(
+                        <td
+                          key={ci}
+                          className={cn(
                           tab === 'expenses'
                             ? expenseReportCell(ci, cn(
                               'tabular-nums',
@@ -856,7 +878,7 @@ export default function Reports() {
                               otherwise — and the EXPORTS are unaffected, since
                               they read report.body, not this markup. */}
                           {header === 'Status' && (cell === 'ACTIVE' || cell === 'CLOSED')
-                            ? <Badge tone={cell === 'CLOSED' ? 'ok' : 'info'}>{cell === 'CLOSED' ? 'Closed' : 'Active'}</Badge>
+                            ? <Badge tone={cell === 'CLOSED' ? 'err' : 'ok'}>{cell === 'CLOSED' ? 'Closed' : 'Active'}</Badge>
                             : header === 'Mode'
                               ? tab === 'expenses'
                                 ? <div className="flex w-full justify-center"><Badge tone="neutral" className="max-w-full truncate">{cell}</Badge></div>
@@ -874,7 +896,9 @@ export default function Reports() {
                                 </span>
                                 : header === 'Loan Type'
                                   ? <Badge tone="info">{cell}</Badge>
-                                  : cell}
+                                  : textTip
+                                    ? <TruncatedTapPopoverText title={textTip}>{textTip}</TruncatedTapPopoverText>
+                                    : cell}
                         </td>
                       );
                     })}
@@ -964,13 +988,14 @@ export default function Reports() {
               <table className="w-full min-w-[520px] text-sm">
                 <thead>
                   <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
-                    <th>Receipt</th><th>Date</th><th>Customer</th><th>Loan #</th><th className="text-right">Amount</th><th>Mode</th>
+                    <th>Receipt</th><th>Date</th><th>Customer</th><th>Loan #</th><th className="text-right">Amount</th><th>Mode</th><th>UPI ID</th><th>Payee</th>
                   </tr>
                 </thead>
                 <tbody>
                   {agentDetail.receipts.map((c) => {
                     const loan = d.loans.find((l) => l.id === c.loanId);
                     const customer = loan ? d.customers.find((x) => x.id === loan.customerId)?.name ?? '—' : '—';
+                    const [upiId, payeeName] = formatUpiReportCells(c);
                     return (
                       <tr key={c.id} className="border-t border-slate-100 dark:border-white/[.06]">
                         <td className="px-3 py-2 font-mono text-xs text-ink">{c.receiptNo}</td>
@@ -979,6 +1004,8 @@ export default function Reports() {
                         <td className="px-3 py-2 font-mono text-xs text-ink">{loan?.loanNumber ?? '—'}</td>
                         <td className="px-3 py-2 text-right font-semibold tabular-nums text-ink">{inr(c.amount)}</td>
                         <td className="px-3 py-2"><Badge tone="neutral">{c.mode}</Badge></td>
+                        <td className="max-w-[8rem] truncate px-3 py-2 font-mono text-[11px] text-ink">{upiId}</td>
+                        <td className="max-w-[7rem] truncate px-3 py-2 text-[12px] text-ink">{payeeName}</td>
                       </tr>
                     );
                   })}
@@ -987,7 +1014,7 @@ export default function Reports() {
                   <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
                     <td className="px-3 py-2.5 text-[12px] font-bold uppercase tracking-wide text-muted" colSpan={4}>Total</td>
                     <td className="px-3 py-2.5 text-right font-display text-[14px] font-bold tabular-nums text-ink">{inr(agentDetail.totalCollected)}</td>
-                    <td />
+                    <td colSpan={2} />
                   </tr>
                 </tfoot>
               </table>
@@ -1031,7 +1058,7 @@ export default function Reports() {
                 </div>
                 <span className={cn(
                   'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11.5px] font-bold backdrop-blur-sm',
-                  detail.loan.status === 'CLOSED' ? 'bg-emerald-400/25 text-emerald-50' : 'bg-white/20 text-white',
+                  detail.loan.status === 'CLOSED' ? 'bg-danger/30 text-red-50 ring-danger/40' : 'bg-emerald-400/25 text-emerald-50 ring-emerald-300/35',
                 )}>
                   <span className="h-1.5 w-1.5 rounded-full bg-current opacity-90" />
                   {detail.loan.status === 'CLOSED' ? 'Closed' : 'Active'}
@@ -1070,18 +1097,21 @@ export default function Reports() {
                 <table className="w-full min-w-[520px] text-sm">
                   <thead>
                     <tr className="text-left text-[11px] uppercase tracking-wide text-muted [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-slate-100 [&>th]:px-3 [&>th]:py-2.5 dark:[&>th]:bg-slate-800">
-                      <th>Receipt</th><th>Date</th><th className="text-right">Amount</th><th>Mode</th><th>Collected by</th><th>Role</th><th>Remarks</th>
+                      <th>Receipt</th><th>Date</th><th className="text-right">Amount</th><th>Mode</th><th>UPI ID</th><th>Payee</th><th>Collected by</th><th>Role</th><th>Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detail.receipts.map((c) => {
                       const who = resolveCollector(c);
+                      const [upiId, payeeName] = formatUpiReportCells(c);
                       return (
                       <tr key={c.id} className="border-t border-slate-100 transition-colors hover:bg-slate-50/70 dark:border-white/[.06] dark:hover:bg-white/[.03]">
                         <td className="px-3 py-2 font-mono text-xs text-ink">{c.receiptNo}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-ink/80">{fmtDate(c.date)}</td>
                         <td className="px-3 py-2 text-right font-semibold tabular-nums text-ink">{inr(c.amount)}</td>
                         <td className="px-3 py-2"><Badge tone="neutral">{c.mode}</Badge></td>
+                        <td className="max-w-[8rem] truncate px-3 py-2 font-mono text-[11px] text-ink">{upiId}</td>
+                        <td className="max-w-[7rem] truncate px-3 py-2 text-[12px] text-ink">{payeeName}</td>
                         <td className="px-3 py-2 text-[12px] font-medium text-ink">{who.name}</td>
                         <td className="px-3 py-2">
                           <Badge tone={collectorBadgeTone(who.type)}>{who.roleLabel}</Badge>
@@ -1095,7 +1125,7 @@ export default function Reports() {
                     <tr className="border-t-2 border-slate-200 bg-slate-50/80 dark:border-white/[.1] dark:bg-white/[.03]">
                       <td className="px-3 py-2.5 text-[12px] font-bold uppercase tracking-wide text-muted" colSpan={2}>Total</td>
                       <td className="px-3 py-2.5 text-right font-display text-[14px] font-bold tabular-nums text-ink">{inr(detail.collected)}</td>
-                      <td colSpan={3} />
+                      <td colSpan={5} />
                     </tr>
                   </tfoot>
                 </table>

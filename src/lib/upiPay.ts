@@ -1,9 +1,12 @@
-import { config } from '@/lib/config';
-
 export type UpiApp = 'phonepe' | 'gpay';
 
 /** Where the portal is open — decides which kind of app link works. */
 export type UpiPlatform = 'android' | 'ios' | 'desktop';
+
+export interface UpiPayCredentials {
+  payeeVpa: string;
+  payeeName: string;
+}
 
 /** Rupees → UPI `am` param (two decimal places). */
 export function upiAmountString(rupees: number): string {
@@ -13,10 +16,10 @@ export function upiAmountString(rupees: number): string {
 
 /** UPI query string. Values are percent-encoded (spaces → %20): URLSearchParams
  *  writes spaces as "+", which UPI apps can show literally ("Anush+Finserv"). */
-function queryParams(opts: { amountRupees: number; note: string; payeeName?: string }) {
+function queryParams(opts: { amountRupees: number; note: string; payeeVpa: string; payeeName: string }) {
   const params: [string, string][] = [
-    ['pa', config.merchantUpiVpa],
-    ['pn', opts.payeeName ?? config.merchantPayeeName],
+    ['pa', opts.payeeVpa],
+    ['pn', opts.payeeName],
     ['am', upiAmountString(opts.amountRupees)],
     ['cu', 'INR'],
     ['tn', opts.note.slice(0, 80)],
@@ -53,7 +56,7 @@ const ANDROID_PACKAGE: Record<UpiApp, string> = {
  */
 export function upiPayUrl(
   app: UpiApp,
-  opts: { amountRupees: number; note: string; payeeName?: string },
+  opts: { amountRupees: number; note: string; payeeVpa: string; payeeName: string },
   platform: UpiPlatform = detectUpiPlatform(),
 ): string {
   const q = queryParams(opts);
@@ -63,13 +66,16 @@ export function upiPayUrl(
 }
 
 /** Generic UPI intent (any installed UPI app). */
-export function upiPayUrlGeneric(opts: { amountRupees: number; note: string; payeeName?: string }): string {
+export function upiPayUrlGeneric(opts: { amountRupees: number; note: string; payeeVpa: string; payeeName: string }): string {
   return `upi://pay?${queryParams(opts)}`;
 }
 
 /** Open the app from a tap. Done through a temporary link click (not by
  *  assigning location) — the form browsers expect for handing off to an app. */
-export function openUpiApp(app: UpiApp, opts: { amountRupees: number; note: string; payeeName?: string }) {
+export function openUpiApp(
+  app: UpiApp,
+  opts: { amountRupees: number; note: string; payeeVpa: string; payeeName: string },
+) {
   const a = document.createElement('a');
   a.href = upiPayUrl(app, opts);
   a.rel = 'noopener';

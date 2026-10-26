@@ -1,9 +1,11 @@
-import type { RecoverySubmission } from './types';
+import type { PromiseSubmission, RecoverySubmission } from './types';
+import { isActiveOpenPromise } from '@/lib/recoveryPtp';
 import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
 import { listMockUsers } from '@/lib/mockUsers';
 import { recoveryApi, type RecoveryAgentInfo } from '@/services/recoveryApi';
 import { store } from '@/store';
+import { dismissRecoverySubmission } from '@/lib/adminDismissals';
 
 /**
  * Recovery-agent state: loan assignments, agent submissions (collection claims
@@ -220,13 +222,15 @@ export function readTestAutoAssignTime(): string | null {
   return null;
 }
 
+/** API: null = midnight. Demo: always persist HH:MM (default 00:00). */
 export function writeTestAutoAssignTime(value: string | null) {
+  const demoTime = !value || value === '00:00' ? '00:00' : value;
+  const apiTime = demoTime === '00:00' ? null : demoTime;
   if (config.useApi) {
-    // Optimistic: the server owns the schedule and runs the job at this time.
     remote.version += 1;
-    remote.schedule = { runTime: value, lastRunSlot: remote.schedule?.lastRunSlot ?? null };
+    remote.schedule = { runTime: apiTime, lastRunSlot: remote.schedule?.lastRunSlot ?? null };
     window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
-    recoveryApi.setSchedule(value)
+    recoveryApi.setSchedule(apiTime)
       .then((s) => {
         remote.schedule = { runTime: s.run_time, lastRunSlot: s.last_run_slot ?? null };
         window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
@@ -237,8 +241,7 @@ export function writeTestAutoAssignTime(value: string | null) {
       });
     return;
   }
-  if (!value) localStorage.removeItem(RECOVERY_AUTO_ASSIGN_TEST_TIME_KEY);
-  else localStorage.setItem(RECOVERY_AUTO_ASSIGN_TEST_TIME_KEY, value);
+  localStorage.setItem(RECOVERY_AUTO_ASSIGN_TEST_TIME_KEY, demoTime);
   window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
 }
 
@@ -377,6 +380,21 @@ export function addSubmission(row: RecoverySubmission) {
   notifySubmissionsChanged();
 }
 
+/** Admin removes a reviewed (or any) queue card from Collections — hidden via dismiss list; demo mode also drops the row. */
+export function removeSubmissionFromAdminQueue(id: string) {
+  dismissRecoverySubmission(id);
+  if (config.useApi) {
+    // Dismiss is per-browser; drop from cache so the queue updates before the next poll.
+    remote.version += 1;
+    remote.submissions = remote.submissions.filter((s) => s.id !== id);
+    sortedSubmissions = { source: undefined, rows: [] };
+  } else {
+    writeSubmissions(readSubmissions().filter((s) => s.id !== id));
+    sortedSubmissions = { source: undefined, rows: [] };
+  }
+  notifySubmissionsChanged();
+}
+
 export function updateSubmission(id: string, patch: Partial<RecoverySubmission>) {
   if (config.useApi) {
     const cur = remote.submissions.find((s) => s.id === id);
@@ -417,9 +435,21 @@ export function latestOpenPromiseForLoan(
   submissions?: RecoverySubmission[],
 ): RecoverySubmission | undefined {
   const rows = (submissions ?? readSubmissions()).filter(
-    (s) => s.loanId === loanId && s.type === 'PROMISE_TO_PAY' && s.status === 'OPEN',
+    (s): s is PromiseSubmission =>
+      s.loanId === loanId && s.type === 'PROMISE_TO_PAY' && isActiveOpenPromise(s as PromiseSubmission),
   );
   const scoped = agentUserId != null ? rows.filter((s) => s.agentUserId === agentUserId) : rows;
   if (scoped.length === 0) return undefined;
   return scoped.reduce((latest, s) => (s.createdAt >= latest.createdAt ? s : latest));
+}
+
+/** Open promises for one agent (active OPEN, not manually closed). */
+export function openPromisesForAgent(
+  agentUserId: number,
+  submissions?: RecoverySubmission[],
+): PromiseSubmission[] {
+  return (submissions ?? readSubmissions())
+    .filter((s): s is PromiseSubmission =>
+      s.agentUserId === agentUserId && s.type === 'PROMISE_TO_PAY' && isActiveOpenPromise(s))
+    .sort((a, b) => a.promiseDate.localeCompare(b.promiseDate) || b.createdAt.localeCompare(a.createdAt));
 }

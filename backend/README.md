@@ -68,6 +68,20 @@ make seed-admin
 make run
 ```
 
+### Docker Compose (`docker compose up --build`)
+
+| From your machine | Port | Notes |
+|-------------------|------|--------|
+| Web UI (Vite) | **5173** | `npm run dev` at repo root; `/api` → backend |
+| API | **4000** | `curl localhost:4000/health` |
+| PostgreSQL (DBeaver, psql) | **5433** by default | Host side only — see `POSTGRES_HOST_PORT` in `backend/.env` |
+
+Inside Docker, Postgres always listens on **5432**. Compose maps **`HOST:5432`**
+(e.g. **5434:5432**). The two numbers are **supposed** to differ: use the **left**
+host port in DBeaver (`jdbc:postgresql://localhost:5434/anush_lms` when
+`POSTGRES_HOST_PORT=5434`). The backend container still uses `postgres:5432` on
+the internal network.
+
 ## Verify
 
 ```bash

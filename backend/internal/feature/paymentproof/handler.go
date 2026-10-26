@@ -27,6 +27,15 @@ func (h *Handler) PortalRoutes() chi.Router {
 	return r
 }
 
+// AgentRoutes are mounted at /agent/payment-proofs behind RequireRecoveryAgent.
+func (h *Handler) AgentRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/", h.agentList)
+	r.Post("/", h.agentSubmit)
+	r.Get("/{id}/image", h.agentImage)
+	return r
+}
+
 // StaffRoutes are mounted behind RequirePermission("Collections"): reads need
 // view, accept/reject (POST) need edit — the same right as recording a payment.
 func (h *Handler) StaffRoutes() chi.Router {
@@ -54,6 +63,8 @@ type proofResponse struct {
 	ReceiptDate *string `json:"receipt_date,omitempty"`
 	// Receipts lists the collection receipt numbers created by an accept.
 	Receipts []string `json:"receipts,omitempty"`
+	// Present when a recovery agent uploaded from /agent/payment-proofs.
+	RecoveryAgentName *string `json:"recovery_agent_name,omitempty"`
 }
 
 func toResponse(p *domain.PaymentProof) proofResponse {
@@ -70,6 +81,9 @@ func toResponse(p *domain.PaymentProof) proofResponse {
 	if p.ReceiptDate != nil {
 		s := p.ReceiptDate.Format("2006-01-02")
 		resp.ReceiptDate = &s
+	}
+	if p.SubmitterRole == domain.RoleRecoveryAgent && p.SubmitterName != "" {
+		resp.RecoveryAgentName = &p.SubmitterName
 	}
 	return resp
 }
@@ -160,6 +174,91 @@ func (h *Handler) portalSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.Created(w, toResponse(p))
+}
+
+func agentID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, ok := httpx.AgentUserID(r.Context())
+	if !ok {
+		httpx.Error(w, r, domain.NewForbidden("recovery agent access only"))
+		return 0, false
+	}
+	return id, true
+}
+
+func (h *Handler) agentList(w http.ResponseWriter, r *http.Request) {
+	aid, ok := agentID(w, r)
+	if !ok {
+		return
+	}
+	items, err := h.service.ListForAgent(r.Context(), aid)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	writeList(w, items)
+}
+
+func (h *Handler) agentSubmit(w http.ResponseWriter, r *http.Request) {
+	aid, ok := agentID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxPaymentProofBytes+(1<<20))
+	if err := r.ParseMultipartForm(domain.MaxPaymentProofBytes + (1 << 20)); err != nil {
+		httpx.Error(w, r, domain.NewValidation("Image must be 5 MB or smaller", map[string]string{"file": "Too large"}))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.Error(w, r, domain.NewValidation("Choose a screenshot to upload", map[string]string{"file": "Required"}))
+		return
+	}
+	defer file.Close()
+	content, err := io.ReadAll(file)
+	if err != nil {
+		httpx.Error(w, r, domain.NewValidation("Could not read the uploaded file", nil))
+		return
+	}
+	loanID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("loan_id")), 10, 64)
+	amount, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue("amount")), 64)
+	if err != nil {
+		amount = 0
+	}
+	in := domain.PaymentProofInput{
+		LoanID:  loanID,
+		Amount:  domain.RupeesToPaise(amount),
+		Purpose: domain.PaymentPurpose(strings.TrimSpace(r.FormValue("purpose"))),
+	}
+	p, err := h.service.SubmitForAgent(r.Context(), aid, &aid, in,
+		header.Filename, header.Header.Get("Content-Type"), content)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.Created(w, toResponse(p))
+}
+
+func (h *Handler) agentImage(w http.ResponseWriter, r *http.Request) {
+	aid, ok := agentID(w, r)
+	if !ok {
+		return
+	}
+	id, ok := proofID(w, r)
+	if !ok {
+		return
+	}
+	p, err := h.service.ImageForAgent(r.Context(), aid, id)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", p.MimeType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(p.Content)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Disposition", `inline; filename="`+domain.SanitizeFileName(p.FileName)+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(p.Content)
 }
 
 func (h *Handler) portalImage(w http.ResponseWriter, r *http.Request) {

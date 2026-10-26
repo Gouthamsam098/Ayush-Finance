@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useId, useRef } from 'react';
 import { X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 /**
  * Escape-key stack. Every open Dialog pushes its id; only the TOP of the stack
@@ -13,8 +14,8 @@ const escStack: string[] = [];
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Dialog({ open, onClose, title, subtitle, children, footer, wide, xl, hideShell, nested }:
-  { open: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; footer?: ReactNode; wide?: boolean; xl?: boolean; /** Renders children only — for a child modal to own the overlay (avoids double blur). */ hideShell?: boolean; /** Second modal on the stack: no extra backdrop-blur (parent already dimmed the page). */ nested?: boolean }) {
+export function Dialog({ open, onClose, title, subtitle, children, footer, footerClassName, wide, xl, hideShell, nested, centerOnMobile }:
+  { open: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; footer?: ReactNode; footerClassName?: string; wide?: boolean; xl?: boolean; /** Renders children only — for a child modal to own the overlay (avoids double blur). */ hideShell?: boolean; /** Second modal on the stack: no extra backdrop-blur (parent already dimmed the page). */ nested?: boolean; /** Center the panel on small screens (default: bottom sheet). */ centerOnMobile?: boolean }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const id = useId();
@@ -93,7 +94,15 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
     : 'absolute inset-0 bg-slate-950/60 backdrop-blur-md';
 
   return (
-    <div className={`fixed inset-0 ${shellZ} flex items-end justify-center px-safe pb-safe pt-safe sm:items-center sm:p-4 md:p-6`} onClick={onClose}>
+    <div
+      className={cn(
+        `fixed inset-0 ${shellZ} flex justify-center`,
+        centerOnMobile
+          ? 'items-center p-3 pt-safe pb-safe sm:p-4 md:p-6'
+          : 'items-end px-safe pb-safe pt-safe sm:items-center sm:p-4 md:p-6',
+      )}
+      onClick={onClose}
+    >
       <div className={backdropClass} />
       <div
         ref={panelRef}
@@ -107,17 +116,45 @@ export function Dialog({ open, onClose, title, subtitle, children, footer, wide,
         // holds the confirm action — could sit under the browser chrome.
         // min-w-0 + calc width: iPad Air / tablet split-view must not let
         // native date controls blow past the panel and misalign Remarks, etc.
-        className={`relative flex max-h-[min(90dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem))] w-full min-w-0 flex-col overflow-hidden rounded-t-[1.25rem] border border-slate-200/70 dark:border-white/[.08] bg-white dark:bg-surface shadow-[0_24px_70px_-20px_rgba(0,0,0,.35)] dark:shadow-[0_24px_70px_-20px_rgba(0,0,0,.7)] animate-rise sm:rounded-card ${xl ? 'max-w-[min(84rem,calc(100vw-1.5rem))]' : wide ? 'max-w-[min(48rem,calc(100vw-1.5rem))]' : 'max-w-[min(32rem,calc(100vw-1.5rem))]'}`}
+        className={cn(
+          'relative flex max-h-[min(90dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1rem))] w-full min-w-0 flex-col overflow-hidden border border-slate-200/70 bg-white shadow-[0_24px_70px_-20px_rgba(0,0,0,.35)] animate-rise dark:border-white/[.08] dark:bg-surface dark:shadow-[0_24px_70px_-20px_rgba(0,0,0,.7)] sm:rounded-card',
+          centerOnMobile ? 'rounded-card' : 'rounded-t-[1.25rem]',
+          xl ? 'max-w-[min(84rem,calc(100vw-1.5rem))]' : wide ? 'max-w-[min(48rem,calc(100vw-1.5rem))]' : 'max-w-[min(32rem,calc(100vw-1.5rem))]',
+        )}
       >
-        <div className="flex items-start justify-between border-b border-slate-100 dark:border-white/[.06] px-4 py-4 sm:px-6">
-          <div className="min-w-0 pr-3">
+        <div
+          className={cn(
+            'flex items-start justify-between border-b border-slate-100 px-4 py-4 dark:border-white/[.06] sm:px-6',
+            centerOnMobile && 'relative text-center sm:text-left',
+          )}
+        >
+          <div className={cn('min-w-0 pr-3', centerOnMobile && 'mx-auto max-w-[calc(100%-2.5rem)] sm:mx-0 sm:max-w-none')}>
             <h3 id={titleId} className="font-display text-lg font-bold tracking-tight">{title}</h3>
             {subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
           </div>
-          <button onClick={onClose} aria-label="Close dialog" title="Close" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-slate-100 dark:hover:bg-white/[.06] transition-colors"><X size={18} /></button>
+          <button
+            onClick={onClose}
+            aria-label="Close dialog"
+            title="Close"
+            className={cn(
+              'grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-100 dark:hover:bg-white/[.06]',
+              centerOnMobile && 'absolute right-3 top-4 sm:static',
+            )}
+          >
+            <X size={18} />
+          </button>
         </div>
         <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6">{children}</div>
-        {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 dark:border-white/[.06] bg-slate-50/50 dark:bg-white/[.02] px-4 py-4 sm:px-6">{footer}</div>}
+        {footer && (
+          <div
+            className={cn(
+              'flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-4 dark:border-white/[.06] dark:bg-white/[.02] sm:px-6',
+              footerClassName,
+            )}
+          >
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );

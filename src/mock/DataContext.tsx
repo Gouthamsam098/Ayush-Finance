@@ -162,6 +162,9 @@ export interface Collection {
   collectorName?: string;
   /** Audit: LMS user who posted the receipt (API posted_by). */
   postedByUserId?: number;
+  /** UI snapshot when mode is UPI (recovery agent / portal; not on API wire yet). */
+  payeeVpa?: string;
+  payeeName?: string;
 }
 export interface Expense { id: number; date: string; category: string; subCategory?: string; name: string; amount: number; mode: PayMode; remarks?: string; }
 export interface DocItem { id: number; customerId: number; type: string; fileName: string; size: string; dataUrl: string | null; mime: string | null; date: string; }

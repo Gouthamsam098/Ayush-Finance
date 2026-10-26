@@ -71,6 +71,63 @@ func (r *Repository) LoanStatusForCustomer(ctx context.Context, loanID, customer
 	return domain.LoanStatus(status), err
 }
 
+// CustomerForAssignedLoan returns the borrower for a loan assigned to the agent.
+func (r *Repository) CustomerForAssignedLoan(ctx context.Context, loanID, agentID int64) (int64, domain.LoanStatus, error) {
+	var customerID int64
+	var st string
+	err := r.pool.QueryRow(ctx, `
+		SELECT l.customer_id, l.status
+		FROM loans l
+		JOIN loan_assignments a ON a.loan_id = l.id AND a.agent_user_id = $2
+		WHERE l.id = $1 AND l.deleted_at IS NULL`, loanID, agentID).Scan(&customerID, &st)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, "", domain.NewNotFound("loan")
+	}
+	if err != nil {
+		return 0, "", err
+	}
+	return customerID, domain.LoanStatus(st), nil
+}
+
+const agentProofScope = `
+	AND EXISTS (
+		SELECT 1 FROM loan_assignments a
+		WHERE a.loan_id = p.loan_id AND a.agent_user_id = $1
+	)`
+
+// ListForAgent returns proofs on loans assigned to the recovery agent.
+func (r *Repository) ListForAgent(ctx context.Context, agentID int64) ([]*domain.PaymentProof, error) {
+	q := `SELECT ` + proofColumns + liveJoin + agentProofScope + `
+		ORDER BY (p.status = 'PENDING') DESC, p.submitted_at DESC, p.id DESC
+		LIMIT $2`
+	rows, err := r.pool.Query(ctx, q, agentID, maxListed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*domain.PaymentProof{}
+	for rows.Next() {
+		p, err := scanProof(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// AgentCanAccessProof reports whether the proof belongs to a loan assigned to the agent.
+func (r *Repository) AgentCanAccessProof(ctx context.Context, proofID, agentID int64) (bool, error) {
+	var ok bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM payment_proofs p
+			JOIN loan_assignments a ON a.loan_id = p.loan_id AND a.agent_user_id = $2
+			WHERE p.id = $1 AND p.deleted_at IS NULL
+		)`, proofID, agentID).Scan(&ok)
+	return ok, err
+}
+
 // CountPending counts unreviewed proofs on a loan.
 func (r *Repository) CountPending(ctx context.Context, loanID int64) (int, error) {
 	var n int
@@ -147,7 +204,12 @@ func (r *Repository) FindByID(ctx context.Context, id int64, customerID *int64) 
 // List returns proofs newest first, pending ones ahead of reviewed ones. With
 // customerID set, only that customer's.
 func (r *Repository) List(ctx context.Context, customerID *int64) ([]*domain.PaymentProof, error) {
-	q := `SELECT ` + proofColumns + liveJoin + ` AND ($1::bigint IS NULL OR p.customer_id = $1)
+	q := `SELECT ` + proofColumns + `, COALESCE(u.full_name, ''), COALESCE(u.role, '')
+		FROM payment_proofs p
+		JOIN loans l ON l.id = p.loan_id AND l.deleted_at IS NULL
+		JOIN customers c ON c.id = p.customer_id AND c.deleted_at IS NULL
+		LEFT JOIN users u ON u.id = p.submitted_by AND u.deleted_at IS NULL
+		WHERE p.deleted_at IS NULL AND ($1::bigint IS NULL OR p.customer_id = $1)
 		ORDER BY (p.status = 'PENDING') DESC, p.submitted_at DESC, p.id DESC
 		LIMIT $2`
 	rows, err := r.pool.Query(ctx, q, customerID, maxListed)
@@ -157,10 +219,13 @@ func (r *Repository) List(ctx context.Context, customerID *int64) ([]*domain.Pay
 	defer rows.Close()
 	out := []*domain.PaymentProof{}
 	for rows.Next() {
-		p, err := scanProof(rows)
+		var submitterName, submitterRole string
+		p, err := scanProof(rows, &submitterName, &submitterRole)
 		if err != nil {
 			return nil, err
 		}
+		p.SubmitterName = submitterName
+		p.SubmitterRole = domain.Role(submitterRole)
 		out = append(out, p)
 	}
 	return out, rows.Err()

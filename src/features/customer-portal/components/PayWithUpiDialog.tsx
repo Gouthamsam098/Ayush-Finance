@@ -4,42 +4,20 @@ import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 import { inr } from '@/lib/format';
-import { config } from '@/lib/config';
-import { detectUpiPlatform, openUpiApp, upiAmountString, type UpiApp } from '@/lib/upiPay';
+import {
+  detectUpiPlatform, openUpiApp, upiAmountString, type UpiApp, type UpiPayCredentials,
+} from '@/lib/upiPay';
 import { cn } from '@/lib/utils';
 import type { Loan } from '@/mock/DataContext';
 import type { PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 import { payPurposeSubtitle, payPurposeTitle } from '@/features/customer-portal/loanPortalSummary';
-import { ArrowRight, Copy, Info, Lock, ShieldCheck, Smartphone } from 'lucide-react';
+import { GooglePayLogo, PhonePeLogo } from '@/components/payment/PaymentAppIcons';
+import { ArrowRight, Check, Copy, Info, Lock, ShieldCheck, Smartphone } from 'lucide-react';
 
 const APP_NAME: Record<UpiApp, string> = { phonepe: 'PhonePe', gpay: 'Google Pay' };
 
 /** How long to wait for the app to take over before offering other options. */
 const APP_OPEN_WAIT_MS = 2500;
-
-function PhonePeIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 56 56" aria-hidden>
-      <circle cx="28" cy="28" r="28" fill="#5F259F" />
-      <path
-        fill="#fff"
-        d="M20 16h9.5c4.8 0 8.2 3 8.2 7.5 0 2.9-1.5 5.2-4 6.4l4.9 8.2h-5.3l-4.2-7.1H24v7.1h-4.5V16zm4.6 10.7h4.4c1.9 0 3-.9 3-2.7s-1.1-2.7-3-2.7H24.6v5.4z"
-      />
-    </svg>
-  );
-}
-
-function GooglePayIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 56 56" aria-hidden>
-      <circle cx="28" cy="28" r="28" fill="currentColor" className="text-slate-100 dark:text-white/[.08]" />
-      <path fill="#4285F4" d="M28 27v9.8h13.6c-.6 3.2-3.9 9.4-13.6 9.4-8.2 0-14.9-6.7-14.9-15S19.8 16.3 28 16.3c4.6 0 7.7 1.9 9.5 3.7l6.7-6.5C40.2 10 34.6 7.5 28 7.5 15.1 7.5 5 17.6 5 30.5S15.1 53.5 28 53.5c13.2 0 22-9.3 22-22.5 0-1.5-.1-2.6-.3-3.8H28z" />
-      <path fill="#34A853" d="M10 35.7l5.6 4.2C18 43.6 22.5 46.2 28 46.2c6.7 0 12.3-3.6 14.4-8.7l-7.1-5.5c-1.6 4.8-6.2 8.2-11.7 8.2-4.6 0-8.5-2.4-10.8-6z" />
-      <path fill="#FBBC05" d="M50.5 24.1H28v10.7h12.9c-.6 3-2.3 5.5-4.8 7.2l7.1 5.5c4.1-3.8 6.7-9.4 6.7-16.1 0-1.5-.1-2.9-.4-4.2z" />
-      <path fill="#EA4335" d="M28 16.3c3.1 0 5.9 1 8 2.9l6-6C39.8 9.6 36.3 8 28 8 17.4 8 9.5 14.4 7 23.1l7.9 6.2C11.6 21.5 16.8 16.3 28 16.3z" />
-    </svg>
-  );
-}
 
 interface Props {
   open: boolean;
@@ -47,11 +25,13 @@ interface Props {
   loan: Loan;
   amountRupees: number;
   purpose?: PortalPayPurpose;
+  upi: UpiPayCredentials;
 }
 
-export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 'OUTSTANDING' }: Props) {
+export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 'OUTSTANDING', upi }: Props) {
   const toast = useToast();
   const [focusApp, setFocusApp] = useState<'phonepe' | 'gpay' | null>(null);
+  const [upiCopied, setUpiCopied] = useState(false);
   const note = `Loan ${loan.loanNumber} ${payPurposeTitle(purpose)}`;
   const canPay = amountRupees > 0 && loan.status === 'ACTIVE';
   const platform = useMemo(() => detectUpiPlatform(), []);
@@ -65,6 +45,17 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
     if (help) helpRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [help]);
 
+  const copyUpiId = async () => {
+    try {
+      await navigator.clipboard.writeText(upi.payeeVpa);
+      setUpiCopied(true);
+      toast('UPI ID copied', 'success');
+      window.setTimeout(() => setUpiCopied(false), 2000);
+    } catch {
+      toast('Could not copy UPI ID', 'error');
+    }
+  };
+
   // The pending "did the app open?" check — cancelled by a new tap, by closing
   // the dialog and on unmount, so a stale result never lands in a fresh dialog.
   const pendingCheck = useRef<(() => void) | null>(null);
@@ -77,7 +68,7 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
     cancelCheck();
     if (platform === 'desktop') { setHelp({ app, reason: 'desktop' }); return; }
     setHelp(null);
-    openUpiApp(app, { amountRupees, note });
+    openUpiApp(app, { amountRupees, note, payeeVpa: upi.payeeVpa, payeeName: upi.payeeName });
     // When the app opens, this page goes to the background. Still in front a
     // few seconds later means it did not open — offer the manual way to pay.
     let left = false;
@@ -143,10 +134,19 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
             <p className="mt-2 font-display text-[2.5rem] font-bold leading-none tabular-nums tracking-tight text-white sm:text-[3rem]">
               {inr(amountRupees)}
             </p>
-            <p className="mt-4 inline-flex max-w-full items-center gap-2 rounded-full bg-black/20 px-4 py-2 text-[12px] font-medium text-white/90 ring-1 ring-white/15 backdrop-blur-sm">
-              <Lock size={13} className="shrink-0 opacity-90" />
-              <span className="truncate font-mono">{config.merchantUpiVpa}</span>
-            </p>
+            <div className="mt-4 inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/20 py-2 pl-3.5 pr-2 text-[12px] font-medium text-white/90 ring-1 ring-white/15 backdrop-blur-sm">
+              <Lock size={13} className="shrink-0 opacity-90" aria-hidden />
+              <span className="truncate font-mono">{upi.payeeVpa}</span>
+              <button
+                type="button"
+                onClick={() => void copyUpiId()}
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-white/90 transition-colors hover:bg-white/15 hover:text-white"
+                aria-label={upiCopied ? 'UPI ID copied' : 'Copy UPI ID'}
+                title="Copy UPI ID"
+              >
+                {upiCopied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
+              </button>
+            </div>
             {!canPay && (
               <p className="mt-4 text-[13px] font-medium text-rose-200">No payment due on this loan.</p>
             )}
@@ -192,19 +192,17 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
                   )}
                 >
                   {isPhonePe ? (
-                    <PhonePeIcon className="h-[3.25rem] w-[3.25rem] shadow-[0_10px_28px_rgba(95,37,159,.45)]" />
+                    <PhonePeLogo className="h-14 w-14 drop-shadow-[0_8px_20px_rgba(95,37,159,.35)]" />
                   ) : (
-                    <GooglePayIcon className="h-[3.25rem] w-[3.25rem]" />
+                    <GooglePayLogo className="h-9 w-[5.5rem] text-ink" />
                   )}
                   <div>
                     <p className={cn('font-display text-lg font-bold', isPhonePe ? 'text-[#5f259f] dark:text-[#d4b8f0]' : 'text-ink')}>
                       {isPhonePe ? 'PhonePe' : 'Google Pay'}
                     </p>
-                    <p className="mt-1 text-[12px] leading-snug text-muted">
-                      {platform === 'desktop'
-                        ? 'Use this page on your phone'
-                        : isPhonePe ? 'Opens PhonePe with amount filled' : 'Opens GPay with amount filled'}
-                    </p>
+                    {platform === 'desktop' && (
+                      <p className="mt-1 text-[12px] leading-snug text-muted">Use this page on your phone</p>
+                    )}
                   </div>
                   <span
                     className={cn(
@@ -240,7 +238,7 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
                   </p>
                   <div className="mt-2.5 flex flex-wrap gap-2">
                     {[
-                      { label: 'UPI ID', shown: config.merchantUpiVpa, value: config.merchantUpiVpa },
+                      { label: 'UPI ID', shown: upi.payeeVpa, value: upi.payeeVpa },
                       { label: 'Amount', shown: `₹${upiAmountString(amountRupees)}`, value: upiAmountString(amountRupees) },
                     ].map((c) => (
                       <button key={c.label} type="button" onClick={() => void copy(c.label, c.value)}
@@ -261,7 +259,7 @@ export function PayWithUpiDialog({ open, onClose, loan, amountRupees, purpose = 
 
         <p className="rounded-2xl border border-slate-200/80 bg-gradient-to-r from-slate-50/90 via-surface to-primary/[.03] px-4 py-3.5 text-center text-[11.5px] leading-relaxed text-muted dark:border-white/[.08] dark:from-white/[.03]">
           <span className="font-semibold text-ink">₹{upiAmountString(amountRupees)}</span> will be sent to{' '}
-          <span className="font-semibold text-ink">{config.merchantPayeeName}</span>.
+          <span className="font-semibold text-ink">{upi.payeeName}</span>.
           Your lender updates the ledger after payment is received.
         </p>
       </div>

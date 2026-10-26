@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Loan, Customer } from '@/mock/DataContext';
 import { useData, LOAN_LABELS } from '@/mock/DataContext';
@@ -7,16 +7,40 @@ import { whatsappHref } from '@/lib/whatsapp';
 import { inr, fmtDate, initials } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import {
-  HandCoins, CalendarClock, Phone, MapPin, User, FileText, MessageCircle, ChevronDown, Pencil,
+  HandCoins, CalendarClock, Phone, MapPin, User, FileText, MessageCircle, ChevronDown, Pencil, ImagePlus, ShieldCheck,
 } from 'lucide-react';
-import { RecoveryStatusChip } from './RecoveryStatusChip';
+import { RecoveryClaimStatusBanner } from './RecoveryClaimStatusBanner';
 import type { CollectionClaimSubmission, PromiseSubmission } from '../types';
+import { PtpTodayAlert } from './PtpTodayAlert';
+import { PaymentProofUpload } from '@/features/customer-portal/components/PaymentProofUpload';
+import {
+  getLatestPaymentProof,
+  PAYMENT_PROOF_SUBMITTED_EVENT,
+} from '@/features/customer-portal/paymentProofStore';
 
-function DetailCell({ label, value }: { label: string; value: string }) {
+/** `tel:` href for the device dialer (digits only, min 10). */
+function dialHref(raw: string): string | null {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 10) return null;
+  return `tel:${digits}`;
+}
+
+function DetailCell({ label, value, phone }: { label: string; value: string; phone?: boolean }) {
+  const href = phone && value !== '—' ? dialHref(value) : null;
   return (
     <div className="min-w-0">
       <p className="text-[9px] font-bold uppercase tracking-[0.08em] text-muted">{label}</p>
-      <p className="mt-0.5 truncate text-[13px] font-semibold text-ink" title={value}>{value}</p>
+      {href ? (
+        <a
+          href={href}
+          className="mt-0.5 block truncate text-[13px] font-semibold text-primary underline-offset-2 hover:underline"
+          title={`Call ${value}`}
+        >
+          {value}
+        </a>
+      ) : (
+        <p className="mt-0.5 truncate text-[13px] font-semibold text-ink" title={value}>{value}</p>
+      )}
     </div>
   );
 }
@@ -27,7 +51,7 @@ export function RecoveryAssignmentCard({
   agentName,
   due,
   claim,
-  ptp,
+  ptpToday,
   nd,
   scheduleOverdue,
   animationDelay = 0,
@@ -41,7 +65,8 @@ export function RecoveryAssignmentCard({
   agentName: string;
   due: number;
   claim?: CollectionClaimSubmission;
-  ptp?: PromiseSubmission;
+  /** Shown only when promise date is today (not missed/upcoming chips). */
+  ptpToday?: PromiseSubmission;
   nd: string | null;
   scheduleOverdue: boolean;
   animationDelay?: number;
@@ -63,6 +88,21 @@ export function RecoveryAssignmentCard({
     : null;
   const instalment = loan.dailyAmount ? inr(loan.dailyAmount) : '—';
   const pendingClaim = claim?.status === 'PENDING';
+  const mobileDial = mobile ? dialHref(mobile) : null;
+  const [proofTick, setProofTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setProofTick((t) => t + 1);
+    window.addEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
+    return () => window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
+  }, []);
+  const latestProof = useMemo(() => getLatestPaymentProof(loan.id), [loan.id, proofTick]);
+  const proofAmount = latestProof?.amountRupees ?? claim?.amount ?? 0;
+  const upiPendingWithProof =
+    Boolean(pendingClaim && claim?.mode === 'UPI' && latestProof?.status === 'pending');
+  const showPaymentProofUpload =
+    (Boolean(pendingClaim && claim && claim.amount > 0 && claim.mode !== 'UPI') || Boolean(latestProof))
+    && !upiPendingWithProof;
+  const showProofSubmittedNote = upiPendingWithProof && latestProof?.dataUrl;
 
   return (
     <article
@@ -111,12 +151,13 @@ export function RecoveryAssignmentCard({
         </p>
       </div>
 
-      {(claim || ptp) && (
+      {ptpToday && (
+        <PtpTodayAlert ptp={ptpToday} onCollect={onPay} />
+      )}
+
+      {claim && (
         <div className="flex flex-col gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5 dark:border-white/[.06] dark:bg-white/[.03]">
-          <div className="flex flex-wrap items-center gap-2">
-            {claim && <RecoveryStatusChip submission={claim} variant="surface" />}
-            {ptp && <RecoveryStatusChip submission={ptp} variant="surface" />}
-          </div>
+          <RecoveryClaimStatusBanner claim={claim} latestProof={latestProof} />
           {claim?.status === 'PENDING' && (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-[12px] font-semibold tabular-nums text-ink">
@@ -132,11 +173,6 @@ export function RecoveryAssignmentCard({
                 </button>
               )}
             </div>
-          )}
-          {claim?.status === 'APPROVED' && (
-            <p className="text-[11px] text-muted">
-              Last approved: {inr(claim.amount)} · {claim.mode} on {fmtDate(claim.receiptDate)}
-            </p>
           )}
         </div>
       )}
@@ -159,7 +195,14 @@ export function RecoveryAssignmentCard({
         {mobile && !open && (
           <p className="mt-2 truncate text-[12px] text-muted">
             <Phone size={12} className="mr-1 inline opacity-70" aria-hidden />
-            {mobile}{location ? ` · ${location}` : ''}
+            {mobileDial ? (
+              <a href={mobileDial} className="font-semibold text-primary underline-offset-2 hover:underline">
+                {mobile}
+              </a>
+            ) : (
+              mobile
+            )}
+            {location ? ` · ${location}` : ''}
           </p>
         )}
       </div>
@@ -183,8 +226,8 @@ export function RecoveryAssignmentCard({
                   <p className="text-[12px] text-muted">Profile not found — use loan contact if available.</p>
                 ) : (
                   <div className="grid grid-cols-2 gap-2.5">
-                    <DetailCell label="Mobile" value={cust.mobile || '—'} />
-                    <DetailCell label="Alt mobile" value={altMobile || '—'} />
+                    <DetailCell label="Mobile" value={cust.mobile || '—'} phone />
+                    <DetailCell label="Alt mobile" value={altMobile || '—'} phone />
                     <DetailCell label="Father / spouse" value={cust.fatherName?.trim() || '—'} />
                     <DetailCell label="City" value={location || '—'} />
                   </div>
@@ -198,7 +241,21 @@ export function RecoveryAssignmentCard({
                 {cust?.referenceName && (
                   <p className="mt-2 text-[11px] text-muted">
                     Ref: <span className="font-semibold text-ink">{cust.referenceName}</span>
-                    {cust.referenceMobile ? ` · ${cust.referenceMobile}` : ''}
+                    {cust.referenceMobile ? (
+                      dialHref(cust.referenceMobile) ? (
+                        <>
+                          {' · '}
+                          <a
+                            href={dialHref(cust.referenceMobile)!}
+                            className="font-semibold text-primary underline-offset-2 hover:underline"
+                          >
+                            {cust.referenceMobile}
+                          </a>
+                        </>
+                      ) : (
+                        ` · ${cust.referenceMobile}`
+                      )
+                    ) : null}
                   </p>
                 )}
               </div>
@@ -218,10 +275,66 @@ export function RecoveryAssignmentCard({
                 )}
               </div>
 
+              {showProofSubmittedNote ? (
+                <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3 dark:border-white/[.08] dark:bg-white/[.03]">
+                  <p className="font-display text-[12px] font-bold text-ink sm:text-[13px]">Payment screenshot</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                    Submitted with your UPI collection. Admin will review it under Portal proofs.
+                  </p>
+                  {latestProof?.dataUrl ? (
+                    <img
+                      src={latestProof.dataUrl}
+                      alt=""
+                      className="mt-3 max-h-32 w-full max-w-[200px] rounded-xl border border-slate-200/80 object-cover dark:border-white/[.08]"
+                    />
+                  ) : null}
+                </div>
+              ) : showPaymentProofUpload && proofAmount > 0 ? (
+                <PaymentProofUpload
+                  customerId={loan.customerId}
+                  loanId={loan.id}
+                  loanNumber={loan.loanNumber}
+                  amountRupees={proofAmount}
+                  purpose={latestProof?.purpose ?? 'CUSTOM'}
+                  collectionClaimPending={claim?.status === 'PENDING'}
+                  activityCustomerName={cust?.name ?? 'Customer'}
+                />
+              ) : (
+                <div
+                  className="rounded-xl border border-dashed border-slate-200/90 bg-slate-50/40 px-3 py-3 dark:border-white/[.08] dark:bg-white/[.02]"
+                  aria-label="Payment screenshot unavailable"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-200/60 text-muted dark:bg-white/[.06]">
+                      <ShieldCheck size={16} strokeWidth={2} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-display text-[12px] font-bold text-ink sm:text-[13px]">Payment screenshot</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                        {pendingClaim && claim?.mode === 'UPI'
+                          ? 'Use Collect and attach the screenshot in the same step for UPI.'
+                          : pendingClaim
+                            ? 'Enter a valid collection amount in Collect before uploading proof.'
+                            : claim?.status === 'APPROVED'
+                              ? 'Collection is recorded. Upload a new screenshot if admin rejected the previous one.'
+                              : 'Tap Collect to submit for admin approval.'}
+                      </p>
+                    </div>
+                    <span
+                      className="inline-flex h-9 shrink-0 items-center gap-1 rounded-lg border border-slate-200/90 px-2.5 text-[10px] font-semibold text-muted opacity-60 dark:border-white/[.08]"
+                      aria-hidden
+                    >
+                      <ImagePlus size={14} />
+                      Add
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-3 gap-2">
-                {mobile ? (
+                {mobileDial ? (
                   <a
-                    href={`tel:${mobile}`}
+                    href={mobileDial}
                     className="touch-target flex min-h-12 flex-col items-center justify-center gap-1 rounded-xl border border-slate-200 py-2.5 text-[11px] font-semibold text-ink hover:border-primary/40 hover:text-primary dark:border-white/[.08]"
                   >
                     <Phone size={16} /> Call
