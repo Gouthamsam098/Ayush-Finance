@@ -76,12 +76,28 @@ function ActivityRow({ row, index }: { row: AgentActivityRow; index: number }) {
   );
 }
 
+function activityOnDate(at: string): string {
+  return at.length >= 10 ? at.slice(0, 10) : at;
+}
+
+function inDateRange(day: string, from: string, to: string): boolean {
+  const start = from && to && from > to ? to : from;
+  const end = from && to && from > to ? from : to;
+  if (start && day < start) return false;
+  if (end && day > end) return false;
+  return true;
+}
+
 export function AgentActivityPanel({
   agentUserId,
   search,
+  dateFrom = '',
+  dateTo = '',
 }: {
   agentUserId: number;
   search: string;
+  dateFrom?: string;
+  dateTo?: string;
 }) {
   const { submissions } = useRecovery();
   const [tick, setTick] = useState(0);
@@ -105,15 +121,24 @@ export function AgentActivityPanel({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return activities;
-    return activities.filter(
-      (a) =>
+    const from = dateFrom.trim();
+    const to = dateTo.trim();
+    return activities.filter((a) => {
+      if (from || to) {
+        const day = activityOnDate(a.at);
+        if (!inDateRange(day, from, to)) return false;
+      }
+      if (!q) return true;
+      return (
         a.customerName.toLowerCase().includes(q)
         || a.loanNumber.toLowerCase().includes(q)
         || a.title.toLowerCase().includes(q)
-        || (a.detail ?? '').toLowerCase().includes(q),
-    );
-  }, [activities, search]);
+        || (a.detail ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [activities, search, dateFrom, dateTo]);
+
+  const hasFilters = Boolean(search.trim() || dateFrom.trim() || dateTo.trim());
 
   if (filtered.length === 0) {
     return (
@@ -125,9 +150,9 @@ export function AgentActivityPanel({
           <ScrollText size={26} aria-hidden />
         </div>
         <p className="font-display text-lg font-bold text-ink">
-          {search.trim() ? 'No matching activity' : 'No activity yet'}
+          {hasFilters ? 'No matching activity' : 'No activity yet'}
         </p>
-        {!search.trim() && (
+        {!hasFilters && (
           <p className="max-w-sm text-[13px] text-muted">
             Collect, promise-to-pay, and screenshot actions you take on assignments appear here.
           </p>
