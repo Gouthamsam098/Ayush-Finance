@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { CalendarClock, Check, Eye, ImageIcon, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Check, Eye, ImageIcon, Link2, Trash2, X } from 'lucide-react';
 import { useData, LOAN_LABELS } from '@/mock/DataContext';
 import { useRecovery } from '@/features/recovery/RecoveryContext';
-import { proofConflictsWithApprovedClaim } from '@/features/recovery/recoveryCollectionUi';
+import { agentClaimsMatchingProof } from '@/features/recovery/recoveryCollectionUi';
+import type { CollectionClaimSubmission } from '@/features/recovery/types';
 import { inr, fmtDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -13,7 +14,6 @@ import { useToast } from '@/components/ui/toast';
 import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { payPurposeTitle } from '@/features/customer-portal/loanPortalSummary';
 import {
-  acknowledgePaymentProofEvidence,
   listPaymentProofs,
   reviewPaymentProof,
   removePaymentProofFromAdmin,
@@ -84,18 +84,43 @@ function ProofMeta({
   );
 }
 
+/**
+ * How a recovery agent's screenshot attached to a collection claim may be
+ * reviewed (null for a borrower's own screenshot). The claim records the money;
+ * the screenshot is evidence and never books anything itself.
+ *  - awaiting: claim not reviewed yet → review the claim in the Recovery queue
+ *    (accepting it accepts this screenshot); only Reject here.
+ *  - booked:   claim accepted → "Confirm screenshot" marks it checked, records nothing.
+ *  - rejected: claim rejected → only Reject.
+ */
+type EvidenceState = 'awaiting' | 'booked' | 'rejected' | null;
+
+function evidenceState(p: PaymentProofRecord): EvidenceState {
+  if (!p.claimId) return null;
+  if (p.claimStatus === 'APPROVED') return 'booked';
+  if (p.claimStatus === 'REJECTED') return 'rejected';
+  return 'awaiting';
+}
+
+/** "Possible duplicate" line for a borrower screenshot matching agent collections. */
+function duplicateNote(matches: CollectionClaimSubmission[]): string {
+  const c = matches[0];
+  const state = c.status === 'APPROVED' ? 'already accepted' : 'awaiting approval';
+  return `${c.agentName} (recovery agent) reported ${inr(c.amount)} for this loan on ${fmtDate(c.receiptDate)} (${state}). `
+    + 'Accept only if this is a different payment, so the same money is not recorded twice.';
+}
+
 function PaymentProofCard({
   proof,
   customerName,
   customerId,
   loanTypeLabel,
   canReview,
-  doubleBookRisk,
+  duplicateWarning,
   onOpenLoan,
   onView,
   onReject,
   onAccept,
-  onConfirmEvidence,
   onDelete,
   index,
 }: {
@@ -104,18 +129,19 @@ function PaymentProofCard({
   customerId: number;
   loanTypeLabel: string;
   canReview: boolean;
-  doubleBookRisk: boolean;
+  /** Agent collection(s) this borrower screenshot may duplicate. */
+  duplicateWarning: string | null;
   onOpenLoan?: (loanId: number) => void;
   onView: () => void;
   onReject: () => void;
   onAccept: () => void;
-  onConfirmEvidence: () => void;
   onDelete: () => void;
   index: number;
 }) {
   const pending = proof.status === 'pending';
   const submission = paymentProofSubmissionMeta(proof, customerName);
-  const ledgerAlreadyBooked = pending && doubleBookRisk;
+  const evidence = pending ? evidenceState(proof) : null;
+  const canAccept = evidence === null || evidence === 'booked';
 
   return (
     <motion.article
@@ -188,9 +214,14 @@ function PaymentProofCard({
                     {submission.roleLabel}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
-                    {ledgerAlreadyBooked ? (
+                    {evidence === 'booked' ? (
                       <Badge className="shrink-0 bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-100">
                         Payment booked · confirm screenshot
+                      </Badge>
+                    ) : evidence === 'awaiting' ? (
+                      <Badge className="shrink-0 bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-100">
+                        <Link2 size={11} className="mr-1 inline" aria-hidden />
+                        Agent collection screenshot
                       </Badge>
                     ) : (
                       <ProofStatusBadge status={proof.status} />
@@ -258,13 +289,35 @@ function PaymentProofCard({
               </ProofMeta>
             </div>
 
-            {ledgerAlreadyBooked && (
+            {evidence && (
               <p
                 className="mt-2 rounded-lg border border-sky-200/80 bg-sky-50/90 px-2.5 py-1.5 text-[10px] leading-snug text-sky-950 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-100"
                 role="status"
               >
-                Collection was already <strong className="font-semibold">accepted</strong> in Recovery queue.
-                Use <strong className="font-semibold">Confirm screenshot</strong> if the image looks good (no second ledger entry), or <strong className="font-semibold">Reject</strong> to ask the agent for a new upload.
+                {evidence === 'awaiting' ? (
+                  <>
+                    Screenshot for the agent&apos;s collection of {inr(proof.amountRupees)}. Review that collection in the
+                    <strong className="font-semibold"> Recovery queue</strong> — accepting it accepts this screenshot and records the payment once.
+                    Reject here only if the image is unclear.
+                  </>
+                ) : evidence === 'booked' ? (
+                  <>
+                    The agent&apos;s collection was already <strong className="font-semibold">accepted</strong> — the payment is on the ledger.
+                    <strong className="font-semibold"> Confirm screenshot</strong> marks it checked and records nothing; <strong className="font-semibold">Reject</strong> asks the agent for a new one.
+                  </>
+                ) : (
+                  <>The agent&apos;s collection was rejected. Reject this screenshot too.</>
+                )}
+              </p>
+            )}
+
+            {pending && duplicateWarning && (
+              <p
+                className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50/90 px-2.5 py-1.5 text-[10px] leading-snug text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+                role="status"
+              >
+                <AlertTriangle size={12} className="mt-px shrink-0" aria-hidden />
+                <span><strong className="font-semibold">Possible duplicate.</strong> {duplicateWarning}</span>
               </p>
             )}
           </div>
@@ -274,7 +327,7 @@ function PaymentProofCard({
       <div
         className={cn(
           'border-t border-slate-100 dark:border-white/[.06]',
-          canReview && pending ? 'action-bar-3' : canReview && !pending ? 'action-bar-2' : 'action-bar-1',
+          canReview && pending && canAccept ? 'action-bar-3' : canReview ? 'action-bar-2' : 'action-bar-1',
         )}
       >
         <button
@@ -295,25 +348,17 @@ function PaymentProofCard({
               <X size={15} aria-hidden />
               Reject
             </button>
-            {ledgerAlreadyBooked ? (
-              <button
-                type="button"
-                onClick={onConfirmEvidence}
-                title="Mark screenshot OK — payment already on ledger via Recovery queue"
-                className="flex min-h-9 items-center justify-center gap-1 bg-success/[.04] py-2 text-[11px] font-semibold text-success transition-colors hover:bg-success/[.10] sm:text-[12px]"
-              >
-                <Check size={15} aria-hidden />
-                Confirm screenshot
-              </button>
-            ) : (
+            {canAccept && (
               <button
                 type="button"
                 onClick={onAccept}
-                title="Verify screenshot (may post collection for customer portal payments)"
+                title={evidence === 'booked'
+                  ? 'Mark the screenshot checked — the payment is already on the ledger; nothing is recorded'
+                  : 'Accept the borrower’s payment — records it on the ledger'}
                 className="flex min-h-9 items-center justify-center gap-1 bg-success/[.04] py-2 text-[11px] font-semibold text-success transition-colors hover:bg-success/[.10] sm:text-[12px]"
               >
                 <Check size={15} aria-hidden />
-                Accept
+                {evidence === 'booked' ? 'Confirm screenshot' : 'Accept'}
               </button>
             )}
           </>
@@ -369,19 +414,22 @@ export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
     if (closeViewer) setViewer(null);
   };
 
-  const confirmEvidence = (proof: PaymentProofRecord, closeViewer?: boolean) => {
-    const ok = window.confirm(
-      'Payment was already recorded in Recovery queue.\n\nConfirm only marks this screenshot as OK for the agent — it will not post a second collection.',
-    );
-    if (!ok) return;
-    acknowledgePaymentProofEvidence(proof.id);
-    toast('Screenshot confirmed', 'success');
-    refresh();
-    if (closeViewer) setViewer(null);
-  };
+  const duplicatesOf = (p: PaymentProofRecord) =>
+    (p.status === 'pending' ? agentClaimsMatchingProof(p, recovery.submissions) : []);
 
-  const setStatus = async (id: string, status: 'verified' | 'rejected', closeViewer?: boolean) => {
+  const setStatus = async (proof: PaymentProofRecord, status: 'verified' | 'rejected', closeViewer?: boolean) => {
+    const { id } = proof;
     if (busyIds.current.has(id)) return;
+    const evidence = evidenceState(proof);
+    if (status === 'verified') {
+      const matches = duplicatesOf(proof);
+      if (matches.length > 0 && !window.confirm(
+        `Possible duplicate payment.\n\n${duplicateNote(matches)}\n\nAccept ${inr(proof.amountRupees)} from this screenshot?`,
+      )) return;
+      if (evidence === 'booked' && !window.confirm(
+        'The agent’s collection for this screenshot is already on the ledger.\n\nConfirm only marks the screenshot as checked — it records nothing.',
+      )) return;
+    }
     busyIds.current.add(id);
     try {
       const err = await reviewPaymentProof(id, status);
@@ -390,7 +438,10 @@ export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
         refresh();
         return;
       }
-      toast(status === 'verified' ? 'Payment proof accepted' : 'Payment proof rejected', status === 'verified' ? 'success' : 'error');
+      toast(
+        status === 'rejected' ? 'Payment proof rejected' : evidence ? 'Screenshot confirmed' : 'Payment proof accepted',
+        status === 'verified' ? 'success' : 'error',
+      );
       refresh();
       if (closeViewer) setViewer(null);
     } finally {
@@ -437,24 +488,26 @@ export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
         </div>
 
         <div className="grid min-w-0 gap-3 p-2.5 sm:p-4 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
-          {proofs.map((p, i) => (
-            <PaymentProofCard
-              key={p.id}
-              proof={p}
-              customerId={p.customerId}
-              customerName={customerName(p.customerId)}
-              loanTypeLabel={loanTypeLabel(p.loanId)}
-              canReview={canReview}
-              doubleBookRisk={proofConflictsWithApprovedClaim(p, recovery.submissions)}
-              onOpenLoan={onOpenLoan}
-              onView={() => setViewer(p)}
-              onReject={() => setStatus(p.id, 'rejected')}
-              onAccept={() => setStatus(p.id, 'verified')}
-              onConfirmEvidence={() => confirmEvidence(p)}
-              onDelete={() => onDeleteProof(p.id)}
-              index={i}
-            />
-          ))}
+          {proofs.map((p, i) => {
+            const matches = duplicatesOf(p);
+            return (
+              <PaymentProofCard
+                key={p.id}
+                proof={p}
+                customerId={p.customerId}
+                customerName={customerName(p.customerId)}
+                loanTypeLabel={loanTypeLabel(p.loanId)}
+                canReview={canReview}
+                duplicateWarning={matches.length > 0 ? duplicateNote(matches) : null}
+                onOpenLoan={onOpenLoan}
+                onView={() => setViewer(p)}
+                onReject={() => void setStatus(p, 'rejected')}
+                onAccept={() => void setStatus(p, 'verified')}
+                onDelete={() => onDeleteProof(p.id)}
+                index={i}
+              />
+            );
+          })}
         </div>
       </section>
 
@@ -472,34 +525,25 @@ export function CustomerPortalProofsPanel({ canReview, onOpenLoan }: Props) {
                 Close
               </Button>
               {canReview && viewer.status === 'pending' && (() => {
-                const ledgerBooked = proofConflictsWithApprovedClaim(viewer, recovery.submissions);
+                const evidence = evidenceState(viewer);
                 return (
                 <>
                   <Button
                     variant="ghost"
                     className="order-2 text-danger hover:border-danger/30 hover:bg-danger/5 sm:order-none"
-                    onClick={() => setStatus(viewer.id, 'rejected', true)}
+                    onClick={() => void setStatus(viewer, 'rejected', true)}
                   >
                     <X size={15} />
                     Reject
                   </Button>
-                  {ledgerBooked ? (
+                  {(evidence === null || evidence === 'booked') && (
                     <Button
                       variant="success"
                       className="order-1 sm:order-none"
-                      onClick={() => confirmEvidence(viewer, true)}
+                      onClick={() => void setStatus(viewer, 'verified', true)}
                     >
                       <Check size={15} />
-                      Confirm screenshot
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="success"
-                      className="order-1 sm:order-none"
-                      onClick={() => setStatus(viewer.id, 'verified', true)}
-                    >
-                      <Check size={15} />
-                      Accept
+                      {evidence === 'booked' ? 'Confirm screenshot' : 'Accept'}
                     </Button>
                   )}
                 </>

@@ -56,6 +56,8 @@ const (
 	// Recovery agent claims/promises and the daily auto-assign job.
 	EntityRecoverySubmission = "recovery_submission"
 	EntityRecoveryAutoAssign = "recovery_auto_assign"
+	// The UPI IDs borrowers pay to, per loan type (one settings record, id 1).
+	EntityLoanTypeUPI = "loan_type_upi"
 )
 
 // Entry is one audit record. Before/After are optional JSON-able snapshots.

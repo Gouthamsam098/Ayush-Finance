@@ -17,7 +17,9 @@ import { submitPaymentProof } from '@/features/customer-portal/paymentProofStore
 import { enrichCollectionClaim } from '@/lib/recoveryClaimUpi';
 import { PromiseToPayDialog } from './components/PromiseToPayDialog';
 import { useToast } from '@/components/ui/toast';
-import { latestCollectionClaimForAgent, latestOpenPromiseForLoan, openPromisesForAgent } from './recoveryStore';
+import {
+  latestCollectionClaimForAgent, latestOpenPromiseForLoan, openPromisesForAgent, pendingClaimForLoan,
+} from './recoveryStore';
 import type { CollectionClaimSubmission, PromiseSubmission } from './types';
 import { LedgerDialog } from '@/components/LedgerDialog';
 import { AgentPtpPanel } from './components/AgentPtpPanel';
@@ -113,7 +115,11 @@ export function CollectionsAgentView() {
     });
     if (err) return err;
     if (proofFile && claimPayload.mode === 'UPI') {
+      // The screenshot is attached to the collection just submitted: it is that
+      // payment's evidence, so approving the collection books it exactly once.
+      const claimId = pendingClaimForLoan(loan.id)?.id ?? null;
       const proofErr = await submitPaymentProof({
+        claimId,
         customerId: loan.customerId,
         loanId: loan.id,
         loanNumber: loan.loanNumber,
@@ -127,7 +133,10 @@ export function CollectionsAgentView() {
         submittedByRole: user.role,
       });
       if (proofErr) {
-        return `Collection submitted, but screenshot failed: ${proofErr}. Open loan details to upload again.`;
+        // The collection itself was saved: close the dialog (re-submitting would
+        // be refused as a second pending collection) and say where to retry.
+        toast(`Collection submitted, but the screenshot was not: ${proofErr} Open the loan's details to attach it again.`, 'error');
+        return null;
       }
       recordAgentActivity({
         agentUserId: user.id,
@@ -308,7 +317,7 @@ export function CollectionsAgentView() {
             </p>
             <p className="mt-2 text-[13px] text-muted">
               {listFilter === 'pending'
-                ? 'Collections waiting for admin approval. UPI screenshots are reviewed separately under Portal proofs.'
+                ? 'Collections waiting for admin approval appear here, with their screenshots.'
                 : 'Try another search term.'}
             </p>
             {listFilter === 'pending' && (

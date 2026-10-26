@@ -8,7 +8,9 @@ import type { PayMode, Loan } from '@/mock/DataContext';
 import { LOAN_LABELS } from '@/mock/DataContext';
 import { todayISO, inr } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { readLoanTypeUpiMap } from '@/lib/loanTypeUpiStore';
+import {
+  LOAN_TYPE_UPI_CHANGED, isLoanTypeUpiSettled, readLoanTypeUpiMap, refreshLoanTypeUpi,
+} from '@/lib/loanTypeUpiStore';
 import { upiForLoanType, isLoanTypeUpiComplete } from '@/lib/loanTypeUpi';
 import { HandCoins, Copy, Check, Lock, Smartphone, ImagePlus, Upload, X } from 'lucide-react';
 import { useToast } from '@/components/ui/toast';
@@ -70,11 +72,23 @@ export function ReportCollectionDialog({
   const [proofFile, setProofFile] = useState<PaymentProofFile | null>(null);
   const [proofLabel, setProofLabel] = useState<string | null>(null);
 
+  // The UPI IDs come from the server (Settings); re-read when they load or change.
+  const [upiTick, setUpiTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setUpiTick((n) => n + 1);
+    window.addEventListener(LOAN_TYPE_UPI_CHANGED, bump);
+    return () => window.removeEventListener(LOAN_TYPE_UPI_CHANGED, bump);
+  }, []);
+  useEffect(() => {
+    if (open) void refreshLoanTypeUpi();
+  }, [open]);
+
   const loanTypeUpi = useMemo(() => {
     const map = readLoanTypeUpiMap();
     if (!isLoanTypeUpiComplete(map)) return null;
     return upiForLoanType(map, loan.type);
-  }, [loan.type, open]);
+  }, [loan.type, open, upiTick]);
+  const upiLoading = useMemo(() => !isLoanTypeUpiSettled(), [open, upiTick]);
 
   useEffect(() => {
     if (!open) return;
@@ -97,7 +111,8 @@ export function ReportCollectionDialog({
   }, [open, variant, initial, dueHint]);
 
   const upiReady = mode === 'UPI' && loanTypeUpi != null;
-  const upiBlocked = mode === 'UPI' && !loanTypeUpi;
+  const upiPending = mode === 'UPI' && !loanTypeUpi && upiLoading;
+  const upiBlocked = mode === 'UPI' && !loanTypeUpi && !upiLoading;
   const upiProofRequired = variant === 'create' && mode === 'UPI' && upiReady;
   const upiProofMissing = upiProofRequired && !proofFile;
 
@@ -177,7 +192,7 @@ export function ReportCollectionDialog({
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} loading={loading} disabled={upiBlocked || upiProofMissing}>
+          <Button onClick={save} loading={loading} disabled={upiBlocked || upiPending || upiProofMissing}>
             <HandCoins size={15} />
             {loading && variant === 'create' && mode === 'UPI'
               ? 'Submitting collection & screenshot…'
@@ -218,7 +233,12 @@ export function ReportCollectionDialog({
                   : 'border-warning/40 bg-warning/[.06]',
               )}
             >
-              {upiBlocked ? (
+              {upiPending ? (
+                <p className="flex items-center gap-2 p-4 text-[12px] text-muted">
+                  <Smartphone size={16} className="shrink-0 animate-pulse" aria-hidden />
+                  Loading the UPI ID for {LOAN_LABELS[loan.type]}…
+                </p>
+              ) : upiBlocked ? (
                 <div className="flex gap-3 p-4">
                   <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-warning/15 text-warning">
                     <Smartphone size={20} />
@@ -276,7 +296,7 @@ export function ReportCollectionDialog({
         {upiProofRequired && (
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 p-4 dark:border-white/[.08] dark:bg-white/[.03]">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Payment screenshot *</p>
-            <p className="mt-1 text-[12px] text-muted">Required for UPI. Queued with this submission for Portal proofs review.</p>
+            <p className="mt-1 text-[12px] text-muted">Required for UPI. Attached to this collection — the admin checks it when approving.</p>
             <input
               ref={proofInputRef}
               type="file"

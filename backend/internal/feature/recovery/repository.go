@@ -13,6 +13,7 @@ import (
 
 	"github.com/anush-capitals/lms-backend/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -255,9 +256,15 @@ func (r *Repository) CreateClaim(ctx context.Context, agentID int64, in domain.C
 	return id, err
 }
 
-// UpdatePendingClaim edits an agent's own PENDING claim.
+// UpdatePendingClaim edits an agent's own PENDING claim. A screenshot awaiting
+// review for the claim takes the new amount with it (it proves the claim).
 func (r *Repository) UpdatePendingClaim(ctx context.Context, id, agentID int64, in domain.ClaimInput) (bool, error) {
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
 		UPDATE recovery_submissions
 		SET amount = $3, mode = $4, receipt_date = $5, note = $6, updated_at = now()
 		WHERE id = $1 AND agent_user_id = $2 AND type = 'COLLECTION_CLAIM' AND status = 'PENDING' AND deleted_at IS NULL`,
@@ -265,7 +272,41 @@ func (r *Repository) UpdatePendingClaim(ctx context.Context, id, agentID int64, 
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() != 1 {
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE payment_proofs SET amount = $2
+		WHERE claim_id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, id, in.Amount.DBRupees()); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
+// closeClaimProofsTx settles the screenshots awaiting review for a claim being
+// reviewed, inside the review's transaction: approved → VERIFIED on the claim's
+// receipt date (evidence only; the claim recorded the money), rejected →
+// REJECTED. No collection is written here. Returns how many were closed.
+func closeClaimProofsTx(ctx context.Context, tx pgx.Tx, claimID int64, claimStatus string,
+	reviewer *int64, receiptDate *time.Time,
+) (int64, error) {
+	var tag pgconn.CommandTag
+	var err error
+	if claimStatus == domain.ClaimApproved {
+		tag, err = tx.Exec(ctx, `
+			UPDATE payment_proofs
+			SET status = 'VERIFIED', reviewed_by = $2, reviewed_at = now(), receipt_date = $3
+			WHERE claim_id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, claimID, reviewer, receiptDate)
+	} else {
+		tag, err = tx.Exec(ctx, `
+			UPDATE payment_proofs
+			SET status = 'REJECTED', reviewed_by = $2, reviewed_at = now()
+			WHERE claim_id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, claimID, reviewer)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // CreatePromise stores an OPEN promise to pay.

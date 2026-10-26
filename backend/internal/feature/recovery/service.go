@@ -196,6 +196,12 @@ func (s *Service) Approve(ctx context.Context, id int64, reviewer *int64) (*doma
 	if err := markReviewedTx(ctx, tx, sub.ID, domain.ClaimApproved, reviewer, nil); err != nil {
 		return nil, nil, err
 	}
+	// The agent's screenshot of this payment is accepted with it — as evidence
+	// only: the money was recorded once, above.
+	screenshots, err := closeClaimProofsTx(ctx, tx, sub.ID, domain.ClaimApproved, reviewer, sub.ReceiptDate)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Nothing due any more → the agent's work on this loan is done.
 	l, err := s.loans.FindByID(ctx, sub.LoanID)
@@ -224,7 +230,7 @@ func (s *Service) Approve(ctx context.Context, id int64, reviewer *int64) (*doma
 			After: map[string]any{
 				"loan_id": sub.LoanID, "agent_user_id": sub.AgentUserID, "amount": sub.Amount.Rupees(),
 				"receipt_date": sub.ReceiptDate.Format("2006-01-02"), "receipts": receipts,
-				"released_from_agent": released,
+				"released_from_agent": released, "screenshots_accepted": screenshots,
 			},
 		}); err != nil {
 			return nil, nil, err
@@ -264,10 +270,17 @@ func (s *Service) Reject(ctx context.Context, id int64, reviewer *int64, reason 
 	if err := markReviewedTx(ctx, tx, sub.ID, domain.ClaimRejected, reviewer, &note); err != nil {
 		return nil, err
 	}
+	// A rejected claim's screenshot is moot: reject it too, so it never waits
+	// for review (and cannot be accepted on its own).
+	screenshots, err := closeClaimProofsTx(ctx, tx, sub.ID, domain.ClaimRejected, reviewer, nil)
+	if err != nil {
+		return nil, err
+	}
 	if s.audits != nil {
 		if err := s.audits.RecordTx(ctx, tx, audit.Entry{
 			EntityType: audit.EntityRecoverySubmission, EntityID: sub.ID, Action: audit.ActionUpdate,
-			After: map[string]any{"status": domain.ClaimRejected, "loan_id": sub.LoanID, "amount": sub.Amount.Rupees()},
+			After: map[string]any{"status": domain.ClaimRejected, "loan_id": sub.LoanID, "amount": sub.Amount.Rupees(),
+				"screenshots_rejected": screenshots},
 		}); err != nil {
 			return nil, err
 		}

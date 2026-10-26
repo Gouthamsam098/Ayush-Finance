@@ -63,7 +63,16 @@ type PaymentProof struct {
 	// Filled on list reads when joined to users (submitted_by).
 	SubmitterName string
 	SubmitterRole Role
+	// ClaimID is set when a recovery agent uploaded the screenshot for their
+	// collection claim. Such a screenshot is evidence only: the claim records
+	// the money, so accepting the screenshot never posts a collection.
+	ClaimID     *int64
+	ClaimStatus string // the linked claim's status; "" when unlinked
 }
+
+// IsClaimEvidence reports whether the proof is a recovery agent's screenshot
+// attached to a collection claim (see ClaimID).
+func (p *PaymentProof) IsClaimEvidence() bool { return p.ClaimID != nil }
 
 // PaymentProofInput is the borrower's upload, validated before storing.
 type PaymentProofInput struct {

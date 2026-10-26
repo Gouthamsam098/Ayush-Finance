@@ -35,6 +35,7 @@ import { COLLECTIONS_CHANGED_EVENT } from '@/lib/dataEvents';
 import { rememberClaimUpi, rememberCollectionUpi, upiSnapshotFromClaim, enrichCollectionClaim } from '@/lib/recoveryClaimUpi';
 import { setPromiseStatusOverlay } from '@/lib/recoveryPtpOverlay';
 import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
+import { refreshPaymentProofs, settleClaimProofsLocally } from '@/features/customer-portal/paymentProofStore';
 
 interface RecoveryContextValue {
   submissions: RecoverySubmission[];
@@ -317,6 +318,8 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       if (merged.type === 'COLLECTION_CLAIM' && upiSnap) rememberClaimUpi(merged.id, upiSnap);
       upsertCachedSubmission(merged);
       window.dispatchEvent(new Event(COLLECTIONS_CHANGED_EVENT));
+      // The server accepted the claim's screenshot with it — show that.
+      refreshPaymentProofs();
       void refreshRecovery();
       refresh();
       return;
@@ -345,6 +348,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       reviewedAt: new Date().toISOString(),
       collectionId,
     } as Partial<CollectionClaimSubmission>);
+    settleClaimProofsLocally(id, 'verified');
     const stillDue = Math.max(0, dueBefore - row.amount);
     if (stillDue <= 0) {
       const assigned = getAssignedLoanIds(row.agentUserId).filter((lid) => lid !== row.loanId);
@@ -359,10 +363,14 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       reviewedAt: new Date().toISOString(),
       reviewNote: reason || 'Rejected by admin',
     } as Partial<CollectionClaimSubmission>);
+    settleClaimProofsLocally(id, 'rejected');
     refresh();
     if (config.useApi) {
       recoveryApi.reject(id, reason)
-        .then((saved) => upsertCachedSubmission(saved))
+        .then((saved) => {
+          upsertCachedSubmission(saved);
+          refreshPaymentProofs(); // its screenshot was rejected with it
+        })
         .catch((e) => {
           console.error('Reject was not saved', e);
           void refreshRecovery();
@@ -398,6 +406,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
           rememberClaimUpi(withUpi.id, { payeeVpa: withUpi.payeeVpa, payeeName: withUpi.payeeName ?? '' });
         }
         upsertCachedSubmission(withUpi);
+        refreshPaymentProofs(); // an attached screenshot takes the new amount
         recordAgentActivity({
           agentUserId,
           at: new Date().toISOString(),

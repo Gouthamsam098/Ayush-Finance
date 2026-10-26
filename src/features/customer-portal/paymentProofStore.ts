@@ -25,11 +25,6 @@ import { dismissPaymentProof, isPaymentProofDismissed } from '@/lib/adminDismiss
 export const PAYMENT_PROOF_STORAGE_KEY = 'anush.portal.paymentProofs';
 /** UI-only: who uploaded each proof (recovery agent vs borrower), keyed by proof id. */
 const PAYMENT_PROOF_SUBMITTER_KEY = 'anush.portal.paymentProofSubmitters';
-/**
- * Staff confirmed screenshot after payment was already booked via Recovery queue.
- * Does not call verify (no second ledger entry). Display-only: pending → verified for agents.
- */
-const PROOF_EVIDENCE_ACK_KEY = 'anush.portal.proofEvidenceAck';
 
 type SubmitterSnap = { name: string; role: string };
 
@@ -64,44 +59,6 @@ function rekeyProofSubmitter(fromId: string, toId: string) {
   writeSubmitterMap(map);
 }
 
-function readEvidenceAckMap(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(PROOF_EVIDENCE_ACK_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, string>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeEvidenceAckMap(map: Record<string, string>) {
-  localStorage.setItem(PROOF_EVIDENCE_ACK_KEY, JSON.stringify(map));
-}
-
-export function isPaymentProofEvidenceAcknowledged(id: string): boolean {
-  return Boolean(readEvidenceAckMap()[id]);
-}
-
-/** Screenshot OK when collection was already accepted in Recovery queue — no verify API. */
-export function acknowledgePaymentProofEvidence(id: string): void {
-  if (!id) return;
-  const map = readEvidenceAckMap();
-  if (!map[id]) {
-    map[id] = new Date().toISOString();
-    writeEvidenceAckMap(map);
-  }
-  dismissPaymentProof(id);
-  window.dispatchEvent(new CustomEvent(PAYMENT_PROOF_SUBMITTED_EVENT));
-}
-
-function withEvidenceDisplayStatus(record: PaymentProofRecord): PaymentProofRecord {
-  if (record.status === 'pending' && isPaymentProofEvidenceAcknowledged(record.id)) {
-    return { ...record, status: 'verified' };
-  }
-  return record;
-}
-
 function enrichFromSubmitterCache(record: PaymentProofRecord): PaymentProofRecord {
   let base = record;
   if (!record.recoveryAgentName && record.submittedByRole !== 'RECOVERY_AGENT') {
@@ -118,7 +75,7 @@ function enrichFromSubmitterCache(record: PaymentProofRecord): PaymentProofRecor
       };
     }
   }
-  return withEvidenceDisplayStatus(base);
+  return base;
 }
 
 function attachSubmitterFromInput(
@@ -160,6 +117,18 @@ export interface PaymentProofRecord {
   recoveryAgentName?: string | null;
   submittedByName?: string | null;
   submittedByRole?: string | null;
+  /**
+   * The recovery agent's collection claim this screenshot proves. Such a
+   * screenshot is evidence only — the claim records the money, and approving
+   * the claim accepts the screenshot with it.
+   */
+  claimId?: string | null;
+  claimStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
+}
+
+/** A recovery agent's screenshot attached to a collection claim (see claimId). */
+export function isClaimEvidence(p: Pick<PaymentProofRecord, 'claimId'>): boolean {
+  return !!p.claimId;
 }
 
 // ── demo mode (localStorage) ─────────────────────────────────────────────────
@@ -193,6 +162,8 @@ interface ProofWire {
   status: 'PENDING' | 'VERIFIED' | 'REJECTED';
   submitted_at: string;
   recovery_agent_name?: string | null;
+  claim_id?: number | null;
+  claim_status?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
 }
 
 const STATUS_FROM_WIRE: Record<ProofWire['status'], PaymentProofStatus> = {
@@ -260,7 +231,9 @@ function toRecord(w: ProofWire): PaymentProofRecord {
     status: STATUS_FROM_WIRE[w.status] ?? 'pending',
     recoveryAgentName: w.recovery_agent_name ?? null,
     submittedByName: w.recovery_agent_name ?? null,
-    submittedByRole: w.recovery_agent_name ? 'RECOVERY_AGENT' : null,
+    submittedByRole: w.recovery_agent_name || w.claim_id ? 'RECOVERY_AGENT' : null,
+    claimId: w.claim_id != null ? String(w.claim_id) : null,
+    claimStatus: w.claim_status ?? null,
   });
 }
 
@@ -608,6 +581,33 @@ async function uploadProof(input: Omit<PaymentProofRecord, 'id' | 'status' | 'su
   fd.append('purpose', input.purpose);
   fd.append('file', new File([blob], input.fileName || 'payment.png', { type: input.mimeType || blob.type }));
   const s = apiSession();
-  const path = s?.scope === 'agent' ? '/agent/payment-proofs' : '/portal/payment-proofs';
-  return api.upload<ProofWire>(path, fd);
+  const agent = s?.scope === 'agent';
+  // An agent's screenshot is attached to their collection claim (evidence for it).
+  if (agent && input.claimId) fd.append('claim_id', input.claimId);
+  return api.upload<ProofWire>(agent ? '/agent/payment-proofs' : '/portal/payment-proofs', fd);
+}
+
+/** Reload the proofs from the server now (e.g. after a claim review closed one). */
+export function refreshPaymentProofs(): void {
+  if (config.useApi) refreshRemote(true);
+}
+
+/**
+ * Demo mode: a claim's screenshots are settled with the claim's review —
+ * accepted (evidence) when it is approved, rejected when it is rejected. The
+ * server does this itself in API mode.
+ */
+export function settleClaimProofsLocally(claimId: string, status: 'verified' | 'rejected'): void {
+  if (config.useApi) return;
+  for (const r of readAll()) {
+    if (r.claimId === claimId && r.status === 'pending') setPaymentProofStatus(r.id, status);
+  }
+}
+
+/** The newest screenshot attached to a recovery agent's collection claim. */
+export function latestProofForClaim(claimId: string): PaymentProofRecord | null {
+  const forClaim = (config.useApi ? apiRows() : readAll())
+    .filter((r) => r.claimId === claimId)
+    .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  return forClaim[0] ? enrichFromSubmitterCache(forClaim[0]) : null;
 }

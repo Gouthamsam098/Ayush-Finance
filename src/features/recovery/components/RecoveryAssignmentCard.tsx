@@ -14,7 +14,7 @@ import type { CollectionClaimSubmission, PromiseSubmission } from '../types';
 import { PtpTodayAlert } from './PtpTodayAlert';
 import { PaymentProofUpload } from '@/features/customer-portal/components/PaymentProofUpload';
 import {
-  getLatestPaymentProof,
+  latestProofForClaim,
   PAYMENT_PROOF_SUBMITTED_EVENT,
 } from '@/features/customer-portal/paymentProofStore';
 
@@ -95,14 +95,20 @@ export function RecoveryAssignmentCard({
     window.addEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
     return () => window.removeEventListener(PAYMENT_PROOF_SUBMITTED_EVENT, bump);
   }, []);
-  const latestProof = useMemo(() => getLatestPaymentProof(loan.id), [loan.id, proofTick]);
-  const proofAmount = latestProof?.amountRupees ?? claim?.amount ?? 0;
-  const upiPendingWithProof =
-    Boolean(pendingClaim && claim?.mode === 'UPI' && latestProof?.status === 'pending');
-  const showPaymentProofUpload =
-    (Boolean(pendingClaim && claim && claim.amount > 0 && claim.mode !== 'UPI') || Boolean(latestProof))
-    && !upiPendingWithProof;
-  const showProofSubmittedNote = upiPendingWithProof && latestProof?.dataUrl;
+  // The screenshot attached to the agent's latest collection (never another
+  // payment's — e.g. the borrower's own portal upload on this loan).
+  const latestProof = useMemo(
+    () => (claim ? latestProofForClaim(claim.id) : null),
+    [claim, proofTick],
+  );
+  const proofUnderReview = latestProof?.status === 'pending';
+  // A screenshot can be attached while the collection awaits approval, or sent
+  // again after an accepted collection's screenshot was rejected.
+  const canAttachProof = !!claim && claim.amount > 0 && !proofUnderReview && (
+    claim.status === 'PENDING'
+      ? latestProof?.status !== 'verified'
+      : claim.status === 'APPROVED' && latestProof?.status === 'rejected'
+  );
 
   return (
     <article
@@ -275,11 +281,11 @@ export function RecoveryAssignmentCard({
                 )}
               </div>
 
-              {showProofSubmittedNote ? (
+              {proofUnderReview ? (
                 <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-3 dark:border-white/[.08] dark:bg-white/[.03]">
                   <p className="font-display text-[12px] font-bold text-ink sm:text-[13px]">Payment screenshot</p>
                   <p className="mt-1 text-[11px] leading-relaxed text-muted">
-                    Submitted with your UPI collection. Admin will review it under Portal proofs.
+                    Attached to your collection. The admin checks it when approving — the payment is recorded once.
                   </p>
                   {latestProof?.dataUrl ? (
                     <img
@@ -289,15 +295,16 @@ export function RecoveryAssignmentCard({
                     />
                   ) : null}
                 </div>
-              ) : showPaymentProofUpload && proofAmount > 0 ? (
+              ) : canAttachProof && claim ? (
                 <PaymentProofUpload
                   customerId={loan.customerId}
                   loanId={loan.id}
                   loanNumber={loan.loanNumber}
-                  amountRupees={proofAmount}
+                  amountRupees={claim.amount}
                   purpose={latestProof?.purpose ?? 'CUSTOM'}
-                  collectionClaimPending={claim?.status === 'PENDING'}
+                  collectionClaimPending={claim.status === 'PENDING'}
                   activityCustomerName={cust?.name ?? 'Customer'}
+                  claimId={claim.id}
                 />
               ) : (
                 <div
@@ -311,13 +318,13 @@ export function RecoveryAssignmentCard({
                     <div className="min-w-0 flex-1">
                       <p className="font-display text-[12px] font-bold text-ink sm:text-[13px]">Payment screenshot</p>
                       <p className="mt-1 text-[11px] leading-relaxed text-muted">
-                        {pendingClaim && claim?.mode === 'UPI'
-                          ? 'Use Collect and attach the screenshot in the same step for UPI.'
-                          : pendingClaim
-                            ? 'Enter a valid collection amount in Collect before uploading proof.'
-                            : claim?.status === 'APPROVED'
-                              ? 'Collection is recorded. Upload a new screenshot if admin rejected the previous one.'
-                              : 'Tap Collect to submit for admin approval.'}
+                        {claim?.status === 'APPROVED' && latestProof?.status === 'verified'
+                          ? 'Collection recorded and its screenshot accepted.'
+                          : claim?.status === 'APPROVED'
+                            ? 'Collection is recorded. Use Collect for the next payment.'
+                            : claim?.status === 'REJECTED'
+                              ? 'This collection was rejected. Use Collect to submit the payment again.'
+                              : 'Tap Collect to submit a payment for admin approval.'}
                       </p>
                     </div>
                     <span

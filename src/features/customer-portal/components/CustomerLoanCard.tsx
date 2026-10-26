@@ -3,9 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { LOAN_LABELS, behavesInterestOnly, type Loan } from '@/mock/DataContext';
 import { inr, fmtDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useToast } from '@/components/ui/toast';
+import type { UpiPayCredentials } from '@/lib/upiPay';
 import type { LoanPortalSummary, PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 import {
-  CalendarClock, ChevronRight, CircleCheck, FileText, Landmark, Percent, SlidersHorizontal, Smartphone, Wallet,
+  CalendarClock, Check, ChevronRight, CircleCheck, Copy, FileText, Landmark, Percent, SlidersHorizontal, Smartphone, Wallet,
 } from 'lucide-react';
 import { PaymentProofUpload } from '@/features/customer-portal/components/PaymentProofUpload';
 import {
@@ -119,6 +121,61 @@ function Metric({
   );
 }
 
+/** The lender's UPI ID for this loan type, with one-tap copy — to pay from any UPI app. */
+function UpiIdCopy({ upi, amountLabel, proofBelow }: {
+  upi: UpiPayCredentials;
+  amountLabel: string | null;
+  /** The screenshot upload is shown under the payment section. */
+  proofBelow: boolean;
+}) {
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(upi.payeeVpa);
+      setCopied(true);
+      toast('UPI ID copied — paste it in your UPI app', 'success');
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast(`UPI ID: ${upi.payeeVpa}`, 'info');
+    }
+  };
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-200/80 bg-surface px-4 py-3.5 dark:border-white/[.08]">
+      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Or pay from any UPI app</p>
+      <div className="mt-2 flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono text-[15px] font-bold text-ink" title={upi.payeeVpa}>{upi.payeeVpa}</p>
+          <p className="mt-0.5 truncate text-[11px] text-muted">
+            Payee · <span className="font-semibold text-ink">{upi.payeeName}</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className={cn(
+            'inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3.5 text-[12px] font-semibold transition-colors',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+            copied
+              ? 'border-success/30 bg-success/10 text-success'
+              : 'border-primary/25 bg-primary/[.06] text-primary hover:bg-primary/10',
+          )}
+          aria-label={copied ? 'UPI ID copied' : `Copy UPI ID ${upi.payeeVpa}`}
+        >
+          {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-muted">
+        {amountLabel ? <>Pay <span className="font-semibold text-ink">{amountLabel}</span> to this UPI ID. </> : null}
+        {proofBelow
+          ? 'Then upload the payment screenshot below so your lender can confirm it.'
+          : 'Your lender updates your loan once the payment is received.'}
+      </p>
+    </div>
+  );
+}
+
 interface Props {
   customerId: number;
   loan: Loan;
@@ -128,12 +185,14 @@ interface Props {
   index: number;
   /** All six loan-type UPI rows configured in Settings. */
   upiConfigured: boolean;
+  /** The UPI ID for this loan's type (from Settings), shown with a copy button. */
+  upi: UpiPayCredentials | null;
   onPay: (amountRupees: number, purpose: PortalPayPurpose) => void;
   onStatement: () => void;
 }
 
 export function CustomerLoanCard({
-  customerId, loan, summary, nextDue, overdue, index, upiConfigured, onPay, onStatement,
+  customerId, loan, summary, nextDue, overdue, index, upiConfigured, upi, onPay, onStatement,
 }: Props) {
   const canPay = loan.status === 'ACTIVE' && summary.outstanding > 0;
 
@@ -428,6 +487,9 @@ export function CustomerLoanCard({
                 Amount is copied into PhonePe or Google Pay automatically
               </p>
 
+              {upi && (
+                <UpiIdCopy upi={upi} amountLabel={payValid ? inr(payAmount) : null} proofBelow={portalProof != null} />
+              )}
             </div>
           </motion.section>
         )}

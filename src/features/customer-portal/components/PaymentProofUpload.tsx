@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/toast';
 import type { PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 import {
   getLatestPaymentProof,
+  latestProofForClaim,
   submitPaymentProof,
   PAYMENT_PROOF_ACCEPT,
   PAYMENT_PROOF_MAX_BYTES,
@@ -29,6 +30,11 @@ interface Props {
   collectionClaimPending?: boolean;
   /** For recovery agent activity log (recovery portal only). */
   activityCustomerName?: string;
+  /**
+   * Recovery card: the agent's collection claim this screenshot proves. The
+   * upload is attached to it (evidence only — the claim records the money).
+   */
+  claimId?: string;
 }
 
 type PickedFile = { name: string; mime: string; dataUrl: string; sizeLabel: string };
@@ -103,7 +109,7 @@ function PaymentThankYouModal({
                 </p>
                 <p className="mt-2 text-[13px] leading-relaxed text-muted sm:text-[14px]">
                   {agent
-                    ? 'The screenshot is queued for admin review in Portal proofs.'
+                    ? 'The screenshot is attached to your collection. The admin checks it when approving.'
                     : 'Your payment will be confirmed once admin approves.'}
                 </p>
                 {!agent && (
@@ -132,7 +138,7 @@ function PaymentThankYouModal({
 }
 
 export function PaymentProofUpload({
-  customerId, loanId, loanNumber, amountRupees, purpose, collectionClaimPending, activityCustomerName,
+  customerId, loanId, loanNumber, amountRupees, purpose, collectionClaimPending, activityCustomerName, claimId,
 }: Props) {
   const toast = useToast();
   const authUser = useSelector((s: RootState) => s.auth.user);
@@ -145,11 +151,16 @@ export function PaymentProofUpload({
   // so two taps inside one frame both read `false` and both upload.
   const submittingRef = useRef(false);
   const [thankYouOpen, setThankYouOpen] = useState(false);
-  const [latest, setLatest] = useState<PaymentProofRecord | null>(() => getLatestPaymentProof(loanId));
+  // A claim's screenshot status is that claim's own — not whatever else the loan has.
+  const readLatest = useCallback(
+    () => (claimId ? latestProofForClaim(claimId) : getLatestPaymentProof(loanId)),
+    [claimId, loanId],
+  );
+  const [latest, setLatest] = useState<PaymentProofRecord | null>(readLatest);
 
   const refreshLatest = useCallback(() => {
-    setLatest(getLatestPaymentProof(loanId));
-  }, [loanId]);
+    setLatest(readLatest());
+  }, [readLatest]);
 
   useEffect(() => {
     refreshLatest();
@@ -215,6 +226,7 @@ export function PaymentProofUpload({
         recoveryAgentName: isAgent ? authUser?.fullName ?? null : null,
         submittedByName: authUser?.fullName ?? null,
         submittedByRole: authUser?.role ?? null,
+        claimId: claimId ?? null,
       });
       if (err) {
         toast(`Screenshot not submitted: ${err}`, 'error');
@@ -232,7 +244,7 @@ export function PaymentProofUpload({
           loanNumber,
           customerName: activityCustomerName,
           title: 'Screenshot submitted',
-          detail: 'Payment proof queued for admin review',
+          detail: 'Attached to your collection for admin review',
           amountRupees,
         });
       }

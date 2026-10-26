@@ -8,8 +8,10 @@ import { useToast } from '@/components/ui/toast';
 import { CustomerAvatar } from '@/components/CustomerAvatar';
 import type { CollectionClaimSubmission } from '../types';
 import {
+  AlertTriangle,
   CalendarClock,
   Check,
+  Eye,
   HandCoins,
   Inbox,
   Loader2,
@@ -21,13 +23,24 @@ import {
 import { ADMIN_DISMISSALS_CHANGED, isRecoverySubmissionDismissed } from '@/lib/adminDismissals';
 import { removeSubmissionFromAdminQueue } from '../recoveryStore';
 import { cn } from '@/lib/utils';
+import { Dialog } from '@/components/ui/dialog';
 import { enrichCollectionClaim, upiSnapshotFromClaim } from '@/lib/recoveryClaimUpi';
 import { RecoveryUpiDetails } from './RecoveryUpiDetails';
 import {
-  getLatestPaymentProof,
+  latestProofForClaim,
+  listPaymentProofs,
   PAYMENT_PROOF_SUBMITTED_EVENT,
+  type PaymentProofRecord,
 } from '@/features/customer-portal/paymentProofStore';
-import { acknowledgeMatchingAgentProofsForClaim, screenshotStatusLabel } from '../recoveryCollectionUi';
+import { borrowerProofsMatchingClaim, screenshotStatusLabel } from '../recoveryCollectionUi';
+
+/** "Possible duplicate" line for a claim that matches borrower screenshots. */
+function duplicateNote(matches: PaymentProofRecord[]): string {
+  const p = matches[0];
+  const state = p.status === 'verified' ? 'already accepted' : 'awaiting review';
+  return `The borrower also uploaded a screenshot of ${inr(p.amountRupees)} for this loan on ${fmtDate(p.submittedAt.slice(0, 10))} (${state}). `
+    + 'Accept here only if it is a different payment, so the same money is not recorded twice.';
+}
 
 function QueueMeta({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -43,8 +56,10 @@ function CollectionClaimCard({
   customerId,
   loanTypeLabel,
   screenshotLabel,
+  duplicateWarning,
   busy,
   index,
+  onViewScreenshot,
   onReject,
   onApprove,
   onDelete,
@@ -53,8 +68,12 @@ function CollectionClaimCard({
   customerId: number;
   loanTypeLabel: string;
   screenshotLabel: string;
+  /** Borrower screenshot(s) that may be this same payment (pending claims only). */
+  duplicateWarning: string | null;
   busy: boolean;
   index: number;
+  /** Set when the claim's screenshot can be shown. */
+  onViewScreenshot?: () => void;
   onReject: () => void;
   onApprove: () => void;
   onDelete: () => void;
@@ -136,16 +155,37 @@ function CollectionClaimCard({
                 </span>
               </QueueMeta>
               <QueueMeta label="Screenshot">
-                {screenshotLabel}
+                {onViewScreenshot ? (
+                  <button
+                    type="button"
+                    onClick={onViewScreenshot}
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                    aria-label={`View screenshot (${screenshotLabel})`}
+                  >
+                    <Eye size={12} aria-hidden />
+                    {screenshotLabel}
+                  </button>
+                ) : screenshotLabel}
               </QueueMeta>
               <QueueMeta label="Submitted">
                 {fmtDate(submission.createdAt.slice(0, 10))}
               </QueueMeta>
             </div>
 
-            {pending && submission.mode === 'UPI' && (
+            {pending && (
               <p className="mt-2 rounded-lg border border-primary/15 bg-primary/[.04] px-2.5 py-1.5 text-[10px] leading-snug text-muted dark:border-primary/20">
-                <strong className="font-semibold text-ink">Accept</strong> records payment on the ledger. Portal proof Accept is for screenshot verification only — do not Accept the same payment in both places.
+                <strong className="font-semibold text-ink">Accept</strong> records this payment on the ledger once
+                {screenshotLabel === 'Pending review' ? ' and accepts its screenshot with it' : ''}.
+              </p>
+            )}
+
+            {pending && duplicateWarning && (
+              <p
+                className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50/90 px-2.5 py-1.5 text-[10px] leading-snug text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+                role="status"
+              >
+                <AlertTriangle size={12} className="mt-px shrink-0" aria-hidden />
+                <span><strong className="font-semibold">Possible duplicate.</strong> {duplicateWarning}</span>
               </p>
             )}
 
@@ -207,6 +247,7 @@ export function RecoveryQueuePanel() {
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
   const [dismissTick, setDismissTick] = useState(0);
+  const [viewer, setViewer] = useState<{ proof: PaymentProofRecord; claim: CollectionClaimSubmission } | null>(null);
 
   useEffect(() => {
     const bump = () => setDismissTick((t) => t + 1);
@@ -239,18 +280,20 @@ export function RecoveryQueuePanel() {
     return loan ? LOAN_LABELS[loan.type] : '—';
   };
 
+  // Borrower screenshots, for the possible-duplicate check (re-read on proof events).
+  const borrowerProofs = useMemo(() => listPaymentProofs().filter((p) => !p.claimId), [dismissTick]);
+
   const onApprove = async (submission: CollectionClaimSubmission) => {
-    const proof = getLatestPaymentProof(submission.loanId);
-    if (submission.mode === 'UPI' && proof?.status === 'pending') {
+    const matches = borrowerProofsMatchingClaim(submission, borrowerProofs);
+    if (matches.length > 0) {
       const ok = window.confirm(
-        `This will record ${inr(submission.amount)} on the ledger.\n\nA UPI screenshot is still pending under Portal proofs. Accept here for the collection only — do not also Accept the same payment in Portal proofs.`,
+        `Possible duplicate payment.\n\n${duplicateNote(matches)}\n\nAccept ${inr(submission.amount)} from ${submission.agentName}?`,
       );
       if (!ok) return;
     }
     setBusy(submission.id);
     try {
       await approveClaim(submission.id);
-      acknowledgeMatchingAgentProofsForClaim(submission);
       toast('Collection accepted — ledger updated', 'success');
     } catch {
       toast('Could not accept — try again', 'error');
@@ -313,9 +356,10 @@ export function RecoveryQueuePanel() {
       <div className="grid min-w-0 gap-3 p-2.5 sm:p-4 md:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
         {queue.map((s, i) => {
           const customerId = customerIdFor(s.loanId);
-          const proof = getLatestPaymentProof(s.loanId);
-          const screenshotLabel =
-            s.mode === 'UPI' ? screenshotStatusLabel(proof) : '—';
+          // The screenshot attached to THIS claim (not the loan's latest upload).
+          const proof = latestProofForClaim(s.id);
+          const screenshotLabel = proof || s.mode === 'UPI' ? screenshotStatusLabel(proof) : '—';
+          const matches = s.status === 'PENDING' ? borrowerProofsMatchingClaim(s, borrowerProofs) : [];
           return (
             <CollectionClaimCard
               key={s.id}
@@ -323,8 +367,10 @@ export function RecoveryQueuePanel() {
               customerId={customerId}
               loanTypeLabel={loanTypeLabelFor(s.loanId)}
               screenshotLabel={screenshotLabel}
+              duplicateWarning={matches.length > 0 ? duplicateNote(matches) : null}
               busy={busy === s.id}
               index={i}
+              onViewScreenshot={proof ? () => setViewer({ proof, claim: s }) : undefined}
               onReject={() => onReject(s.id)}
               onApprove={() => onApprove(s)}
               onDelete={() => onDelete(s.id)}
@@ -332,6 +378,31 @@ export function RecoveryQueuePanel() {
           );
         })}
       </div>
+
+      <Dialog
+        open={!!viewer}
+        onClose={() => setViewer(null)}
+        xl
+        centerOnMobile
+        title={viewer ? `Screenshot · ${viewer.claim.loanNumber}` : 'Screenshot'}
+        subtitle={viewer ? `${viewer.claim.agentName} · ${inr(viewer.claim.amount)} · ${screenshotStatusLabel(viewer.proof)}` : undefined}
+      >
+        {viewer && (
+          <div className="-mx-4 -my-5 flex min-h-[min(55dvh,28rem)] flex-col justify-center sm:-mx-6">
+            {viewer.proof.dataUrl ? (
+              <img
+                src={viewer.proof.dataUrl}
+                alt={`Payment screenshot for loan ${viewer.claim.loanNumber}, ${inr(viewer.claim.amount)}`}
+                className="mx-auto max-h-[min(72dvh,40rem)] w-full object-contain bg-slate-100/60 dark:bg-black/25"
+              />
+            ) : (
+              <p className="px-4 py-12 text-center text-[13px] text-muted sm:px-6">
+                Screenshot is still loading or unavailable. Close and try again, or refresh the page.
+              </p>
+            )}
+          </div>
+        )}
+      </Dialog>
     </section>
   );
 }

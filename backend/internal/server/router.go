@@ -20,6 +20,7 @@ import (
 	"github.com/anush-capitals/lms-backend/internal/feature/loan"
 	"github.com/anush-capitals/lms-backend/internal/feature/paymentproof"
 	"github.com/anush-capitals/lms-backend/internal/feature/recovery"
+	"github.com/anush-capitals/lms-backend/internal/feature/upisettings"
 	"github.com/anush-capitals/lms-backend/internal/feature/user"
 	"github.com/anush-capitals/lms-backend/internal/httpx"
 	"github.com/go-chi/chi/v5"
@@ -103,6 +104,11 @@ func NewRouter(deps Dependencies) http.Handler {
 	userService := user.NewService(userRepo, deps.Hasher)
 	userHandler := user.NewHandler(userService)
 
+	// The UPI ID borrowers pay to, per loan type (Settings; read by the portal
+	// and recovery agents).
+	upiSettingsService := upisettings.NewService(upisettings.NewRepository(deps.Pool), auditor)
+	upiSettingsHandler := upisettings.NewHandler(upiSettingsService, authRepo.FindByID)
+
 	r := chi.NewRouter()
 
 	// Global middleware, outermost first.
@@ -167,6 +173,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			// anyone who may record investor interest already needs that right.
 			protected.With(perm("Expenses")).Mount("/investments", investmentHandler.Routes())
 			protected.Mount("/users", userHandler.Routes()) // admin-only, guarded in handler
+			// Staff read, admin save — guarded in the handler.
+			protected.Mount("/settings/loan-type-upi", upiSettingsHandler.StaffRoutes())
 
 			// Borrower portal: read-only, scoped to the caller's own customer
 			// (resolved from the users row, never from the request).
@@ -176,6 +184,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				portal.Mount("/loans", loanHandler.PortalRoutes())
 				portal.Mount("/collections", collectionHandler.PortalRoutes())
 				portal.Mount("/payment-proofs", paymentProofHandler.PortalRoutes())
+				portal.Mount("/loan-type-upi", upiSettingsHandler.ReadRoutes())
 			})
 
 			// Recovery agent: only the loans assigned to the caller (resolved from
@@ -187,6 +196,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				agent.Mount("/customers", customerHandler.AgentRoutes())
 				agent.Mount("/collections", collectionHandler.AgentRoutes())
 				agent.Mount("/payment-proofs", paymentProofHandler.AgentRoutes())
+				agent.Mount("/loan-type-upi", upiSettingsHandler.ReadRoutes())
 				agent.Mount("/", recoveryHandler.AgentRoutes())
 			})
 		})

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Smartphone, Check, CircleDashed } from 'lucide-react';
+import { Smartphone, Check, CircleDashed, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
@@ -16,7 +16,9 @@ import {
 import type { LoanType } from '@/mock/DataContext';
 import {
   LOAN_TYPE_UPI_CHANGED,
+  readLegacyLocalLoanTypeUpiMap,
   readLoanTypeUpiMap,
+  refreshLoanTypeUpi,
   saveLoanTypeUpiMap,
   isPortalLoanTypeUpiReady,
 } from '@/lib/loanTypeUpiStore';
@@ -30,6 +32,14 @@ function rowIsComplete(map: LoanTypeUpiMap, type: LoanType): boolean {
   return !validateUpiVpa(row.payeeVpa) && !validatePayeeName(row.payeeName);
 }
 
+const isBlank = (map: LoanTypeUpiMap) =>
+  LOAN_TYPE_UPI_ORDER.every((t) => !map[t].payeeVpa.trim() && !map[t].payeeName.trim());
+
+/** Nothing saved on the server yet, but this browser has the old local copy. */
+function legacyDraft(saved: LoanTypeUpiMap): LoanTypeUpiMap | null {
+  return isBlank(saved) ? readLegacyLocalLoanTypeUpiMap() : null;
+}
+
 export function LoanTypeUpiSettingsCard({ embedded }: Props) {
   const toast = useToast();
   const [draft, setDraft] = useState<LoanTypeUpiMap>(() => readLoanTypeUpiMap());
@@ -38,15 +48,18 @@ export function LoanTypeUpiSettingsCard({ embedded }: Props) {
 
   const saved = useMemo(() => readLoanTypeUpiMap(), [tick]);
   const portalReady = useMemo(() => isPortalLoanTypeUpiReady(), [tick]);
+  const fromLegacy = useMemo(() => legacyDraft(saved) != null, [saved]);
 
   useEffect(() => {
     const bump = () => setTick((n) => n + 1);
     window.addEventListener(LOAN_TYPE_UPI_CHANGED, bump);
+    void refreshLoanTypeUpi();
     return () => window.removeEventListener(LOAN_TYPE_UPI_CHANGED, bump);
   }, []);
 
   useEffect(() => {
-    setDraft(readLoanTypeUpiMap());
+    const server = readLoanTypeUpiMap();
+    setDraft(legacyDraft(server) ?? server);
   }, [tick]);
 
   const fieldErrors = useMemo(() => validateLoanTypeUpiMap(draft), [draft]);
@@ -68,9 +81,10 @@ export function LoanTypeUpiSettingsCard({ embedded }: Props) {
     }));
   }, []);
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     setSaving(true);
-    const err = saveLoanTypeUpiMap(draft);
+    const err = await saveLoanTypeUpiMap(draft);
     setSaving(false);
     if (err) {
       toast(err, 'error');
@@ -133,6 +147,16 @@ export function LoanTypeUpiSettingsCard({ embedded }: Props) {
           </div>
         </div>
       </div>
+
+      {fromLegacy && (
+        <p className="flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/[.05] px-3.5 py-2.5 text-[12px] leading-relaxed text-ink dark:border-primary/25">
+          <Info size={15} className="mt-0.5 shrink-0 text-primary" aria-hidden />
+          <span>
+            These UPI IDs were saved earlier in this browser only. Check them and click
+            <span className="font-semibold"> Save UPI settings</span> so borrowers and agents see them on every device.
+          </span>
+        </p>
+      )}
 
       <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-surface shadow-soft dark:border-white/[.08]">
         <div
@@ -238,7 +262,7 @@ export function LoanTypeUpiSettingsCard({ embedded }: Props) {
         >
           Reset changes
         </Button>
-        <Button type="button" className="w-full sm:w-auto" loading={saving} disabled={!dirty} onClick={save}>
+        <Button type="button" className="w-full sm:w-auto" loading={saving} disabled={!dirty} onClick={() => void save()}>
           Save UPI settings
         </Button>
       </div>
