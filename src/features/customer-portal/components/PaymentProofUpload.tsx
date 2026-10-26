@@ -299,8 +299,10 @@ export function PaymentProofUpload({
         onChange={(e) => ingestFile(e.target.files?.[0])}
       />
 
-      <div className="flex flex-col gap-2 xs:flex-row xs:items-center xs:gap-2.5">
-        <div className="flex min-w-0 flex-1 items-start gap-2.5">
+      {/* Wraps on the card's own width (not the viewport): the buttons drop
+          below the message whenever the two do not fit side by side. */}
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
+        <div className="flex min-w-0 flex-[1_1_15rem] items-start gap-2.5">
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-500/12 text-violet-600 dark:text-violet-300">
           <ShieldCheck size={16} strokeWidth={2} />
         </span>
@@ -374,15 +376,30 @@ export function PaymentProofUpload({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="w-full shrink-0 xs:w-auto"
+              className="ml-auto flex max-w-full flex-wrap justify-end gap-2"
             >
               <Button
                 type="button"
+                variant="ghost"
                 onClick={() => inputRef.current?.click()}
-                className="h-10 w-full px-3.5 text-[12px] xs:h-9 xs:w-auto"
+                className="h-10 grow whitespace-nowrap px-3 text-[12px] sm:h-9"
               >
                 <ImagePlus size={14} aria-hidden />
                 {rejected ? 'Upload again' : latest ? 'Upload new screenshot' : 'Upload screenshot'}
+              </Button>
+              {/* Always on show so the second step is never hidden; with no
+                  screenshot yet it leads straight to choosing one. Nothing is
+                  sent until a screenshot is picked. */}
+              <Button
+                type="button"
+                onClick={() => {
+                  toast('Choose the payment screenshot first.', 'info');
+                  inputRef.current?.click();
+                }}
+                className="h-10 grow whitespace-nowrap px-3 text-[12px] sm:h-9"
+              >
+                <Upload size={13} aria-hidden />
+                Submit for approval
               </Button>
             </motion.div>
           ) : !picked && awaitingNewCollect ? (
