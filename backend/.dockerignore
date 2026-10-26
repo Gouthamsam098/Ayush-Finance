@@ -2,6 +2,11 @@
 .env
 .env.*
 secrets/
+# Database dumps (scripts/backup-db.sh) — the whole loan book incl. raw KYC;
+# must never be copied into an image layer.
+backups/
+*.dump
+*.dump.gz
 *.pem
 bin/
 dist/

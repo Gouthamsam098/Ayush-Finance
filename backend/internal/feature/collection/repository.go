@@ -147,8 +147,18 @@ func (r *Repository) SumByLoanTx(ctx context.Context, tx pgx.Tx, loanID int64) (
 
 // FindByID returns a non-deleted collection or a NotFound error.
 func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.Collection, error) {
+	return findByID(ctx, r.pool, id)
+}
+
+// FindByIDTx is FindByID inside a transaction: read after the loan lock, it
+// sees the row exactly as the edit or delete will change it.
+func (r *Repository) FindByIDTx(ctx context.Context, tx pgx.Tx, id int64) (*domain.Collection, error) {
+	return findByID(ctx, tx, id)
+}
+
+func findByID(ctx context.Context, q querier, id int64) (*domain.Collection, error) {
 	const query = `SELECT ` + collectionColumns + ` FROM collections WHERE id = $1 AND deleted_at IS NULL`
-	c, err := scanCollection(r.pool.QueryRow(ctx, query, id))
+	c, err := scanCollection(q.QueryRow(ctx, query, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("collection")
 	}
@@ -297,14 +307,15 @@ func sumByLoans(ctx context.Context, q querier, loanIDs []int64) (map[int64]doma
 	return out, rows.Err()
 }
 
-// Update rewrites an existing payment's editable fields (loan_id is immutable).
-func (r *Repository) Update(ctx context.Context, id int64, in domain.CollectionInput) (*domain.Collection, error) {
+// UpdateTx rewrites an existing payment's editable fields (loan_id is
+// immutable) inside the caller's transaction, which holds the loan lock.
+func (r *Repository) UpdateTx(ctx context.Context, tx pgx.Tx, id int64, in domain.CollectionInput) (*domain.Collection, error) {
 	const query = `
 		UPDATE collections SET
 			date = $2, amount = $3, mode = $4, kind = $5, remarks = $6, updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING ` + collectionColumns
-	c, err := scanCollection(r.pool.QueryRow(ctx, query,
+	c, err := scanCollection(tx.QueryRow(ctx, query,
 		id, in.Date, in.Amount.DBRupees(), string(in.Mode), string(in.Kind), nilIfEmpty(in.Remarks)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("collection")
@@ -315,24 +326,12 @@ func (r *Repository) Update(ctx context.Context, id int64, in domain.CollectionI
 	return c, nil
 }
 
-// SoftDelete marks a payment deleted; NotFound if missing or already deleted.
-func (r *Repository) SoftDelete(ctx context.Context, id int64) error {
-	tag, err := r.pool.Exec(ctx,
-		`UPDATE collections SET deleted_at = now(), updated_at = now()
-		 WHERE id = $1 AND deleted_at IS NULL`, id)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return domain.NewNotFound("collection")
-	}
-	return nil
-}
-
-// SoftDeleteTx is SoftDelete inside a caller's transaction, so a delete can
-// commit atomically with the writes that replace it. Scoped by loan_id as well
-// as id: a batch replace must never touch a record belonging to another loan,
-// even if a stale/forged id is supplied.
+// SoftDeleteTx marks a payment deleted inside the caller's transaction (which
+// holds the loan lock), so the delete commits atomically with the status sync
+// and audit entry — or with the writes that replace it. NotFound if missing or
+// already deleted. Scoped by loan_id as well as id: a batch replace must never
+// touch a record belonging to another loan, even if a stale/forged id is
+// supplied.
 func (r *Repository) SoftDeleteTx(ctx context.Context, tx pgx.Tx, loanID, id int64) error {
 	tag, err := tx.Exec(ctx,
 		`UPDATE collections SET deleted_at = now(), updated_at = now()
