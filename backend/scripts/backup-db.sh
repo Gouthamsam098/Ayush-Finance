@@ -36,8 +36,14 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # POSTGRES_USER / POSTGRES_DB come from the env file (never hardcoded here).
-# shellcheck disable=SC1090
-. "$ENV_FILE"
+# Read just those two values — never execute the env file: a value with a
+# space (ADMIN_FULL_NAME=System Administrator in the template) ran as a
+# command and stopped every backup with "Administrator: command not found".
+env_value() {
+  sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r' | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+}
+POSTGRES_USER="${POSTGRES_USER:-$(env_value POSTGRES_USER)}"
+POSTGRES_DB="${POSTGRES_DB:-$(env_value POSTGRES_DB)}"
 : "${POSTGRES_USER:?POSTGRES_USER missing from $ENV_FILE}"
 : "${POSTGRES_DB:?POSTGRES_DB missing from $ENV_FILE}"
 
