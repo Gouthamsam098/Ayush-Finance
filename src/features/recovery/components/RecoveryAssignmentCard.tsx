@@ -65,7 +65,7 @@ export function RecoveryAssignmentCard({
   agentName: string;
   due: number;
   claim?: CollectionClaimSubmission;
-  /** Shown only when promise date is today (not missed/upcoming chips). */
+  /** Open PTP with promise date today or in the future (Collect now enabled only when today). */
   ptpToday?: PromiseSubmission;
   nd: string | null;
   scheduleOverdue: boolean;
@@ -103,6 +103,7 @@ export function RecoveryAssignmentCard({
     (Boolean(pendingClaim && claim && claim.amount > 0 && claim.mode !== 'UPI') || Boolean(latestProof))
     && !upiPendingWithProof;
   const showProofSubmittedNote = upiPendingWithProof && latestProof?.dataUrl;
+  const hasOpenPtp = Boolean(ptpToday);
 
   return (
     <article
@@ -111,7 +112,8 @@ export function RecoveryAssignmentCard({
         claim?.status === 'APPROVED' && 'ring-2 ring-success/30',
         claim?.status === 'PENDING' && 'ring-2 ring-warning/35',
         claim?.status === 'REJECTED' && 'ring-2 ring-danger/30',
-        due > 0 && !pendingClaim && 'border-danger/20',
+        hasOpenPtp && 'border-2 border-warning ring-2 ring-warning/25 dark:border-amber-400/80 dark:ring-amber-400/20',
+        due > 0 && !pendingClaim && !hasOpenPtp && 'border-danger/20',
       )}
       style={{ animationDelay: `${animationDelay}ms` }}
     >

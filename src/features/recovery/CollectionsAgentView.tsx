@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from '@/store';
-import { useData, type Loan } from '@/mock/DataContext';
+import { useData, type Loan, LOAN_LABELS, type LoanType } from '@/mock/DataContext';
 import { recoveryDueNow } from './recoveryDue';
 import { useRecovery } from './RecoveryContext';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -39,6 +39,7 @@ export function CollectionsAgentView() {
   const [ptpLoan, setPtpLoan] = useState<Loan | null>(null);
   const [statementLoan, setStatementLoan] = useState<Loan | null>(null);
   const [listFilter, setListFilter] = useState<AgentListFilter>('all');
+  const [loanTypeFilter, setLoanTypeFilter] = useState<LoanType | 'ALL'>('ALL');
   const [ptpSubFilter, setPtpSubFilter] = useState<PtpSubFilter>('ALL');
   const [editPending, setEditPending] = useState<{ loan: Loan; claim: CollectionClaimSubmission } | null>(null);
   const editInitial = useMemo(() => {
@@ -72,10 +73,24 @@ export function CollectionsAgentView() {
     )
   ), [recovery.submissions, user.id]);
 
+  const assignedActiveLoans = useMemo(
+    () => d.loans.filter((l) => assignedIds.includes(l.id) && l.status === 'ACTIVE'),
+    [d.loans, assignedIds],
+  );
+
+  const loanTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = { ALL: assignedActiveLoans.length };
+    (Object.keys(LOAN_LABELS) as LoanType[]).forEach((t) => {
+      counts[t] = assignedActiveLoans.filter((l) => l.type === t).length;
+    });
+    return counts;
+  }, [assignedActiveLoans]);
+
   const loans = useMemo(() => {
     const q = search.trim().toLowerCase();
     return d.loans.filter((l) => {
       if (!assignedIds.includes(l.id) || l.status !== 'ACTIVE') return false;
+      if (listFilter === 'all' && loanTypeFilter !== 'ALL' && l.type !== loanTypeFilter) return false;
       if (listFilter === 'pending' && !loanHasPendingClaim(l.id)) return false;
       if (!q) return true;
       const c = d.customers.find((x) => x.id === l.customerId);
@@ -87,10 +102,10 @@ export function CollectionsAgentView() {
         || (c?.city ?? '').toLowerCase().includes(q)
       );
     });
-  }, [d.loans, d.customers, assignedIds, search, listFilter, loanHasPendingClaim]);
+  }, [d.loans, d.customers, assignedIds, search, listFilter, loanTypeFilter, loanHasPendingClaim]);
 
   const kpis = useMemo(() => {
-    const assigned = d.loans.filter((l) => assignedIds.includes(l.id) && l.status === 'ACTIVE');
+    const assigned = assignedActiveLoans;
     const overdue = assigned.filter((l) => recoveryDueNow(d, l) > 0);
     const pending = recovery.submissions.filter((s) => s.agentUserId === user.id && s.type === 'COLLECTION_CLAIM' && s.status === 'PENDING').length;
     return {
@@ -101,7 +116,7 @@ export function CollectionsAgentView() {
       ptpToday: ptpTodayCount,
       ptpOpen: openPromises.length,
     };
-  }, [d, assignedIds, recovery.submissions, user.id, ptpTodayCount, openPromises.length]);
+  }, [d, assignedActiveLoans, recovery.submissions, user.id, ptpTodayCount, openPromises.length]);
 
   const submitClaim = async (loan: Loan, payload: CollectionClaimSubmitPayload) => {
     const { proofFile, ...claimPayload } = payload;
@@ -307,6 +322,39 @@ export function CollectionsAgentView() {
           )}
         </div>
 
+        {listFilter === 'all' && assignedIds.length > 0 && (
+          <div className="-mx-0.5 flex gap-2 overflow-x-auto pb-1 scrollbar-none sm:mx-0 sm:flex-wrap sm:overflow-visible sm:pb-0">
+            {(
+              [['ALL', 'All types'], ...(Object.keys(LOAN_LABELS) as LoanType[]).map((t) => [t, LOAN_LABELS[t]] as const)] as [string, string][]
+            ).map(([val, label]) => {
+              const on = loanTypeFilter === val;
+              return (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setLoanTypeFilter(val as LoanType | 'ALL')}
+                  className={cn(
+                    'inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all min-h-10',
+                    on
+                      ? 'bg-gradient-to-r from-blue-700 to-blue-500 text-white shadow-[0_4px_14px_rgba(37,99,235,.35)]'
+                      : 'border border-slate-200/90 bg-surface text-muted hover:border-primary/40 hover:text-primary dark:border-white/[.07]',
+                  )}
+                >
+                  {label}
+                  <span
+                    className={cn(
+                      'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
+                      on ? 'bg-white/25' : 'bg-slate-100 text-muted dark:bg-white/[.08]',
+                    )}
+                  >
+                    {loanTypeCounts[val] ?? 0}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {listFilter === 'history' ? (
           <AgentActivityPanel
             agentUserId={user.id}
@@ -333,16 +381,25 @@ export function CollectionsAgentView() {
         ) : loans.length === 0 ? (
           <div className="rounded-card border border-slate-200/90 bg-surface px-6 py-16 text-center shadow-card dark:border-white/[.07]">
             <p className="font-display text-lg font-bold text-ink">
-              {listFilter === 'pending' ? 'No pending submissions' : 'No matches'}
+              {listFilter === 'pending' ? 'No pending submissions' : loanTypeFilter !== 'ALL' ? 'No assignments for this loan type' : 'No matches'}
             </p>
             <p className="mt-2 text-[13px] text-muted">
               {listFilter === 'pending'
                 ? 'Collections waiting for admin approval. UPI screenshots are reviewed separately under Portal proofs.'
-                : 'Try another search term.'}
+                : loanTypeFilter !== 'ALL'
+                  ? 'Try another loan type or clear your search.'
+                  : 'Try another search term.'}
             </p>
-            {listFilter === 'pending' && (
-              <button type="button" onClick={() => setListFilter('all')} className="mt-4 text-[13px] font-semibold text-primary hover:underline">
-                View all assignments
+            {(listFilter === 'pending' || (listFilter === 'all' && loanTypeFilter !== 'ALL')) && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (listFilter === 'pending') setListFilter('all');
+                  else setLoanTypeFilter('ALL');
+                }}
+                className="mt-4 text-[13px] font-semibold text-primary hover:underline"
+              >
+                {listFilter === 'pending' ? 'View all assignments' : 'Show all loan types'}
               </button>
             )}
           </div>
@@ -355,7 +412,9 @@ export function CollectionsAgentView() {
               const due = recoveryDueNow(d, l);
               const claim = latestCollectionClaimForAgent(l.id, user.id, recovery.submissions) as CollectionClaimSubmission | undefined;
               const ptp = latestOpenPromiseForLoan(l.id, user.id, recovery.submissions) as PromiseSubmission | undefined;
-              const ptpToday = ptp && classifyPtpTiming(ptp.promiseDate) === 'TODAY' ? ptp : undefined;
+              const ptpTiming = ptp ? classifyPtpTiming(ptp.promiseDate) : null;
+              const ptpToday =
+                ptp && (ptpTiming === 'TODAY' || ptpTiming === 'UPCOMING') ? ptp : undefined;
               const nd = d.nextDueFor(l);
               const today = todayISO();
               const scheduleOverdue = !!nd && nd < today;
@@ -420,14 +479,22 @@ export function CollectionsAgentView() {
           statementOnly
         />
       )}
-      {ptpLoan && (
+      {ptpLoan && (() => {
+        const existingOpen = latestOpenPromiseForLoan(
+          ptpLoan.id,
+          user.id,
+          recovery.submissions,
+        ) as PromiseSubmission | undefined;
+        return (
         <PromiseToPayDialog
           open
           onClose={() => setPtpLoan(null)}
           loan={ptpLoan}
           customerName={d.customers.find((c) => c.id === ptpLoan.customerId)?.name ?? '—'}
+          existingOpen={existingOpen}
           onSubmit={async (p) => {
             const c = d.customers.find((x) => x.id === ptpLoan.customerId);
+            const hadOpen = Boolean(existingOpen);
             const err = await recovery.submitPromise({
               agentUserId: user.id,
               agentName: user.fullName || user.username,
@@ -438,12 +505,13 @@ export function CollectionsAgentView() {
             });
             if (err) {
               toast(`Promise not saved: ${err}`, 'error');
-              return;
+              throw new Error(err);
             }
-            toast('Promise date saved', 'success');
+            toast(hadOpen ? 'Promise updated' : 'Promise date saved', 'success');
           }}
         />
-      )}
+        );
+      })()}
     </div>
   );
 }

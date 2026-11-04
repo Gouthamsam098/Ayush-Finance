@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { Loan } from '@/mock/DataContext';
+import type { PromiseSubmission } from '../types';
 import { todayISO } from '@/lib/format';
 import { CalendarClock } from 'lucide-react';
 
@@ -11,26 +12,55 @@ interface Props {
   onClose: () => void;
   loan: Loan;
   customerName: string;
-  onSubmit: (payload: { promiseDate: string; promisedAmount?: number; note: string }) => void;
+  /** When set, saving updates this open promise instead of creating a new row. */
+  existingOpen?: PromiseSubmission;
+  onSubmit: (payload: { promiseDate: string; promisedAmount?: number; note: string }) => void | Promise<void>;
 }
 
-export function PromiseToPayDialog({ open, onClose, loan, customerName, onSubmit }: Props) {
+export function PromiseToPayDialog({ open, onClose, loan, customerName, existingOpen, onSubmit }: Props) {
   const [promiseDate, setPromiseDate] = useState(todayISO());
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const save = () => {
+  useEffect(() => {
+    if (!open) return;
+    setError(null);
+    if (existingOpen) {
+      setPromiseDate(existingOpen.promiseDate);
+      setAmount(
+        existingOpen.promisedAmount != null && existingOpen.promisedAmount > 0
+          ? String(existingOpen.promisedAmount)
+          : '',
+      );
+      setNote(existingOpen.note ?? '');
+    } else {
+      setPromiseDate(todayISO());
+      setAmount('');
+      setNote('');
+    }
+  }, [open, existingOpen?.id, existingOpen?.promiseDate, existingOpen?.promisedAmount, existingOpen?.note]);
+
+  const save = async () => {
     if (promiseDate < todayISO()) {
       setError('Promise date cannot be in the past');
       return;
     }
-    onSubmit({
-      promiseDate,
-      promisedAmount: amount ? Number(amount) : undefined,
-      note: note.trim(),
-    });
-    onClose();
+    setSaving(true);
+    setError(null);
+    try {
+      await onSubmit({
+        promiseDate,
+        promisedAmount: amount.trim() ? Number(amount) : undefined,
+        note: note.trim(),
+      });
+      onClose();
+    } catch {
+      setError('Could not save promise. Try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -41,14 +71,18 @@ export function PromiseToPayDialog({ open, onClose, loan, customerName, onSubmit
       subtitle={`${customerName} · ${loan.loanNumber}`}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save}><CalendarClock size={15} /> Save promise</Button>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={() => void save()} disabled={saving}>
+            <CalendarClock size={15} /> {existingOpen ? 'Update promise' : 'Save promise'}
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
         <p className="text-[13px] text-muted">
-          Record the date the customer committed to pay. Admin will see this on the recovery queue.
+          {existingOpen
+            ? 'Change the promise date, amount, or note. This updates your existing open promise — a second promise is not created.'
+            : 'Record the date the customer committed to pay. Admin will see this on the recovery queue.'}
         </p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input label="Promise date *" type="date" min={todayISO()} value={promiseDate} onChange={(e) => setPromiseDate(e.target.value)} />

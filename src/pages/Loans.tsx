@@ -447,8 +447,6 @@ export default function Loans() {
     overdue: activeLoans.filter((l) => { const dd = dueInDaysOf(l); return dd != null && dd < 0; }).length,
     soon: activeLoans.filter((l) => { if (!countsForSoon(l)) return false; const dd = dueInDaysOf(l); return dd != null && dd >= 0 && dd <= 3; }).length,
     dueToday: activeLoans.filter((l) => dueInDaysOf(l) === 0).length,
-    deduction: activeLoans.reduce((s, l) => s + Math.max(0, l.principal - cashDisbursedFor(l)), 0),
-    given: activeLoans.reduce((s, l) => s + cashDisbursedFor(l), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [activeLoans, d.collections]);
 
@@ -688,12 +686,10 @@ export default function Loans() {
         </div>
 
         {portfolioTab === 'active' ? (
-        <div className="grid grid-cols-2 gap-2.5 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2.5 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
           <StatCard label="Active loans" value={String(activeStats.count)} accent="#6366f1" icon={<Layers size={16} />}
             active={urgency === 'all'} onClick={() => setUrgency('all')} />
           <StatCard label="Total outstanding" value={inr(activeStats.outstanding)} accent="#8b5cf6" icon={<Wallet size={16} />} countUp={activeStats.outstanding} />
-          <StatCard label="Deduction" value={inr(activeStats.deduction)} accent="#f59e0b" icon={<IndianRupee size={16} />} countUp={activeStats.deduction} />
-          <StatCard label="Given to borrower" value={inr(activeStats.given)} accent="#0891b2" icon={<Wallet size={16} />} countUp={activeStats.given} />
           <StatCard label="Overdue" value={String(activeStats.overdue)} accent="#ef4444" icon={<AlertTriangle size={16} />}
             active={urgency === 'overdue'} onClick={() => setUrgency('overdue')} />
           <StatCard label="Due today" value={String(activeStats.dueToday)} accent="#0ea5e9" icon={<CalendarClock size={16} />}

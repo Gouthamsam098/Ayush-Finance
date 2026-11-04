@@ -9,6 +9,7 @@ import {
   addSubmission,
   getAssignedLoanIds,
   listSubmissions,
+  openPromisesForLoanAgent,
   setAssignedLoanIds,
   updateSubmission,
   clearAssignmentsForUser,
@@ -34,6 +35,7 @@ import { ApiError } from '@/lib/api';
 import { COLLECTIONS_CHANGED_EVENT } from '@/lib/dataEvents';
 import { rememberClaimUpi, rememberCollectionUpi, upiSnapshotFromClaim, enrichCollectionClaim } from '@/lib/recoveryClaimUpi';
 import { setPromiseStatusOverlay } from '@/lib/recoveryPtpOverlay';
+import { clearPromiseLocalPatch, setPromiseLocalPatch } from '@/lib/recoveryPtpLocalPatch';
 import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
 
 interface RecoveryContextValue {
@@ -272,9 +274,54 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     promisedAmount?: number;
     note?: string;
   }): Promise<string | null> => {
+    const note = input.note ?? '';
+    const patch = {
+      promiseDate: input.promiseDate,
+      promisedAmount: input.promisedAmount,
+      note,
+      customerName: input.customerName,
+      loanNumber: input.loanNumber,
+      agentName: input.agentName,
+    };
+
+    const cancelOpenPromise = (row: PromiseSubmission) => {
+      const closedAt = new Date().toISOString();
+      clearPromiseLocalPatch(row.id);
+      if (config.useApi) {
+        setPromiseStatusOverlay(row.id, 'CANCELLED');
+        upsertCachedSubmission({ ...row, status: 'CANCELLED', reviewedAt: closedAt });
+        return;
+      }
+      updateSubmission(row.id, { status: 'CANCELLED', reviewedAt: closedAt } as Partial<PromiseSubmission>);
+    };
+
+    const openRows = openPromisesForLoanAgent(input.loanId, input.agentUserId);
+    const latestOpen = openRows[0];
+
+    if (latestOpen) {
+      for (const dup of openRows.slice(1)) {
+        cancelOpenPromise(dup);
+      }
+      if (config.useApi) {
+        setPromiseLocalPatch(latestOpen.id, {
+          promiseDate: input.promiseDate,
+          promisedAmount: input.promisedAmount,
+          note,
+        });
+      }
+      updateSubmission(latestOpen.id, patch);
+      refresh();
+      return null;
+    }
+
     if (config.useApi) {
       try {
-        upsertCachedSubmission(await recoveryApi.submitPromise(input));
+        upsertCachedSubmission(await recoveryApi.submitPromise({
+          loanId: input.loanId,
+          promiseDate: input.promiseDate,
+          promisedAmount: input.promisedAmount,
+          note,
+        }));
         refresh();
         return null;
       } catch (e) {
@@ -292,7 +339,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
       loanNumber: input.loanNumber,
       promiseDate: input.promiseDate,
       promisedAmount: input.promisedAmount,
-      note: input.note,
+      note,
       createdAt: new Date().toISOString(),
     };
     addSubmission(row);
@@ -454,6 +501,7 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     if (!row || row.type !== 'PROMISE_TO_PAY') return 'Promise not found.';
     if (row.agentUserId !== agentUserId) return 'You can only close your own promises.';
     if (row.status !== 'OPEN' && !config.useApi) return 'This promise is already closed.';
+    clearPromiseLocalPatch(id);
     if (config.useApi) {
       setPromiseStatusOverlay(id, status);
       const closed = { ...row, status, reviewedAt: new Date().toISOString() } as PromiseSubmission;

@@ -1,5 +1,6 @@
 import type { PromiseSubmission, RecoverySubmission } from './types';
 import { isActiveOpenPromise } from '@/lib/recoveryPtp';
+import { applySubmissionLocalPatches } from '@/lib/recoveryPtpLocalPatch';
 import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
 import { listMockUsers } from '@/lib/mockUsers';
@@ -164,6 +165,7 @@ export function upsertCachedSubmission(row: RecoverySubmission, replaceId?: stri
   remote.submissions = idx >= 0
     ? remote.submissions.map((s, i) => (i === idx ? row : s))
     : [row, ...remote.submissions];
+  sortedSubmissions = { source: undefined, rows: [] };
   notifySubmissionsChanged();
 }
 
@@ -274,7 +276,7 @@ export function replaceAssignmentsMap(map: AssignmentsMap) {
   writeAssignments(map);
 }
 
-function readSubmissions(): RecoverySubmission[] {
+function readSubmissionsRaw(): RecoverySubmission[] {
   if (config.useApi) return remote.submissions;
   try {
     const raw = localStorage.getItem(SUB_KEY);
@@ -284,9 +286,14 @@ function readSubmissions(): RecoverySubmission[] {
   }
 }
 
+function readSubmissions(): RecoverySubmission[] {
+  return readSubmissionsRaw().map(applySubmissionLocalPatches);
+}
+
 function writeSubmissions(rows: RecoverySubmission[]) {
   if (config.useApi) return; // API mode writes go through RecoveryContext → recoveryApi
   localStorage.setItem(SUB_KEY, JSON.stringify(rows));
+  sortedSubmissions = { source: undefined, rows: [] };
 }
 
 export function readAssignmentsMap(): AssignmentsMap {
@@ -399,9 +406,10 @@ export function updateSubmission(id: string, patch: Partial<RecoverySubmission>)
   if (config.useApi) {
     const cur = remote.submissions.find((s) => s.id === id);
     if (cur) upsertCachedSubmission({ ...cur, ...patch } as RecoverySubmission);
+    else sortedSubmissions = { source: undefined, rows: [] };
     return;
   }
-  writeSubmissions(readSubmissions().map((s) => (s.id === id ? { ...s, ...patch } as RecoverySubmission : s)));
+  writeSubmissions(readSubmissionsRaw().map((s) => (s.id === id ? { ...s, ...patch } as RecoverySubmission : s)));
   notifySubmissionsChanged();
 }
 
@@ -428,19 +436,38 @@ export function latestCollectionClaimForAgent(
   return rows.reduce((latest, s) => (s.createdAt >= latest.createdAt ? s : latest));
 }
 
+/** Open promises for one loan + agent, newest first. */
+export function openPromisesForLoanAgent(
+  loanId: number,
+  agentUserId: number,
+  submissions?: RecoverySubmission[],
+): PromiseSubmission[] {
+  return (submissions ?? readSubmissions())
+    .filter(
+      (s): s is PromiseSubmission =>
+        s.loanId === loanId
+        && s.agentUserId === agentUserId
+        && s.type === 'PROMISE_TO_PAY'
+        && isActiveOpenPromise(s),
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+}
+
 /** Open promise-to-pay for this loan (latest), optionally scoped to one agent. */
 export function latestOpenPromiseForLoan(
   loanId: number,
   agentUserId?: number,
   submissions?: RecoverySubmission[],
 ): RecoverySubmission | undefined {
+  if (agentUserId != null) {
+    return openPromisesForLoanAgent(loanId, agentUserId, submissions)[0];
+  }
   const rows = (submissions ?? readSubmissions()).filter(
     (s): s is PromiseSubmission =>
       s.loanId === loanId && s.type === 'PROMISE_TO_PAY' && isActiveOpenPromise(s as PromiseSubmission),
   );
-  const scoped = agentUserId != null ? rows.filter((s) => s.agentUserId === agentUserId) : rows;
-  if (scoped.length === 0) return undefined;
-  return scoped.reduce((latest, s) => (s.createdAt >= latest.createdAt ? s : latest));
+  if (rows.length === 0) return undefined;
+  return rows.reduce((latest, s) => (s.createdAt >= latest.createdAt ? s : latest));
 }
 
 /** Open promises for one agent (active OPEN, not manually closed). */
