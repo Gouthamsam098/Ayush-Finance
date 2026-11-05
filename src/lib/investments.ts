@@ -13,6 +13,7 @@
  * register and its payout history live here.
  */
 
+import { useEffect, useState } from 'react';
 import { todayISO, addMonths, isoLocal } from '@/lib/format';
 
 /** Interest cadence. 'MONTHLY' accrues every calendar month, 'YEARLY' annually. */
@@ -205,8 +206,32 @@ export const saveInvestments = (rows: Investment[]) => write(INV_KEY, rows);
  */
 const CAPITAL_CACHE_KEY = 'anush.investorCapital.v1';
 
+/** Fired when the cached capital changes. The funds memos on the Dashboard and
+ *  Loans read the cache synchronously and otherwise recompute only when loans,
+ *  collections or expenses change — so capital that arrived after them left
+ *  Investments and Available Funds at ₹0 (and the lending guard on a stale
+ *  figure) until something else moved. */
+export const INVESTOR_CAPITAL_CHANGED_EVENT = 'anush:investor-capital-changed';
+
 export function cacheInvestorCapital(total: number): void {
-  try { localStorage.setItem(CAPITAL_CACHE_KEY, String(total)); } catch { /* quota */ }
+  let previous: string | null = null;
+  try {
+    previous = localStorage.getItem(CAPITAL_CACHE_KEY);
+    localStorage.setItem(CAPITAL_CACHE_KEY, String(total));
+  } catch { /* quota */ }
+  if (previous !== String(total)) window.dispatchEvent(new Event(INVESTOR_CAPITAL_CHANGED_EVENT));
+}
+
+/** A counter that ticks whenever the cached capital changes — add it to the
+ *  deps of any memo that calls computeFunds / activeInvestorCapital. */
+export function useInvestorCapitalVersion(): number {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setVersion((v) => v + 1);
+    window.addEventListener(INVESTOR_CAPITAL_CHANGED_EVENT, bump);
+    return () => window.removeEventListener(INVESTOR_CAPITAL_CHANGED_EVENT, bump);
+  }, []);
+  return version;
 }
 
 /** Active investor capital: the API-mode cache when present, else the local

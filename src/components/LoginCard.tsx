@@ -36,10 +36,10 @@ export default function LoginCard({ onSubmit, loading = false, error = null, emb
               className="mt-6"
             >
               <h1 className="font-display text-xl font-bold tracking-tight text-slate-50">
-                Welcome back
+                {mode === 'forgot' ? 'Reset your password' : 'Welcome back'}
               </h1>
               <p className="mt-1 text-sm text-slate-400">
-                Sign in to manage your loan portfolio
+                {mode === 'forgot' ? 'Set a new password for your account' : 'Sign in to manage your loan portfolio'}
               </p>
             </motion.div>
           </div>

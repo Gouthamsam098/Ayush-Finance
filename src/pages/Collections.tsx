@@ -201,6 +201,12 @@ export default function Collections() {
     };
   }, [d]);
 
+  // Hooks run before any early return (rules of hooks): same order every render.
+  const recoveryAgentByLoan = useMemo(
+    () => (recoveryDemo ? recoveryAgentNameByLoanId() : {}),
+    [recoveryDemo, recovery.assignmentVersion],
+  );
+
   if (authUser?.role === 'CUSTOMER') {
     return <Navigate to="/portal" replace />;
   }
@@ -208,11 +214,6 @@ export default function Collections() {
   if (authUser?.role === 'RECOVERY_AGENT') {
     return <CollectionsAgentView />;
   }
-
-  const recoveryAgentByLoan = useMemo(
-    () => (recoveryDemo ? recoveryAgentNameByLoanId() : {}),
-    [recoveryDemo, recovery.assignmentVersion],
-  );
 
   return (
     <div className="flex min-h-full min-w-0 w-full flex-col">
@@ -505,12 +506,17 @@ function CollectionCard({
       />
 
       <div className="relative flex items-start gap-3 px-4 pb-2 pt-4 sm:px-5 sm:pt-5">
+        {/* The whole header opens the ledger: a button layered behind the
+            content (which lets clicks through), so the "Portal proof" pill can
+            be its own button without nesting buttons (invalid HTML). */}
+        <div className="relative flex min-w-0 flex-1 items-start gap-3 text-left sm:gap-4">
         <button
           type="button"
           onClick={onView}
           aria-label={`Open collection ledger for ${cust?.name ?? 'customer'} · ${loan.loanNumber}`}
-          className="flex min-w-0 flex-1 touch-manipulation items-start gap-3 text-left transition-colors sm:gap-4"
-        >
+          className="absolute inset-0 z-0 touch-manipulation rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+        />
+        <div className="pointer-events-none relative z-10 flex min-w-0 flex-1 items-start gap-3 sm:gap-4">
           <CustomerAvatar
             customerId={cust?.id}
             name={cust?.name ?? '—'}
@@ -541,7 +547,7 @@ function CollectionCard({
                   e.stopPropagation();
                   onOpenPortalProofs();
                 }}
-                className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full bg-violet-500/12 px-2 py-0.5 text-[10px] font-semibold text-violet-800 ring-1 ring-violet-400/25 transition-colors hover:bg-violet-500/20 dark:text-violet-200 sm:mt-2 sm:px-2.5 sm:py-1 sm:text-[11px]"
+                className="pointer-events-auto mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full bg-violet-500/12 px-2 py-0.5 text-[10px] font-semibold text-violet-800 ring-1 ring-violet-400/25 transition-colors hover:bg-violet-500/20 dark:text-violet-200 sm:mt-2 sm:px-2.5 sm:py-1 sm:text-[11px]"
               >
                 <ImageIcon size={12} className="shrink-0" aria-hidden />
                 <span className="truncate">
@@ -589,7 +595,8 @@ function CollectionCard({
               </div>
             )}
           </div>
-        </button>
+        </div>
+        </div>
         <button
           type="button"
           onClick={() => setDetailsOpen((o) => !o)}

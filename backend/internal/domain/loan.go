@@ -205,18 +205,28 @@ func (l *Loan) cycleDays() int {
 // Interest-accruing loans (Daily/Monthly Interest and Flexible) use the interest
 // bucket and their accrual cadence. A CLOSED or fully-collected loan has no next
 // due (nil).
-func (l *Loan) NextDue(c Collected) *time.Time {
+//
+// Mirrors the frontend's nextDueFor exactly (CLAUDE.md lock-step rule):
+//   - Funded instalments/cycles are CAPPED at what has fallen due by `now`, so
+//     money paid ahead cannot push the next due past slots still unpaid — a loan
+//     in arrears must keep reading overdue.
+//   - Monthly cadences (Monthly Interest, monthly-mode Vehicle/Property, EMI)
+//     step by CALENDAR month, the same cycles they accrue on; Daily Collection,
+//     Daily Interest and Flexible step by days.
+//
+// It feeds the latest recordable payment date and the API's next_due_date (the
+// sidebar overdue badge reads it), so drift from the frontend showed up as a
+// badge disagreeing with the dashboard and a date window disagreeing with the form.
+func (l *Loan) NextDue(c Collected, now time.Time) *time.Time {
 	if l.Status == StatusClosed {
 		return nil
 	}
 	switch {
 	case l.behavesInterestOnly():
-		// Interest accrues per cadence period (1-day / 30-day / Flexible NumDays;
-		// a monthly-mode Vehicle/Property uses 30-day). The next due is the first
-		// not-fully-paid period. Daily/Monthly Interest (and monthly-mode EMI)
-		// charge cycle k at loanDate + k·cadence (first due at +cadence). Flexible
-		// charges the first cycle on the loan date itself, so its cycles are one
-		// step earlier: with `paid` funded, the next falls at loanDate + paid·cadence.
+		// The next due is the first not-fully-paid period. Daily/Monthly Interest
+		// (and monthly-mode Vehicle/Property) charge cycle k at loanDate + k
+		// periods (first due one period in). Flexible charges the first cycle on
+		// the loan date itself, so with `paid` funded the next falls at paid periods.
 		perPeriod := l.Interest
 		if l.DailyAmount != nil {
 			perPeriod = *l.DailyAmount
@@ -225,28 +235,51 @@ func (l *Loan) NextDue(c Collected) *time.Time {
 			return l.NextDueDate
 		}
 		paid := int(int64(c.Interest) / int64(perPeriod))
+		accrued := l.interestPeriodsElapsed(l.interestAccrualEnd(c, now))
+		if paid > accrued {
+			paid = accrued
+		}
+		if paid >= accrued && l.RemainingPrincipal(c.Principal) == 0 {
+			return nil // principal repaid and every accrued period paid: nothing further falls due
+		}
 		step := paid + 1
 		if l.Type == LoanFlexible {
 			step = paid // first cycle due on the loan date (day 0)
 		}
-		t := addDaysT(l.LoanDate, step*l.interestCadenceDays())
+		var t time.Time
+		if l.Type != LoanFlexible && l.Type != LoanDailyInterest {
+			t = addMonthsClamped(truncateToDay(l.LoanDate), step)
+		} else {
+			t = addDaysT(l.LoanDate, step*l.interestCadenceDays())
+		}
 		return &t
 
 	default:
-		// Instalment (Daily Collection) / EMI (Vehicle, Property): instalment N
-		// is due at loanDate + N·step.
+		// Instalment (Daily Collection): instalment N due at loanDate + N days.
+		// EMI (Vehicle, Property): instalment N due N calendar months in.
 		if l.DailyAmount == nil || *l.DailyAmount <= 0 {
 			return l.NextDueDate
 		}
-		paid := int64(c.Total()) / int64(*l.DailyAmount)
-		if l.NumDays != nil && paid >= int64(*l.NumDays) {
+		funded := int64(c.Total()) / int64(*l.DailyAmount)
+		if l.NumDays != nil && funded >= int64(*l.NumDays) {
 			return nil // every instalment collected — nothing further falls due
 		}
-		step := 1
+		var fallenDue int64
 		if l.Type.IsEmiLoan() {
-			step = standardCycleDays
+			fallenDue = int64(CalendarCyclesElapsed(l.LoanDate, now))
+		} else if d := ElapsedDaysSinceLoan(l.LoanDate, now) - 1; d > 0 {
+			fallenDue = int64(d)
 		}
-		t := addDaysT(l.LoanDate, int(paid+1)*step)
+		paid := funded
+		if paid > fallenDue {
+			paid = fallenDue
+		}
+		var t time.Time
+		if l.Type.IsEmiLoan() {
+			t = addMonthsClamped(truncateToDay(l.LoanDate), int(paid+1))
+		} else {
+			t = addDaysT(l.LoanDate, int(paid+1))
+		}
 		return &t
 	}
 }
@@ -374,33 +407,38 @@ func (l *Loan) TotalDueForMonthly(collected Paise, now time.Time) Paise {
 // settled) × interest per period. Interest per period is DailyAmount, falling
 // back to Interest for legacy rows.
 func (l *Loan) AccruedInterest(now time.Time) Paise {
+	perPeriod := l.Interest
+	if l.DailyAmount != nil {
+		perPeriod = *l.DailyAmount
+	}
+	return perPeriod.MulInt(int64(l.interestPeriodsElapsed(now)))
+}
+
+// interestPeriodsElapsed is the number of interest periods accrued by `now` on
+// an interest-only loan. Mirrors the frontend's interestPeriodsElapsed.
+func (l *Loan) interestPeriodsElapsed(now time.Time) int {
 	cadence := l.interestCadenceDays()
-	var periods int
 	switch {
 	case l.Type == LoanFlexible:
 		// Flexible charges the FIRST cycle's interest on the loan date itself
 		// (interest starts same day), then one more each NumDays. So the count is
 		// completed cycles + 1: day 0 → 1 cycle, day N → 2, day 2N → 3, …
-		periods = MonthlyCyclesElapsed(l.LoanDate, now, cadence) + 1
+		return MonthlyCyclesElapsed(l.LoanDate, now, cadence) + 1
 	case cadence == 1:
 		// Daily Interest accrues from the DAY AFTER disbursement: 0 on the loan
 		// date, 1 the next day. ElapsedDaysSinceLoan counts Day 1 = loan date, so
 		// subtract one (matching how Daily Collection's schedule starts next day).
-		periods = ElapsedDaysSinceLoan(l.LoanDate, now) - 1
+		periods := ElapsedDaysSinceLoan(l.LoanDate, now) - 1
 		if periods < 0 {
 			periods = 0
 		}
+		return periods
 	default:
 		// Monthly Interest (and monthly-mode Vehicle/Property): completed CALENDAR
 		// months; interest falls due on the same day-of-month each month, matching
 		// NextDue and the frontend's calendarCyclesElapsed.
-		periods = CalendarCyclesElapsed(l.LoanDate, now)
+		return CalendarCyclesElapsed(l.LoanDate, now)
 	}
-	perPeriod := l.Interest
-	if l.DailyAmount != nil {
-		perPeriod = *l.DailyAmount
-	}
-	return perPeriod.MulInt(int64(periods))
 }
 
 // InterestPerPeriod is the interest one accrual period adds on an interest-only
@@ -413,11 +451,29 @@ func (l *Loan) InterestPerPeriod() Paise {
 	return l.Interest
 }
 
+// interestAccrualEnd is the last day interest accrues on an interest-only loan:
+// `now`, or the day the principal was repaid in full when that is earlier.
+// Interest is the charge for holding the principal; once it is back, no further
+// period falls due. Without this cut-off a settled loan kept accruing on a zero
+// principal, so a later edit or delete of any of its payments re-evaluated it
+// against interest that was never owed, reopened it with phantom arrears and
+// put it in the recovery queue.
+func (l *Loan) interestAccrualEnd(c Collected, now time.Time) time.Time {
+	if c.PrincipalRepaidOn == nil || l.RemainingPrincipal(c.Principal) > 0 {
+		return now
+	}
+	if end := truncateToDay(*c.PrincipalRepaidOn); end.Before(truncateToDay(now)) {
+		return end
+	}
+	return now
+}
+
 // TotalDueForInterestOnly is the accrued-but-unpaid INTEREST for an
-// interest-only loan: accruedInterest − interestPaid. Principal repayments do
-// not reduce this (they settle the principal, tracked separately).
-func (l *Loan) TotalDueForInterestOnly(interestPaid Paise, now time.Time) Paise {
-	return l.AccruedInterest(now).Sub(interestPaid)
+// interest-only loan: interest accrued up to interestAccrualEnd − interest paid.
+// Principal repayments do not reduce this (they settle the principal, tracked
+// separately); repaying it in full only stops further accrual.
+func (l *Loan) TotalDueForInterestOnly(c Collected, now time.Time) Paise {
+	return l.AccruedInterest(l.interestAccrualEnd(c, now)).Sub(c.Interest)
 }
 
 // RemainingPrincipal is the principal still owed on an interest-only loan:
@@ -460,7 +516,7 @@ func (l *Loan) Outstanding(c Collected, now time.Time) Paise {
 	}
 	// Remaining principal (settled via PRINCIPAL payments) plus any
 	// accrued-but-unpaid interest. Interest payments never touch principal.
-	interestDue := l.TotalDueForInterestOnly(c.Interest, now)
+	interestDue := l.TotalDueForInterestOnly(c, now)
 	if interestDue < 0 {
 		interestDue = 0 // paid ahead; surplus interest is not a credit
 	}

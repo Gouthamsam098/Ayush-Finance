@@ -1,6 +1,37 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// Idempotency keys the server mints for approvals: "claim-<id>-<n>" (agent
+// claims) and "proof-<id>-<n>" (portal payment proofs). A client must never be
+// able to send one — an insider could pre-plant a ₹1 payment under
+// "claim-77-1", and approving claim 77 would then "replay" that row instead of
+// recording the real amount.
+var reservedIdempotencyPrefixes = []string{"claim-", "proof-"}
+
+// IsReservedIdempotencyKey reports whether a client-supplied key collides with
+// the server's own approval keys (case-insensitive).
+func IsReservedIdempotencyKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, p := range reservedIdempotencyPrefixes {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// SameMoneyAs reports whether a stored payment is the one `in` describes —
+// same amount, kind and receipt day. A replayed Idempotency-Key must carry the
+// payment it was first used for; anything else is refused, never silently
+// answered with the old row.
+func (c *Collection) SameMoneyAs(in CollectionInput) bool {
+	return c.Amount == in.Amount && c.Kind == in.Kind &&
+		c.Date.Format("2006-01-02") == in.Date.Format("2006-01-02")
+}
 
 // PayMode is how a collection was paid. The DB enforces the same set
 // (collections_mode_valid CHECK).
@@ -64,8 +95,12 @@ type Collection struct {
 	CollectorType   *string
 	CollectorName   *string
 	CollectorUserID *int64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// The UPI ID a UPI payment was received at, when known (an approved agent
+	// UPI claim, stamped by the server from Settings). Display only.
+	PayeeVPA  *string
+	PayeeName *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Collected is the split of a loan's recorded collections. Interest and
@@ -75,6 +110,11 @@ type Collection struct {
 type Collected struct {
 	Interest  Paise
 	Principal Paise
+	// PrincipalRepaidOn is the receipt date of the PRINCIPAL payment that
+	// brought the principal repaid up to the loan's principal (payments taken in
+	// date, then id, order); nil while any principal is still owed. Interest-only
+	// loans stop accruing on this day — see Loan.interestAccrualEnd.
+	PrincipalRepaidOn *time.Time
 }
 
 // Total is the sum of both buckets — the collected figure for loan types that
@@ -155,10 +195,11 @@ func (in *CollectionInput) Validate(loan *Loan, collected Collected, now time.Ti
 		}
 	} else {
 		// Latest recordable date: the next scheduled due slot (so a daily loan may
-		// be dated tomorrow and a monthly loan its next 30-day cycle date), or
-		// today + clock-skew tolerance — whichever is later.
+		// be dated tomorrow and a monthly loan its next calendar-month due date),
+		// or today + clock-skew tolerance — whichever is later. Same rule as the
+		// payment form's maxPaymentDate.
 		latest := truncateToDay(now).AddDate(0, 0, clockSkewToleranceDays)
-		if nd := loan.NextDue(collected); nd != nil && truncateToDay(*nd).After(latest) {
+		if nd := loan.NextDue(collected, now); nd != nil && truncateToDay(*nd).After(latest) {
 			latest = truncateToDay(*nd)
 		}
 		if truncateToDay(in.Date).After(latest) {
@@ -192,7 +233,7 @@ func (in *CollectionInput) Validate(loan *Loan, collected Collected, now time.Ti
 			if room <= 0 {
 				fields["amount"] = "This loan is already fully repaid"
 			} else {
-				fields["amount"] = "Amount exceeds the outstanding balance of " + room.String()
+				fields["amount"] = "Amount exceeds the outstanding balance of " + room.INR()
 			}
 		}
 	}

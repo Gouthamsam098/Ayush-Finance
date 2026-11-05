@@ -59,10 +59,11 @@ export const cadenceDaysForLoan = (loan: Loan) =>
  *  loan interest = principal × rate/100 (once, not per month). */
 export const emiFor = (principal: number, interest: number, months: number) =>
   months > 0 ? Math.round((principal + interest) / months) : 0;
-/** Calendar days elapsed since the loan date, Day 1 = loan date, uncapped. */
-export const elapsedDaysSinceLoan = (loanDate: string) => {
+/** Calendar days elapsed since the loan date, Day 1 = loan date, uncapped.
+ *  `asOf` (default today) lets accrual stop at an earlier day. */
+export const elapsedDaysSinceLoan = (loanDate: string, asOf: string = todayISO()) => {
   const [ly, lm, ld] = loanDate.split('-').map(Number);
-  const [ty, tm, td] = todayISO().split('-').map(Number);
+  const [ty, tm, td] = asOf.split('-').map(Number);
   const start = new Date(ly, lm - 1, ld);
   const today = new Date(ty, tm - 1, td);
   return Math.max(0, Math.round((today.getTime() - start.getTime()) / 86400000) + 1);
@@ -72,8 +73,8 @@ export const elapsedDaysSinceLoan = (loanDate: string) => {
  *  counts from its due day — never a day early: day 30 = 0, day 31 = 1,
  *  day 60 = 1, day 61 = 2. Keeps accrual in lock-step with the ledger's cycle
  *  rows and nextDue (previously a cycle accrued one day before it was due). */
-export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30) =>
-  Math.floor(Math.max(0, elapsedDaysSinceLoan(loanDate) - 1) / cycleDays);
+export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30, asOf: string = todayISO()) =>
+  Math.floor(Math.max(0, elapsedDaysSinceLoan(loanDate, asOf) - 1) / cycleDays);
 /** Number of CALENDAR-MONTH cycles fallen due since the loan date: cycle k is
  *  due on the same day-of-month, k months on (addMonths clamps a 29th/30th/31st
  *  to the last day of a short month). Counts from the due day, never a day
@@ -87,12 +88,39 @@ export const monthlyCyclesElapsed = (loanDate: string, cycleDays = 30) =>
  *  Used ONLY for monthly-cadence interest and EMI counting. Daily loans and
  *  Flexible (whose cycle is its own numDays, not a month) keep the day-count
  *  helper above. */
-export const calendarCyclesElapsed = (loanDate: string) => {
-  const today = todayISO();
+export const calendarCyclesElapsed = (loanDate: string, asOf: string = todayISO()) => {
   let k = 0;
   // Loans run for years, not centuries; the guard just bounds the loop.
-  while (k < 1200 && addMonths(loanDate, k + 1, 0) <= today) k += 1;
+  while (k < 1200 && addMonths(loanDate, k + 1, 0) <= asOf) k += 1;
   return k;
+};
+/** Interest periods accrued on an interest-only loan by `asOf` (mirrors the
+ *  backend's Loan.interestPeriodsElapsed):
+ *   • Daily Interest: from the DAY AFTER disbursement (elapsed − 1).
+ *   • Flexible: FIRST cycle on the loan date itself → completed cycles + 1.
+ *   • Monthly Interest & monthly-mode Vehicle/Property: calendar months. */
+const interestPeriodsAsOf = (loan: Loan, asOf: string) => {
+  const cadence = cadenceDaysForLoan(loan);
+  if (loan.type === 'FLEXIBLE') return monthlyCyclesElapsed(loan.loanDate, cadence, asOf) + 1;
+  if (cadence === 1) return Math.max(0, elapsedDaysSinceLoan(loan.loanDate, asOf) - 1);
+  return calendarCyclesElapsed(loan.loanDate, asOf);
+};
+type PrincipalRow = { date: string; id: number; amount: number };
+/** Last day interest accrues on an interest-only loan (mirrors the backend's
+ *  Loan.interestAccrualEnd): today, or the day the principal was repaid in full
+ *  when that is earlier — the PRINCIPAL payment (date, then id order) whose
+ *  running total first reaches the principal. Once the principal is back no
+ *  further period falls due; without this a settled loan kept accruing on a
+ *  zero principal, and any later payment edit reopened it with phantom arrears.
+ *  `principalRows` must be sorted by date, then id. */
+const interestAccrualEnd = (loan: Loan, principalRows: readonly PrincipalRow[]) => {
+  const today = todayISO();
+  let running = 0;
+  for (const p of principalRows) {
+    running += p.amount;
+    if (running >= loan.principal) return p.date < today ? p.date : today;
+  }
+  return today;
 };
 /** Cycle length: Flexible uses its own chosen term, everything else a fixed 30-day cycle. */
 export const cycleDaysFor = (loan: Loan) => (loan.type === 'FLEXIBLE' ? loan.numDays ?? 30 : 30);
@@ -191,14 +219,16 @@ interface DataShape {
   updateCustomer: (id: number, c: Partial<Customer>) => void;
   /** `customerCode` disambiguates when legacy data reused the same numeric id twice. */
   deleteCustomer: (id: number, customerCode?: string) => void | Promise<void>;
-  addLoan: (l: Omit<Loan, 'id' | 'loanNumber' | 'interest' | 'status'>) => void;
+  addLoan: (l: Omit<Loan, 'id' | 'loanNumber' | 'interest' | 'status'>) => Promise<void> | void;
   /** Prepend an authoritative loan record (from the API) without a second call. */
   addLoanRecord: (l: Loan) => void;
   /** Replace an existing loan with an authoritative record (from the API). */
   updateLoanRecord: (l: Loan) => void;
-  updateLoan: (id: number, l: Partial<Loan>) => void;
-  deleteLoan: (id: number) => void;
-  closeLoan: (id: number) => void;
+  // API mode returns the request's promise so callers can await it and report
+  // a failure instead of a false success.
+  updateLoan: (id: number, l: Partial<Loan>) => Promise<void> | void;
+  deleteLoan: (id: number) => Promise<void> | void;
+  closeLoan: (id: number) => Promise<void> | void;
   addCollection: (c: Omit<Collection, 'id' | 'receiptNo'>) => Promise<Collection> | Collection;
   updateCollection: (id: number, c: Partial<Collection>) => Promise<void> | void;
   deleteCollection: (id: number) => Promise<void> | void;
@@ -223,10 +253,17 @@ interface DataShape {
   totalDueForDaily: (loan: Loan) => number;
   totalDueForMonthly: (loan: Loan) => number;
   totalDueForInterestOnly: (loan: Loan) => number;
+  /** Last day an interest-only loan accrues interest: today, or the day its
+   *  principal was repaid in full if earlier (YYYY-MM-DD). */
+  interestAccrualEndFor: (loan: Loan) => string;
   outstandingFor: (loan: Loan) => number;
   nextDueForDaily: (loan: Loan) => string | null;
   /** Amount-based live next-due for ANY loan type (mirrors backend Loan.NextDue). */
   nextDueFor: (loan: Loan) => string | null;
+  /** Set when the book could not be loaded from the server (API mode): every
+   *  total on screen would be incomplete, so the shell shows it with Retry. */
+  loadError: string | null;
+  retryLoad: () => void;
 }
 const DataCtx = createContext<DataShape | null>(null);
 export const useData = () => {
@@ -304,6 +341,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Bumped when money is recorded server-side outside DataContext (a portal
   // payment proof accepted), so the book below is refetched.
   const [serverSyncTick, setServerSyncTick] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     if (!config.useApi) return;
     const onChanged = () => setServerSyncTick((n) => n + 1);
@@ -328,13 +366,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const sessionKey = `${sessionUserId}:${isPortalSession}:${isAgentSession}`;
     const newSession = fetchedSessionRef.current !== sessionKey;
     fetchedSessionRef.current = sessionKey;
+    // A failed load must not pass for an empty book: ₹0 KPIs and "no loans"
+    // look exactly like real data. Cleared on every (re)load attempt.
+    setLoadError(null);
+    const loadFailed = () => setLoadError('Some of your data could not be loaded, so figures on this screen may be incomplete.');
     // A borrower may read only their own record, loans and payments; every
     // staff list below would 403 for them. Load the portal scope instead.
     // A recovery agent reads only their assigned loans, those customers and
     // those payments; the staff lists below would 403 for them.
     if (isAgentSession) {
       if (newSession) { setCustomers([]); setLoans([]); setCollections([]); setExpenses([]); }
-      customerApi.agentList().then(setCustomers).catch(() => { /* agent view shows its empty state */ });
+      customerApi.agentList().then(setCustomers).catch(loadFailed);
       Promise.all([loanApi.agentList(), collectionApi.agentList()])
         .then(([loanRows, collRows]) => {
           setLoans(loanRows);
@@ -347,21 +389,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Drop anything a previous staff session left in memory on this tab
       // (only on a new session — a refetch must not blank the portal).
       if (newSession) { setCustomers([]); setLoans([]); setCollections([]); setExpenses([]); }
-      customerApi.portalProfile().then((c) => setCustomers([c])).catch(() => { /* portal shows its empty state */ });
+      customerApi.portalProfile().then((c) => setCustomers([c])).catch(loadFailed);
       Promise.all([loanApi.portalList(), collectionApi.portalList()])
         .then(([loanRows, collRows]) => {
           setLoans(loanRows);
           setCollections(collRows);
         })
-        .catch(() => { /* portal shows its empty state */ });
+        .catch(loadFailed);
       return;
     }
     // fetchAll everywhere: the plain list() calls take ONE server page (loans
     // and customers cap at 100, expenses at 500) and drop the rest silently,
     // which understates every derived total. Paging costs one extra request
     // per 100-200 rows and is the only way these stay correct as the book grows.
-    customerApi.fetchAll().then(setCustomers).catch(() => { /* surfaced per-action */ });
-    expenseApi.fetchAll().then(setExpenses).catch(() => { /* surfaced per-action */ });
+    customerApi.fetchAll().then(setCustomers).catch(loadFailed);
+    expenseApi.fetchAll().then(setExpenses).catch(loadFailed);
     // INVESTOR CAPITAL — fetched on login, not left to a page visit.
     //
     // The Dashboard and Loans pages read this figure SYNCHRONOUSLY through
@@ -391,7 +433,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setLoans(loanRows);
         setCollections(collRows.filter((c) => ids.has(c.loanId)));
       })
-      .catch(() => { /* surfaced per-action */ });
+      .catch(loadFailed);
   }, [accessToken, sessionUserId, isPortalSession, isAgentSession, serverSyncTick]);
 
   // Drop payments whose loan no longer exists (customer/loan delete, or seed
@@ -417,17 +459,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
    *  separately; a payment with no explicit kind counts as interest (the
    *  historical default), matching the previous filter predicates exactly. */
   const paidByLoan = useMemo(() => {
-    const m = new Map<number, { total: number; interest: number; principal: number }>();
+    const m = new Map<number, { total: number; interest: number; principal: number; principalRows: PrincipalRow[] }>();
     for (const c of collections) {
       let e = m.get(c.loanId);
-      if (!e) { e = { total: 0, interest: 0, principal: 0 }; m.set(c.loanId, e); }
+      if (!e) { e = { total: 0, interest: 0, principal: 0, principalRows: [] }; m.set(c.loanId, e); }
       e.total += c.amount;
-      if (c.kind === 'PRINCIPAL') e.principal += c.amount;
-      else e.interest += c.amount;
+      if (c.kind === 'PRINCIPAL') {
+        e.principal += c.amount;
+        e.principalRows.push({ date: c.date, id: c.id, amount: c.amount });
+      } else e.interest += c.amount;
+    }
+    // Receipt order (date, then id) — what interestAccrualEnd walks.
+    for (const e of m.values()) {
+      if (e.principalRows.length > 1) e.principalRows.sort((a, b) => (a.date === b.date ? a.id - b.id : a.date < b.date ? -1 : 1));
     }
     return m;
   }, [collections]);
-  const ZERO_PAID = { total: 0, interest: 0, principal: 0 };
+  const ZERO_PAID = { total: 0, interest: 0, principal: 0, principalRows: [] as PrincipalRow[] };
   const paidFor = (loanId: number) => paidByLoan.get(loanId) ?? ZERO_PAID;
 
   // Mock-mode auto-close: when a loan's outstanding reaches 0 it is marked
@@ -449,12 +497,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (isInstalmentLoan(l.type)) outstanding = Math.max(0, l.principal - totalPaid);
         else if (behavesEmi(l)) outstanding = Math.max(0, l.principal + l.interest - totalPaid);
         else if (behavesInterestOnly(l)) {
-          const cadence = cadenceDaysForLoan(l);
-          // Flexible: 1st cycle on the loan date → cycles + 1; Daily: elapsed − 1;
-          // Monthly Interest & monthly-mode Vehicle/Property: completed cycles.
-          const periods = l.type === 'FLEXIBLE' ? monthlyCyclesElapsed(l.loanDate, cadence) + 1
-            : cadence === 1 ? Math.max(0, elapsedDaysSinceLoan(l.loanDate) - 1)
-            : calendarCyclesElapsed(l.loanDate);
+          // Accrual stops the day the principal was repaid in full.
+          const periods = interestPeriodsAsOf(l, interestAccrualEnd(l, paid.principalRows));
           const interestDue = Math.max(0, periods * l.interest - interestPaid);
           outstanding = Math.max(0, l.principal - principalPaid) + interestDue;
         } else outstanding = Math.max(0, l.principal + l.interest - totalPaid);
@@ -499,16 +543,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
      *  period, less what's been collected. Interest per period is auto-computed:
      *  loan.interest = principal × rate/100 (per day for Daily Interest, per
      *  month for Monthly Interest). */
-    // Interest cycles accrued by today (mirrors backend Loan.AccruedInterest):
-    //  • Daily Interest: from the DAY AFTER disbursement (elapsed − 1).
-    //  • Monthly Interest: completed 30-day cycles.
-    //  • Flexible: FIRST cycle on the loan date itself → completed cycles + 1.
-    const interestPeriodsElapsed = (loan: Loan) => {
-      const cadence = cadenceDaysForLoan(loan);
-      if (loan.type === 'FLEXIBLE') return monthlyCyclesElapsed(loan.loanDate, cadence) + 1;
-      if (cadence === 1) return Math.max(0, elapsedDaysSinceLoan(loan.loanDate) - 1);
-      return calendarCyclesElapsed(loan.loanDate);
-    };
+    // Interest cycles accrued (mirrors backend Loan.AccruedInterest) — by today,
+    // or by the day the principal was repaid in full if earlier.
+    const interestAccrualEndFor = (loan: Loan) => interestAccrualEnd(loan, paidFor(loan.id).principalRows);
+    const interestPeriodsElapsed = (loan: Loan) => interestPeriodsAsOf(loan, interestAccrualEndFor(loan));
     const totalDueForInterestOnly = (loan: Loan) => {
       // Only interest-kind payments cover accrued interest; principal payments settle separately.
       return Math.max(0, interestPeriodsElapsed(loan) * loan.interest - interestCollectedFor(loan.id));
@@ -557,14 +595,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // that are still unpaid, so a loan in arrears reported a future due date
         // and vanished from the dashboard's overdue list. Advance money still
         // counts once its cycle accrues; it can no longer mask real arrears.
-        const paid = Math.min(
-          Math.floor(interestCollectedFor(loan.id) / per),
-          interestPeriodsElapsed(loan),
-        );
+        const accrued = interestPeriodsElapsed(loan);
+        const paid = Math.min(Math.floor(interestCollectedFor(loan.id) / per), accrued);
+        // Principal repaid and every accrued period paid: nothing further falls due.
+        if (paid >= accrued && principalCollectedFor(loan.id) >= loan.principal) return null;
         // Flexible's first cycle is due on the loan date (day 0), so its steps
         // are one earlier than Daily/Monthly Interest (first due at +cadence).
         const step = loan.type === 'FLEXIBLE' ? paid : paid + 1;
-        return loan.type === 'MONTHLY_INTEREST'
+        // Calendar months for every monthly-cadence interest-only loan — Monthly
+        // Interest AND monthly-mode Vehicle/Property — the same predicate the
+        // ledger (hasMonthlyCadence) and statement use, and the same calendar
+        // cycles interestPeriodsElapsed accrues on. Fixed 30-day steps put a
+        // monthly-mode Vehicle/Property's due a day or more BEFORE its interest
+        // accrued, so it read "1 day late" on the day it fell due.
+        return loan.type !== 'FLEXIBLE' && loan.type !== 'DAILY_INTEREST'
           ? addMonths(loan.loanDate, step, 0)
           : addDays(loan.loanDate, step * cadenceDaysForLoan(loan));
       }
@@ -594,7 +638,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       addCustomer: (c) => {
         if (config.useApi) {
           // Server mints the code/id; prepend the authoritative record it returns.
-          customerApi.create(c).then((created) => setCustomers((s) => [created, ...s]));
+          customerApi.create(c).then((created) => setCustomers((s) => [created, ...s.filter((x) => x.id !== created.id)]));
           return;
         }
         const created: Customer = { ...c, id: allocId(), code: 'CUST-' + codeSeq, createdAt: todayISO() };
@@ -639,8 +683,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           // Server mints the number/id and derives all money math; prepend the
           // authoritative record it returns.
-          loanApi.create(l).then((created) => setLoans((s) => [created, ...s]));
-          return;
+          return loanApi.create(l).then((created) => setLoans((s) => [created, ...s.filter((x) => x.id !== created.id)]));
         }
         const interest = calcInterest(l.principal, l.rate);
         // Daily Collection retains 3 months of interest upfront; other instalment
@@ -653,8 +696,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       updateLoanRecord: (l) => setLoans((s) => s.map((x) => (x.id === l.id ? l : x))),
       closeLoan: (id) => {
         if (config.useApi) {
-          loanApi.close(id).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
-          return;
+          return loanApi.close(id).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
         }
         setLoans((s) => s.map((l) => (l.id === id ? { ...l, status: 'CLOSED' } : l)));
       },
@@ -662,11 +704,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (config.useApi) {
           // Reopen is a dedicated endpoint; a plain status→ACTIVE patch maps to it.
           if (patch.status === 'ACTIVE' && Object.keys(patch).length === 1) {
-            loanApi.reopen(id).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
-            return;
+            return loanApi.reopen(id).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
           }
-          loanApi.update(id, patch).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
-          return;
+          return loanApi.update(id, patch).then((updated) => setLoans((s) => s.map((l) => (l.id === id ? updated : l))));
         }
         setLoans((s) => s.map((l) => {
           if (l.id !== id) return l;
@@ -691,10 +731,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Collection mutations return a promise in API mode so callers can await
       // and surface failures (no false success). The loan list is refreshed
       // afterwards so outstanding/status (server-computed) stay in sync.
+      //
+      // Records the server returns are inserted BY ID, never blindly prepended:
+      // a retried or double-submitted payment comes back as the SAME receipt
+      // (Idempotency-Key), and a background refetch (a newly approved portal
+      // screenshot) can land before this .then — prepending would then show
+      // one receipt twice and double every total built on `collections`.
       addCollection: (c) => {
         if (config.useApi) {
           return collectionApi.record(c.loanId, c).then((created) => {
-            setCollections((s) => [created, ...s]);
+            setCollections((s) => [created, ...s.filter((x) => x.id !== created.id)]);
             loanApi.fetchAll().then(setLoans).catch(() => {});
             return created;
           });
@@ -716,7 +762,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       replaceCollections: (loanId, replaceIds, payments) => {
         if (config.useApi) {
           return collectionApi.replace(loanId, replaceIds, payments).then((created) => {
-            setCollections((s) => [...created, ...s.filter((c) => !replaceIds.includes(c.id))]);
+            const createdIds = new Set(created.map((c) => c.id));
+            setCollections((s) => [...created, ...s.filter((c) => !replaceIds.includes(c.id) && !createdIds.has(c.id))]);
             loanApi.fetchAll().then(setLoans).catch(() => {});
           });
         }
@@ -742,7 +789,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // and surface failures (server mints the id and validates every field).
       addExpense: (e) => {
         if (config.useApi) {
-          return expenseApi.create(e).then((created) => setExpenses((s) => [created, ...s]));
+          return expenseApi.create(e).then((created) => setExpenses((s) => [created, ...s.filter((x) => x.id !== created.id)]));
         }
         setExpenses((s) => [{ ...e, id: allocId() }, ...s]);
       },
@@ -765,12 +812,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
       },
       addDocument: (d) => setDocuments((s) => [{ ...d, id: allocId() }, ...s]),
       deleteDocument: (id) => setDocuments((s) => s.filter((d) => d.id !== id)),
-      collectedFor, interestCollectedFor, principalCollectedFor, outstandingFor, nextDueForDaily, nextDueFor, totalDueForDaily, totalDueForMonthly, totalDueForInterestOnly,
+      collectedFor, interestCollectedFor, principalCollectedFor, outstandingFor, nextDueForDaily, nextDueFor, totalDueForDaily, totalDueForMonthly, totalDueForInterestOnly, interestAccrualEndFor,
+      loadError,
+      retryLoad: () => setServerSyncTick((n) => n + 1),
     };
     // `paidByLoan` (read via paidFor) is derived from `collections`, which is
     // already a dependency — so the index is never stale here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customers, loans, collections, expenses, documents, codeSeq, loanSeq, rcptSeq]);
+  }, [customers, loans, collections, expenses, documents, codeSeq, loanSeq, rcptSeq, loadError]);
 
   return <DataCtx.Provider value={value}>{children}</DataCtx.Provider>;
 }

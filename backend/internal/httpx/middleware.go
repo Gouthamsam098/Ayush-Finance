@@ -2,8 +2,10 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ const (
 	ctxUserID     contextKey = "user_id"
 	ctxCustomerID contextKey = "portal_customer_id"
 	ctxAgentID    contextKey = "recovery_agent_id"
+	ctxIssuedAt   contextKey = "token_issued_at"
 )
 
 // RequestID assigns each request a unique ID (honouring an inbound
@@ -66,8 +69,11 @@ func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				logger.FromContext(r.Context()).Error("panic recovered", "panic", rec)
-				Error(w, r, domain.NewValidation("An internal error occurred", nil))
+				logger.FromContext(r.Context()).Error("panic recovered", "panic", rec, "stack", string(debug.Stack()))
+				// A non-domain error answers 500 INTERNAL_ERROR with a generic
+				// message — a panic is a server fault, and reporting it as a 400
+				// hid it from 5xx alerting.
+				Error(w, r, errors.New("panic recovered"))
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -93,7 +99,39 @@ func Authenticate(tokens *crypto.TokenManager) func(http.Handler) http.Handler {
 			}
 
 			ctx := context.WithValue(r.Context(), ctxUserID, claims.Subject)
+			if claims.IssuedAt != nil {
+				ctx = context.WithValue(ctx, ctxIssuedAt, claims.IssuedAt.Time)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequireCurrentSession runs after Authenticate and ends sessions the account
+// no longer allows: a token issued before the user's password was last
+// changed (a reset, or "change password" — the usual reason is that someone
+// else knew it), or a token of an account that has since been deactivated or
+// deleted (load returns active users only). Without it either kept working
+// for the rest of its hour.
+func RequireCurrentSession(load UserLoader) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, err := strconv.ParseInt(UserID(r.Context()), 10, 64)
+			if err != nil {
+				Error(w, r, domain.NewUnauthorized("invalid or expired token"))
+				return
+			}
+			user, err := load(r.Context(), id)
+			if err != nil {
+				Error(w, r, domain.NewUnauthorized("your session has ended, please sign in again"))
+				return
+			}
+			issuedAt, ok := r.Context().Value(ctxIssuedAt).(time.Time)
+			if !ok || !user.TokenStillValid(issuedAt) {
+				Error(w, r, domain.NewUnauthorized("your password was changed, please sign in again"))
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

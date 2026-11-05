@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 )
 
@@ -20,10 +21,19 @@ type Clock func() time.Time
 type Service struct {
 	repo *Repository
 	now  Clock
+	// audits records customer create/edit/delete (code and name only).
+	audits *audit.Recorder
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo, now: time.Now}
+// customerRecord audits a customer change by code and name only — never KYC
+// identifiers, address or contact details.
+func (s *Service) customerRecord(ctx context.Context, c *domain.Customer, action audit.Action) {
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityCustomer, EntityID: c.ID, Action: action,
+		After: map[string]any{"code": c.Code, "name": c.Name}})
+}
+
+func NewService(repo *Repository, audits *audit.Recorder) *Service {
+	return &Service{repo: repo, now: time.Now, audits: audits}
 }
 
 // Page is a validated pagination request.
@@ -56,7 +66,12 @@ func (s *Service) Create(ctx context.Context, in domain.CustomerInput) (*domain.
 	if err := in.Validate(s.now(), domain.ModeCreate); err != nil {
 		return nil, err
 	}
-	return s.repo.Create(ctx, in)
+	c, err := s.repo.Create(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	s.customerRecord(ctx, c, audit.ActionCreate)
+	return c, nil
 }
 
 // Get returns a single customer by ID.
@@ -94,7 +109,12 @@ func (s *Service) Update(ctx context.Context, id int64, in domain.CustomerInput)
 	if err := in.Validate(s.now(), domain.ModeUpdate); err != nil {
 		return nil, err
 	}
-	return s.repo.Update(ctx, id, in)
+	c, err := s.repo.Update(ctx, id, in)
+	if err != nil {
+		return nil, err
+	}
+	s.customerRecord(ctx, c, audit.ActionUpdate)
+	return c, nil
 }
 
 func nonEmptyStr(s *string) bool { return s != nil && *s != "" }
@@ -102,7 +122,15 @@ func nonEmptyStr(s *string) bool { return s != nil && *s != "" }
 // Delete soft-deletes a customer and cascaded loans, collections, and documents.
 // Expenses are not customer-scoped and are not deleted.
 func (s *Service) Delete(ctx context.Context, id int64) error {
-	return s.repo.SoftDelete(ctx, id)
+	c, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SoftDelete(ctx, id); err != nil {
+		return err
+	}
+	s.customerRecord(ctx, c, audit.ActionDelete)
+	return nil
 }
 
 // ListForAgent returns the customers of a recovery agent's assigned loans.

@@ -65,6 +65,10 @@ type proofResponse struct {
 	Receipts []string `json:"receipts,omitempty"`
 	// Present when a recovery agent uploaded from /agent/payment-proofs.
 	RecoveryAgentName *string `json:"recovery_agent_name,omitempty"`
+	// Present when the screenshot is a recovery agent's evidence for a claim:
+	// the claim records the money, never the screenshot.
+	ClaimID     *int64  `json:"claim_id,omitempty"`
+	ClaimStatus *string `json:"claim_status,omitempty"`
 }
 
 func toResponse(p *domain.PaymentProof) proofResponse {
@@ -84,6 +88,11 @@ func toResponse(p *domain.PaymentProof) proofResponse {
 	}
 	if p.SubmitterRole == domain.RoleRecoveryAgent && p.SubmitterName != "" {
 		resp.RecoveryAgentName = &p.SubmitterName
+	}
+	if p.ClaimID != nil {
+		resp.ClaimID = p.ClaimID
+		status := p.ClaimStatus
+		resp.ClaimStatus = &status
 	}
 	return resp
 }
@@ -229,7 +238,19 @@ func (h *Handler) agentSubmit(w http.ResponseWriter, r *http.Request) {
 		Amount:  domain.RupeesToPaise(amount),
 		Purpose: domain.PaymentPurpose(strings.TrimSpace(r.FormValue("purpose"))),
 	}
-	p, err := h.service.SubmitForAgent(r.Context(), aid, &aid, in,
+	// claim_id: the agent's collection this screenshot proves. Optional — when
+	// absent the server uses the agent's claim awaiting approval on the loan.
+	var claimID *int64
+	if raw := strings.TrimSpace(r.FormValue("claim_id")); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			httpx.Error(w, r, domain.NewValidation("Please fix the highlighted fields",
+				map[string]string{"claim_id": "Invalid collection"}))
+			return
+		}
+		claimID = &id
+	}
+	p, err := h.service.SubmitForAgent(r.Context(), aid, &aid, in, claimID,
 		header.Filename, header.Header.Get("Content-Type"), content)
 	if err != nil {
 		httpx.Error(w, r, err)

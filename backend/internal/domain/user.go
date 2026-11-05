@@ -97,6 +97,21 @@ type User struct {
 	LastLoginAt  *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// PasswordChangedAt is when the password was last set; tokens issued before
+	// it are no longer accepted. Nil = no cutoff.
+	PasswordChangedAt *time.Time
+}
+
+// TokenStillValid reports whether a token issued at issuedAt may still be
+// used: not if the password changed after it was issued. JWT issue times have
+// whole-second precision, so the change time is compared at the same
+// precision (a token minted right after the change, in the same second, stays
+// valid).
+func (u *User) TokenStillValid(issuedAt time.Time) bool {
+	if u.PasswordChangedAt == nil {
+		return true
+	}
+	return !issuedAt.Before(u.PasswordChangedAt.Truncate(time.Second))
 }
 
 // IsAdmin is a convenience for RBAC checks.

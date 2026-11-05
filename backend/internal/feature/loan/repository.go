@@ -154,8 +154,31 @@ func (r *Repository) List(ctx context.Context, p ListParams) ([]*domain.Loan, in
 	return loans, total, rows.Err()
 }
 
-// Update rewrites an existing loan's derived + editable fields.
-func (r *Repository) Update(ctx context.Context, id int64, in domain.LoanInput, d domain.DerivedLoan) (*domain.Loan, error) {
+// FindForUpdateTx returns a non-deleted loan with its row locked inside tx.
+// Recording a payment takes the same lock, so an edit's "has payments?" check
+// and its write cannot be overtaken by a payment landing in between.
+func (r *Repository) FindForUpdateTx(ctx context.Context, tx pgx.Tx, id int64) (*domain.Loan, error) {
+	const query = `SELECT ` + loanColumns + ` FROM loans WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`
+	l, err := scanLoan(tx.QueryRow(ctx, query, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.NewNotFound("loan")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// HasPaymentsTx reports whether the loan has any live (non-deleted) payment.
+func (r *Repository) HasPaymentsTx(ctx context.Context, tx pgx.Tx, id int64) (bool, error) {
+	var has bool
+	err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM collections WHERE loan_id = $1 AND deleted_at IS NULL)`, id).Scan(&has)
+	return has, err
+}
+
+// UpdateTx rewrites an existing loan's derived + editable fields inside tx.
+func (r *Repository) UpdateTx(ctx context.Context, tx pgx.Tx, id int64, in domain.LoanInput, d domain.DerivedLoan) (*domain.Loan, error) {
 	const query = `
 		UPDATE loans SET
 			customer_id=$2, type=$3, repayment_mode=$4, principal=$5, rate=$6, interest=$7, deduction=$8,
@@ -166,7 +189,7 @@ func (r *Repository) Update(ctx context.Context, id int64, in domain.LoanInput, 
 		RETURNING ` + loanColumns
 
 	args := append([]any{id}, writeArgs(in, d)...)
-	l, err := scanLoan(r.pool.QueryRow(ctx, query, args...))
+	l, err := scanLoan(tx.QueryRow(ctx, query, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("loan")
 	}

@@ -168,3 +168,45 @@ func TestRateLimitDisabledWhenNonPositive(t *testing.T) {
 		}
 	}
 }
+
+// X-Real-IP is only believed from our own proxy (a private/loopback peer). A
+// client reaching the backend directly must not pick its own bucket with it.
+func TestRateLimitIgnoresRealIPFromPublicPeer(t *testing.T) {
+	h := RateLimit(1)(okHandler())
+	send := func(realIP string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		req.RemoteAddr = "198.51.100.40:7000" // a public client, not the proxy
+		req.Header.Set("X-Real-IP", realIP)
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := send("1.1.1.1"); code != http.StatusOK {
+		t.Fatalf("attempt 1: got %d, want 200", code)
+	}
+	if code := send("2.2.2.2"); code != http.StatusTooManyRequests {
+		t.Errorf("attempt 2 with a different forged X-Real-IP: got %d, want 429", code)
+	}
+}
+
+// One IPv6 subscriber owns a whole /64; rotating addresses inside it must not
+// earn fresh limits.
+func TestRateLimitGroupsIPv6ByPrefix(t *testing.T) {
+	h := RateLimit(1)(okHandler())
+	send := func(addr string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		req.RemoteAddr = "[" + addr + "]:443"
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := send("2001:db8:1:2::1"); code != http.StatusOK {
+		t.Fatalf("first address: got %d, want 200", code)
+	}
+	if code := send("2001:db8:1:2:ffff::9"); code != http.StatusTooManyRequests {
+		t.Errorf("same /64, different address: got %d, want 429", code)
+	}
+	if code := send("2001:db8:1:3::1"); code != http.StatusOK {
+		t.Errorf("a different /64: got %d, want 200", code)
+	}
+}

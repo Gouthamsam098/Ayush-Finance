@@ -6,7 +6,8 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
-  { ignores: ['dist', 'node_modules', 'eslint.config.js'] },
+  // orbit/ is another project's checkout (gitignored), not part of this app.
+  { ignores: ['dist', 'node_modules', 'eslint.config.js', 'orbit'] },
   js.configs.recommended,
   {
     files: ['src/**/*.{ts,tsx}'],

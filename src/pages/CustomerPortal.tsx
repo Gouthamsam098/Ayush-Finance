@@ -21,7 +21,7 @@ function CustomerPortalContent() {
   const customerId = useSelector((s: RootState) => s.auth.user?.customerId);
   const d = useData();
   const [statementLoan, setStatementLoan] = useState<Loan | null>(null);
-  const { complete: upiComplete, credentialsFor } = useLoanTypeUpi();
+  const { complete: upiComplete, ready: upiReady, credentialsFor } = useLoanTypeUpi();
   const [payTarget, setPayTarget] = useState<{
     loan: Loan;
     amountRupees: number;
@@ -97,14 +97,14 @@ function CustomerPortalContent() {
           <div>
             <h2 className="font-display text-[17px] font-bold text-ink">Your loans</h2>
             <p className="text-[13px] text-muted">
-              {upiComplete
-                ? 'Choose interest or full closure, then pay via PhonePe or Google Pay.'
+              {upiComplete || !upiReady
+                ? 'Choose interest or full closure, then pay via PhonePe or Google Pay — or copy the UPI ID and pay from any UPI app.'
                 : 'UPI pay will appear here once your lender configures payment IDs for all loan types.'}
             </p>
           </div>
         </div>
 
-        {!upiComplete && activeLoans.length > 0 && (
+        {upiReady && !upiComplete && activeLoans.length > 0 && (
           <div className="rounded-xl border border-amber-300/45 bg-amber-500/[.06] px-4 py-3 text-[12px] leading-relaxed text-amber-950 dark:border-amber-500/25 dark:text-amber-100">
             UPI payments are temporarily unavailable. Your lender must set up UPI IDs for every loan type in Settings before you can pay from the portal.
           </div>
@@ -138,6 +138,7 @@ function CustomerPortalContent() {
                   overdue={overdue}
                   index={i}
                   upiConfigured={upiComplete}
+                  upi={upiComplete ? credentialsFor(loan.type) : null}
                   onPay={(amountRupees, purpose) => {
                     const upi = credentialsFor(loan.type);
                     if (!upi) return;

@@ -23,7 +23,78 @@ func (h *Handler) Routes() chi.Router {
 	r.Post("/", h.create)
 	r.Patch("/{id}", h.update)
 	r.Delete("/{id}", h.delete)
+	// "Forgot password?" requests from the login page. Setting the user's new
+	// password through PATCH /{id} closes their request automatically.
+	r.Get("/password-reset-requests", h.listPasswordResetRequests)
+	r.Post("/password-reset-requests/{id}/dismiss", h.dismissPasswordResetRequest)
+	// Lost phone: an admin turns another user's two-factor off so they can
+	// sign in with their password and set it up again.
+	r.Post("/{id}/mfa/reset", h.resetMFA)
 	return r
+}
+
+func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
+	actingID, ok := h.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("user"))
+		return
+	}
+	if err := h.service.ResetMFA(r.Context(), id, actingID); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
+}
+
+type passwordResetResponse struct {
+	ID              int64     `json:"id"`
+	UserID          int64     `json:"user_id"`
+	Email           string    `json:"email"`
+	FullName        string    `json:"full_name"`
+	Role            string    `json:"role"`
+	RequestCount    int       `json:"request_count"`
+	RequestedAt     time.Time `json:"requested_at"`
+	LastRequestedAt time.Time `json:"last_requested_at"`
+}
+
+func (h *Handler) listPasswordResetRequests(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	reqs, err := h.service.OpenPasswordResetRequests(r.Context())
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	out := make([]passwordResetResponse, 0, len(reqs))
+	for _, p := range reqs {
+		out = append(out, passwordResetResponse{
+			ID: p.ID, UserID: p.UserID, Email: p.Email, FullName: p.FullName, Role: string(p.Role),
+			RequestCount: p.RequestCount, RequestedAt: p.RequestedAt, LastRequestedAt: p.LastRequestedAt,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) dismissPasswordResetRequest(w http.ResponseWriter, r *http.Request) {
+	actingID, ok := h.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.Error(w, r, domain.NewNotFound("password reset request"))
+		return
+	}
+	if err := h.service.DismissPasswordResetRequest(r.Context(), id, actingID); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.NoContent(w)
 }
 
 // userRequest is the wire shape for create/update.
@@ -72,6 +143,7 @@ type userResponse struct {
 	Role        string            `json:"role"`
 	Permissions map[string]string `json:"permissions"`
 	IsActive    bool              `json:"is_active"`
+	MFAEnabled  bool              `json:"mfa_enabled"`
 	LastLoginAt *string           `json:"last_login_at,omitempty"`
 	CreatedAt   string            `json:"created_at"`
 	// CustomerID is set for a CUSTOMER portal login.
@@ -87,7 +159,7 @@ func toResponse(u *domain.User, agentLoans map[int64][]int64) userResponse {
 	}
 	resp := userResponse{
 		ID: u.ID, Email: u.Email, FullName: u.FullName, Role: string(u.Role),
-		Permissions: perms, IsActive: u.IsActive, CreatedAt: u.CreatedAt.Format(time.RFC3339),
+		Permissions: perms, IsActive: u.IsActive, MFAEnabled: u.MFAEnabled, CreatedAt: u.CreatedAt.Format(time.RFC3339),
 		CustomerID: u.CustomerID,
 	}
 	if u.IsRecoveryAgent() {

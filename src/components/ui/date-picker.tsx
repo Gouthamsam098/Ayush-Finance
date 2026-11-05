@@ -189,9 +189,10 @@ export function DatePicker({ label, error, value, onChange, className, yearMin, 
           <button
             type="button"
             onClick={toggle}
+            disabled={props.disabled}
             aria-label={open ? 'Close calendar' : 'Open calendar'}
             title="Open calendar"
-            className="absolute right-2 top-1/2 -translate-y-1/2 grid h-11 w-11 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink sm:h-8 sm:w-8 dark:hover:bg-white/[.08]"
+            className="absolute right-2 top-1/2 -translate-y-1/2 grid h-11 w-11 place-items-center rounded-lg text-muted transition-colors hover:bg-slate-100 hover:text-ink disabled:pointer-events-none disabled:opacity-50 sm:h-8 sm:w-8 dark:hover:bg-white/[.08]"
           >
             <Calendar size={15} />
           </button>

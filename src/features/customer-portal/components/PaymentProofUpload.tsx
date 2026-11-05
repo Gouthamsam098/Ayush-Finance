@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/toast';
 import type { PortalPayPurpose } from '@/features/customer-portal/loanPortalSummary';
 import {
   getLatestPaymentProof,
+  latestProofForClaim,
   submitPaymentProof,
   PAYMENT_PROOF_ACCEPT,
   PAYMENT_PROOF_MAX_BYTES,
@@ -29,6 +30,11 @@ interface Props {
   collectionClaimPending?: boolean;
   /** For recovery agent activity log (recovery portal only). */
   activityCustomerName?: string;
+  /**
+   * Recovery card: the agent's collection claim this screenshot proves. The
+   * upload is attached to it (evidence only — the claim records the money).
+   */
+  claimId?: string;
 }
 
 type PickedFile = { name: string; mime: string; dataUrl: string; sizeLabel: string };
@@ -103,7 +109,7 @@ function PaymentThankYouModal({
                 </p>
                 <p className="mt-2 text-[13px] leading-relaxed text-muted sm:text-[14px]">
                   {agent
-                    ? 'The screenshot is queued for admin review in Portal proofs.'
+                    ? 'The screenshot is attached to your collection. The admin checks it when approving.'
                     : 'Your payment will be confirmed once admin approves.'}
                 </p>
                 {!agent && (
@@ -132,7 +138,7 @@ function PaymentThankYouModal({
 }
 
 export function PaymentProofUpload({
-  customerId, loanId, loanNumber, amountRupees, purpose, collectionClaimPending, activityCustomerName,
+  customerId, loanId, loanNumber, amountRupees, purpose, collectionClaimPending, activityCustomerName, claimId,
 }: Props) {
   const toast = useToast();
   const authUser = useSelector((s: RootState) => s.auth.user);
@@ -141,12 +147,20 @@ export function PaymentProofUpload({
   const [dragOver, setDragOver] = useState(false);
   const [picked, setPicked] = useState<PickedFile | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Synchronous twin of `submitting`: state only changes on the next render,
+  // so two taps inside one frame both read `false` and both upload.
+  const submittingRef = useRef(false);
   const [thankYouOpen, setThankYouOpen] = useState(false);
-  const [latest, setLatest] = useState<PaymentProofRecord | null>(() => getLatestPaymentProof(loanId));
+  // A claim's screenshot status is that claim's own — not whatever else the loan has.
+  const readLatest = useCallback(
+    () => (claimId ? latestProofForClaim(claimId) : getLatestPaymentProof(loanId)),
+    [claimId, loanId],
+  );
+  const [latest, setLatest] = useState<PaymentProofRecord | null>(readLatest);
 
   const refreshLatest = useCallback(() => {
-    setLatest(getLatestPaymentProof(loanId));
-  }, [loanId]);
+    setLatest(readLatest());
+  }, [readLatest]);
 
   useEffect(() => {
     refreshLatest();
@@ -194,7 +208,8 @@ export function PaymentProofUpload({
   };
 
   const submit = async () => {
-    if (!picked || submitting) return;
+    if (!picked || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       // Wait for the server: only a saved upload gets the thank-you; a refusal
@@ -211,6 +226,7 @@ export function PaymentProofUpload({
         recoveryAgentName: isAgent ? authUser?.fullName ?? null : null,
         submittedByName: authUser?.fullName ?? null,
         submittedByRole: authUser?.role ?? null,
+        claimId: claimId ?? null,
       });
       if (err) {
         toast(`Screenshot not submitted: ${err}`, 'error');
@@ -228,12 +244,13 @@ export function PaymentProofUpload({
           loanNumber,
           customerName: activityCustomerName,
           title: 'Screenshot submitted',
-          detail: 'Payment proof queued for admin review',
+          detail: 'Attached to your collection for admin review',
           amountRupees,
         });
       }
       setThankYouOpen(true);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -282,8 +299,10 @@ export function PaymentProofUpload({
         onChange={(e) => ingestFile(e.target.files?.[0])}
       />
 
-      <div className="flex flex-col gap-2 xs:flex-row xs:items-center xs:gap-2.5">
-        <div className="flex min-w-0 flex-1 items-start gap-2.5">
+      {/* Wraps on the card's own width (not the viewport): the buttons drop
+          below the message whenever the two do not fit side by side. */}
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
+        <div className="flex min-w-0 flex-[1_1_15rem] items-start gap-2.5">
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-500/12 text-violet-600 dark:text-violet-300">
           <ShieldCheck size={16} strokeWidth={2} />
         </span>
@@ -326,10 +345,20 @@ export function PaymentProofUpload({
                 <>
                   <CheckCircle2 size={10} className="mr-0.5 inline text-success" aria-hidden />
                   <span className="truncate">
-                    {fmtDate(latest.submittedAt.slice(0, 10))} · {inr(latest.amountRupees)} — payment confirmed
+                    Last payment: {fmtDate(latest.submittedAt.slice(0, 10))} · {inr(latest.amountRupees)} — confirmed
                   </span>
                 </>
               )}
+            </p>
+          )}
+          {/* The next step, spelled out: the screenshot is picked first and
+              only then does Submit appear — with an older screenshot on show,
+              borrowers could not tell how to send a new payment. */}
+          {canAddScreenshot && !picked && !rejected && (
+            <p className="mt-1 text-[11px] leading-relaxed text-ink/80">
+              {latest
+                ? <>Paying again? Upload the new payment&rsquo;s screenshot, then tap <span className="font-semibold">Submit for approval</span>.</>
+                : <>Paid? Upload the payment screenshot, then tap <span className="font-semibold">Submit for approval</span>.</>}
             </p>
           )}
           {awaitingNewCollect && !picked && (
@@ -342,22 +371,37 @@ export function PaymentProofUpload({
 
         <AnimatePresence mode="wait">
           {!picked && canAddScreenshot ? (
-            <motion.button
+            <motion.div
               key="pick"
-              type="button"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => inputRef.current?.click()}
-              className={cn(
-                'inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 text-[11px] font-semibold transition-colors xs:h-9 xs:w-auto',
-                'border-violet-300/45 bg-violet-500/[.06] text-violet-800 hover:bg-violet-500/12',
-                'dark:border-violet-500/30 dark:text-violet-200 dark:hover:bg-violet-500/15',
-              )}
+              className="ml-auto flex max-w-full flex-wrap justify-end gap-2"
             >
-              <ImagePlus size={14} aria-hidden />
-              {rejected ? 'Upload again' : 'Add'}
-            </motion.button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => inputRef.current?.click()}
+                className="h-10 grow whitespace-nowrap px-3 text-[12px] sm:h-9"
+              >
+                <ImagePlus size={14} aria-hidden />
+                {rejected ? 'Upload again' : latest ? 'Upload new screenshot' : 'Upload screenshot'}
+              </Button>
+              {/* Always on show so the second step is never hidden; with no
+                  screenshot yet it leads straight to choosing one. Nothing is
+                  sent until a screenshot is picked. */}
+              <Button
+                type="button"
+                onClick={() => {
+                  toast('Choose the payment screenshot first.', 'info');
+                  inputRef.current?.click();
+                }}
+                className="h-10 grow whitespace-nowrap px-3 text-[12px] sm:h-9"
+              >
+                <Upload size={13} aria-hidden />
+                Submit for approval
+              </Button>
+            </motion.div>
           ) : !picked && awaitingNewCollect ? (
             <span
               className="inline-flex h-9 w-full shrink-0 cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-slate-200/80 px-3 text-[11px] font-semibold text-muted opacity-55 xs:w-auto dark:border-white/[.08]"
@@ -404,12 +448,12 @@ export function PaymentProofUpload({
               </button>
               <Button
                 type="button"
-                className="h-8 shrink-0 px-2.5 text-[11px]"
+                className="h-9 shrink-0 px-3 text-[12px]"
                 loading={submitting}
                 onClick={submit}
               >
                 <Upload size={13} />
-                Submit
+                Submit for approval
               </Button>
             </div>
           </motion.div>

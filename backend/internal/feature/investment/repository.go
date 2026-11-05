@@ -248,18 +248,38 @@ func (r *Repository) SumPaidByInvestments(ctx context.Context, ids []int64) (map
 // CreatePayoutTx inserts a payout inside tx, linked to the expense that records
 // its cost.
 func (r *Repository) CreatePayoutTx(
-	ctx context.Context, tx pgx.Tx, in domain.PayoutInput, expenseID int64, postedBy *int64,
+	ctx context.Context, tx pgx.Tx, in domain.PayoutInput, expenseID int64, postedBy *int64, idempotencyKey string,
 ) (*domain.InvestorPayout, error) {
 	const query = `
-		INSERT INTO investor_payouts (investment_id, expense_id, date, amount, mode, remarks, posted_by, posted_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+		INSERT INTO investor_payouts (investment_id, expense_id, date, amount, mode, remarks, posted_by, posted_at, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8)
 		RETURNING ` + payoutColumns
+	// Empty key → NULL, so keyless payouts never collide in the partial index.
+	var keyArg *string
+	if idempotencyKey != "" {
+		keyArg = &idempotencyKey
+	}
 	row := tx.QueryRow(ctx, query,
 		in.InvestmentID, expenseID, in.Date, in.Amount.DBRupees(), string(in.Mode),
-		nilIfEmpty(in.Remarks), postedBy)
+		nilIfEmpty(in.Remarks), postedBy, keyArg)
 	p, err := scanPayout(row)
 	if err != nil {
 		return nil, translateWriteError(err)
+	}
+	return p, nil
+}
+
+// FindPayoutByKeyTx returns the live payout recorded under an Idempotency-Key
+// for this investment, or (nil, nil) when there is none.
+func (r *Repository) FindPayoutByKeyTx(ctx context.Context, tx pgx.Tx, investmentID int64, key string) (*domain.InvestorPayout, error) {
+	const query = `SELECT ` + payoutColumns + ` FROM investor_payouts
+		WHERE investment_id = $1 AND idempotency_key = $2 AND deleted_at IS NULL`
+	p, err := scanPayout(tx.QueryRow(ctx, query, investmentID, key))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	return p, nil
 }

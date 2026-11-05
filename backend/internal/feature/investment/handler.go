@@ -337,7 +337,14 @@ func (h *Handler) payInterest(w http.ResponseWriter, r *http.Request) {
 	if uid, err := strconv.ParseInt(httpx.UserID(r.Context()), 10, 64); err == nil {
 		postedBy = &uid
 	}
-	p, err := h.service.PayInterest(r.Context(), in, postedBy)
+	// Optional Idempotency-Key: a retry of a payout whose response was lost
+	// returns the original instead of paying again.
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(idempotencyKey) > 128 {
+		httpx.Error(w, r, domain.NewValidation("Idempotency-Key is too long", nil))
+		return
+	}
+	p, err := h.service.PayInterest(r.Context(), in, postedBy, idempotencyKey)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return

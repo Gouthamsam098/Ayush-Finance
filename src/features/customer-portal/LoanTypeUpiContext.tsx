@@ -6,11 +6,15 @@ import {
   type LoanTypeUpiRow,
 } from '@/lib/loanTypeUpi';
 import type { LoanTypeUpiMap } from '@/lib/loanTypeUpi';
-import { LOAN_TYPE_UPI_CHANGED, readLoanTypeUpiMap } from '@/lib/loanTypeUpiStore';
+import {
+  LOAN_TYPE_UPI_CHANGED, isLoanTypeUpiSettled, readLoanTypeUpiMap, refreshLoanTypeUpi,
+} from '@/lib/loanTypeUpiStore';
 
 interface LoanTypeUpiContextValue {
   map: LoanTypeUpiMap;
   complete: boolean;
+  /** False while the settings are still loading from the server. */
+  ready: boolean;
   refresh: () => void;
   credentialsFor: (loanType: LoanType) => LoanTypeUpiRow | null;
 }
@@ -19,10 +23,17 @@ const LoanTypeUpiCtx = createContext<LoanTypeUpiContextValue | null>(null);
 
 export function LoanTypeUpiProvider({ children }: { children: React.ReactNode }) {
   const [map, setMap] = useState<LoanTypeUpiMap>(() => readLoanTypeUpiMap());
+  const [ready, setReady] = useState(() => isLoanTypeUpiSettled());
 
   const refresh = useCallback(() => {
     setMap(readLoanTypeUpiMap());
+    setReady(isLoanTypeUpiSettled());
   }, []);
+
+  // Fresh copy whenever the portal opens (an admin may have just saved).
+  useEffect(() => {
+    void refreshLoanTypeUpi().then(refresh);
+  }, [refresh]);
 
   useEffect(() => {
     const onChange = () => refresh();
@@ -45,8 +56,8 @@ export function LoanTypeUpiProvider({ children }: { children: React.ReactNode })
   );
 
   const value = useMemo(
-    () => ({ map, complete, refresh, credentialsFor }),
-    [map, complete, refresh, credentialsFor],
+    () => ({ map, complete, ready, refresh, credentialsFor }),
+    [map, complete, ready, refresh, credentialsFor],
   );
 
   return <LoanTypeUpiCtx.Provider value={value}>{children}</LoanTypeUpiCtx.Provider>;

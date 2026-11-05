@@ -96,6 +96,9 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
   const [clearDues, setClearDues] = useState(false);
   // In-flight flag for the payment round-trip (see addColl's double-submit guard).
   const [saving, setSaving] = useState(false);
+  // Synchronous twin of `saving`: state only updates on the next render, so two
+  // clicks dispatched inside one frame both read `false` and both post money.
+  const savingRef = useRef(false);
   // Settlement mode (foreclose / settle principal): a lump-sum payoff, not a
   // scheduled slot — exempt from the "next due slot" date discipline below.
   const [isSettlement, setIsSettlement] = useState(false);
@@ -199,7 +202,20 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
     // Flexible charges its first cycle on the loan date (day 0), so it's one
     // cycle ahead of the other cadences; its slot k is due at loanDate + (k−1)·step.
     const flexSameDay = loan.type === 'FLEXIBLE';
-    const elapsed = Math.min(Math.floor(daysSince / slotStep) + (flexSameDay ? 1 : 0), slotCap); // slots due by today
+    // Interest-only: once the principal is repaid in full, interest stops on
+    // that day (d.interestAccrualEndFor) — no later cycle falls due, so none
+    // renders as Overdue and no Next due row is appended. Otherwise a loan
+    // reopened by a payment edit showed months of interest on a zero principal,
+    // and Clear Overdue / Settle & close prefilled it.
+    const principalRepaid = interestOnly && d.principalCollectedFor(loan.id) >= loan.principal;
+    const accrualEnd = interestOnly ? d.interestAccrualEndFor(loan) : todayStr;
+    let elapsed = Math.min(Math.floor(daysSince / slotStep) + (flexSameDay ? 1 : 0), slotCap); // slots due by today
+    if (accrualEnd < todayStr) {
+      // Exact count of slots due on or before the repayment day — the same
+      // cycles the backend's accrual charges.
+      elapsed = 0;
+      while (elapsed < 100000 && slotDueDateFor(elapsed + 1) <= accrualEnd) elapsed += 1;
+    }
     const loanColls = d.collections.filter((c) => c.loanId === loan.id);
     const pool = interestOnly
       ? loanColls.filter((c) => c.kind !== 'PRINCIPAL').reduce((s, c) => s + c.amount, 0)
@@ -316,7 +332,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
     // renders ONLY regular-funded slots — the Settled row covers the rest.
     const lastFunded = slotAlloc.size ? Math.max(...Array.from(slotAlloc.keys())) : 0;
     let count = collapse ? fundedBefore : Math.max(elapsed, lastFunded);
-    if (!collapse && loan.status === 'ACTIVE') {
+    if (!collapse && loan.status === 'ACTIVE' && !principalRepaid) {
       let hasActionable = false;
       for (let k = 1; k <= count; k++) {
         if (slotDueDate(k) >= todayStr && (slotAlloc.get(k) ?? 0) < slotDue) { hasActionable = true; break; }
@@ -708,7 +724,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
     // on the flexSettle branch, which issues TWO sequential writes — a
     // double-click there produces four records and double-counts the
     // interest/principal split that profit-by-month depends on.
-    if (saving) return;
+    if (saving || savingRef.current) return;
     if (!canCollect) { toast('You have view-only access to Collections', 'error'); return; }
     if (!Number(amount)) { toast('Enter an amount', 'error'); return; }
     if (amountError) { toast(amountError, 'error'); return; }
@@ -720,6 +736,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
     // advance payers' receipts to be future-dated, corrupting profit-by-month.
     // kind only matters for interest-only loans; always send INTEREST otherwise.
     const k: CollectionKind = interestOnly ? kind : 'INTEREST';
+    savingRef.current = true;
     setSaving(true);
     try {
       if (flexSettle && !editId) {
@@ -903,6 +920,7 @@ export function LedgerDialog({ loan: loanProp, onClose, statementOnly = false, a
       toast(e instanceof ApiError ? e.message : 'Failed to save collection', 'error');
       return; // keep the form open so the user can correct it
     } finally {
+      savingRef.current = false;
       setSaving(false); // always released, so a failed save can be retried
     }
     setAddOpen(false); setEditId(null); setFlexSettle(false); setEditSlot(null); setClearDues(false); setPayTarget(null); setEditDay(null); setEditReceipt(null); setEditOriginalAmount(null); setAmount(defaultAmount()); setRemarks('');

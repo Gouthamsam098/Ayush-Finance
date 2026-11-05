@@ -1,6 +1,8 @@
 import type { PromiseSubmission, RecoverySubmission } from './types';
 import { isActiveOpenPromise } from '@/lib/recoveryPtp';
 import { applySubmissionLocalPatches } from '@/lib/recoveryPtpLocalPatch';
+import { clearPromiseStatusOverlay, getPromiseStatusOverlay } from '@/lib/recoveryPtpOverlay';
+import { ApiError } from '@/lib/api';
 import { config } from '@/lib/config';
 import { tokenStore } from '@/lib/tokenStore';
 import { listMockUsers } from '@/lib/mockUsers';
@@ -146,6 +148,7 @@ export async function refreshRecovery(): Promise<void> {
     if (assignmentsChanged) notifyAssignmentsChanged();
     if (submissionsChanged) notifySubmissionsChanged();
     if (scheduleChanged) window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
+    if (s.scope === 'agent') void pushBrowserOnlyPromiseClosures(submissions);
   } catch {
     /* no Collections access, or offline — keep the last copy; the next poll retries */
   } finally {
@@ -154,6 +157,38 @@ export async function refreshRecovery(): Promise<void> {
       remote.rerun = false;
       void refreshRecovery();
     }
+  }
+}
+
+let pushingClosures = false;
+
+/**
+ * Promises an agent closed before closing was saved on the server live only in
+ * this browser (recoveryPtpOverlay). Save each one on the server once, then
+ * drop it from the browser. A refusal (e.g. no longer this agent's promise) also
+ * drops it; a network failure keeps it for the next refresh.
+ */
+async function pushBrowserOnlyPromiseClosures(subs: RecoverySubmission[]) {
+  if (pushingClosures) return;
+  pushingClosures = true;
+  try {
+    for (const sub of subs) {
+      if (sub.type !== 'PROMISE_TO_PAY') continue;
+      const closed = getPromiseStatusOverlay(sub.id);
+      if (closed !== 'FULFILLED' && closed !== 'CANCELLED') continue;
+      if (sub.status !== 'OPEN') {
+        clearPromiseStatusOverlay(sub.id);
+        continue;
+      }
+      try {
+        upsertCachedSubmission(await recoveryApi.closePromise(sub.id, closed));
+        clearPromiseStatusOverlay(sub.id);
+      } catch (e) {
+        if (e instanceof ApiError) clearPromiseStatusOverlay(sub.id);
+      }
+    }
+  } finally {
+    pushingClosures = false;
   }
 }
 

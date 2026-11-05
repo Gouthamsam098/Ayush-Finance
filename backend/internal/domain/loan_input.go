@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -94,7 +93,7 @@ func (in *LoanInput) Validate(now time.Time) error {
 		fields["rate"] = "Rate must be greater than 0"
 	} else if in.Rate > maxRatePercent {
 		fields["rate"] = "Rate cannot exceed 100%"
-	} else if math.Round(in.Rate*100) != in.Rate*100 {
+	} else if !HasAtMostTwoDecimals(in.Rate) {
 		fields["rate"] = "Rate can have at most 2 decimals"
 	}
 
@@ -173,7 +172,15 @@ type DerivedLoan struct {
 // is the single source of truth on the write path; mirrors the frontend
 // preview so the two never disagree.
 func (in *LoanInput) Derive() DerivedLoan {
-	interest := CalcInterest(in.Principal, in.Rate)
+	// Whole rupees FIRST, exactly like the frontend preview's calcInterest
+	// (Math.round(principal × rate / 100)), and every other figure is derived
+	// from that. Rounding the deduction and the disbursed amount separately from
+	// a fractional interest made them disagree by ₹1 — the DB's
+	// disbursed = principal − deduction CHECK then refused common Daily
+	// Collection loans (₹25,000 @ 1.25%, ₹5,000 @ 2.25%) and many accepted ones
+	// stored a disbursed amount ₹1 off the preview. The stored interest itself is
+	// unchanged: it was already rounded to whole rupees on write.
+	interest := CalcInterest(in.Principal, in.Rate).WholeRupees()
 	d := DerivedLoan{Interest: interest}
 
 	switch {
@@ -235,6 +242,58 @@ func (in *LoanInput) Derive() DerivedLoan {
 		d.Disbursed = in.Principal.Sub(*d.Deduction)
 	}
 	return d
+}
+
+// TermChanges lists the fields of an edit that would change what an existing
+// loan is worth or when it falls due: customer, type, repayment mode (Vehicle/
+// Property), principal, rate, loan date and the entered tenure (EMI months /
+// Flexible days). Once payments are recorded these are locked — changing them
+// re-prices every receipt already on the ledger (outstanding, overdue, profit)
+// and can flip the loan's status behind the collector's back. Keys are the
+// API's field names, so the form can mark each one.
+func (in *LoanInput) TermChanges(l *Loan) []string {
+	var out []string
+	if in.CustomerID != l.CustomerID {
+		out = append(out, "customer_id")
+	}
+	if in.Type != l.Type {
+		out = append(out, "type")
+	}
+	mode := func(m RepaymentMode) RepaymentMode {
+		if m == "" {
+			return RepayEMI
+		}
+		return m
+	}
+	if in.Type.IsEmiLoan() && mode(in.RepaymentMode) != mode(l.RepaymentMode) {
+		out = append(out, "repayment_mode")
+	}
+	if in.Principal != l.Principal {
+		out = append(out, "principal")
+	}
+	if diff := in.Rate - l.Rate; diff > 1e-9 || diff < -1e-9 {
+		out = append(out, "rate")
+	}
+	if !truncateToDay(in.LoanDate).Equal(truncateToDay(l.LoanDate)) {
+		out = append(out, "loan_date")
+	}
+	if (in.Type.IsEmiLoan() && !in.isMonthlyInterestEMI()) || in.Type == LoanFlexible {
+		if valOr(in.NumDays, 0) != valOr(l.NumDays, 0) {
+			out = append(out, "num_days")
+		}
+	}
+	return out
+}
+
+// StoredTerms returns the loan's money and schedule figures exactly as stored,
+// for an edit that changes none of its terms: re-deriving them could move a
+// figure by a rupee when the derivation rules have changed since the loan was
+// created, silently re-pricing a loan nobody meant to touch.
+func (l *Loan) StoredTerms() DerivedLoan {
+	return DerivedLoan{
+		Interest: l.Interest, Deduction: l.Deduction, Disbursed: l.Disbursed,
+		DailyAmount: l.DailyAmount, NumDays: l.NumDays, NextDueDate: l.NextDueDate,
+	}
 }
 
 // interestCadenceDays for a LoanInput (1 for Daily Interest, 30 for Monthly).

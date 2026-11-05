@@ -32,6 +32,23 @@ export function cacheCustomerPhotoDataUrl(customerId: number, dataUrl: string): 
   }
 }
 
+/** Forget every cached customer photo — called when a session ends (API mode),
+ *  so a borrower's KYC photo does not stay on a shared office computer for the
+ *  next person to see. */
+export function clearCachedCustomerPhotos(): void {
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('anush.avatar.')) stale.push(k);
+    }
+    stale.forEach((k) => localStorage.removeItem(k));
+    if (stale.length) bumpCustomerPhotoCache();
+  } catch {
+    // Storage unavailable — nothing was cached there either.
+  }
+}
+
 export function readCachedCustomerPhotoDataUrl(customerId: number): string | null {
   try {
     const v = localStorage.getItem(avatarStorageKey(customerId));

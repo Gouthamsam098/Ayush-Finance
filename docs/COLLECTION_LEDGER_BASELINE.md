@@ -115,6 +115,14 @@ Every elapsed slot + every funded slot (paid-ahead stays visible) + **exactly on
 still collectable — otherwise today's unpaid slot already *is* the next due and appending
 another would show two. CLOSED loans collapse to regular-funded rows plus one `Settled` row.
 
+**Interest stops when the principal is repaid (26 Oct 2026).** Once an interest-only loan's
+PRINCIPAL payments (date, then id order) reach its principal, no further cycle falls due:
+accrual is evaluated up to that receipt date (`interestAccrualEndFor` ↔ backend
+`Loan.interestAccrualEnd` / `Collected.PrincipalRepaidOn`). The ledger renders cycles only up
+to that day and appends no `Next due` row. Without this a settled loan kept accruing on a zero
+principal, and editing or deleting any of its payments reopened it with phantom arrears and
+put it in the recovery queue. Loans with principal still owed are unaffected.
+
 ---
 
 ## 5. Editing
@@ -176,11 +184,12 @@ are hidden.
   recognises every non-PRINCIPAL payment in full; upfront/EMI uses the profit-last band
   `(disbursed, disbursed + margin]`. Allocation never feeds profit.
 
-> **Known lock-step gap (not yet done):** `nextDueFor` is mirrored in
-> `backend/internal/domain/loan.go` (`Loan.NextDue`), which feeds payment-date validation and
-> the loan list. The accrual cap described above was applied on the **frontend only**, so the
-> two can disagree for a loan that is simultaneously in arrears *and* paid ahead. Apply the
-> same cap backend-side (with Go tests) when that flow is next touched.
+> **Lock-step (done 25 Oct 2026):** `nextDueFor` is mirrored in
+> `backend/internal/domain/loan.go` (`Loan.NextDue(c, now)`), which feeds payment-date
+> validation, the loan list's `next_due_date` and the sidebar overdue badge. Both now cap
+> funded slots at what has fallen due and step monthly cadences (Monthly Interest,
+> monthly-mode Vehicle/Property, EMI) by **calendar month**; Daily Collection, Daily Interest
+> and Flexible step by days. Covered by `loan_nextdue_test.go`.
 
 ---
 
@@ -217,6 +226,7 @@ Run for **each** behaviour (Daily Collection, EMI, Interest-only incl. Flexible)
 | 13 | Over-limit amount | Inline error + save blocked |
 | 14 | Dashboard | Loan appears in Overdue with the right Due Amount; profit lands in the receipt's month |
 | 15 | View-only user | No Add / edit / Clear Overdue / Foreclose |
+| 16 | Settled interest-only loan, a payment later edited | Stays CLOSED; deleting an interest payment reopens it owing exactly that amount, no cycles after the settlement day |
 
 Then run **`npm run build`**, and if the backend was touched,
 **`go build ./... && go test ./...`** from `backend/`.

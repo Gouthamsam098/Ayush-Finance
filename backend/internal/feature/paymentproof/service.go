@@ -69,16 +69,22 @@ func (s *Service) Submit(ctx context.Context, customerID int64, submittedBy *int
 	if pending >= domain.MaxPendingProofsPerLoan {
 		return nil, domain.NewConflict("You already have payments awaiting approval on this loan. Please wait for them to be reviewed.")
 	}
-	p, err := s.repo.Create(ctx, customerID, in, domain.SanitizeFileName(fileName), mime, content, submittedBy)
+	p, err := s.repo.Create(ctx, customerID, in, domain.SanitizeFileName(fileName), mime, content, submittedBy, nil)
 	if isCheckViolation(err) {
 		return nil, domain.NewValidation("This upload could not be accepted", nil)
 	}
 	return p, err
 }
 
-// SubmitForAgent stores a payment screenshot for a loan assigned to the agent.
+// SubmitForAgent stores a recovery agent's payment screenshot for a loan
+// assigned to them. The screenshot is always attached to one of the agent's
+// collection claims on that loan — claimID, or else their claim awaiting
+// approval — because it is evidence for that claim: the claim records the
+// money, the screenshot never does. Without a claim there is nothing to attach
+// it to, and an unattached agent screenshot would be a second way to book the
+// same payment.
 func (s *Service) SubmitForAgent(ctx context.Context, agentID int64, submittedBy *int64,
-	in domain.PaymentProofInput, fileName, declaredMime string, content []byte,
+	in domain.PaymentProofInput, claimID *int64, fileName, declaredMime string, content []byte,
 ) (*domain.PaymentProof, error) {
 	if err := in.Validate(); err != nil {
 		return nil, err
@@ -108,7 +114,16 @@ func (s *Service) SubmitForAgent(ctx context.Context, agentID int64, submittedBy
 	if pending >= domain.MaxPendingProofsPerLoan {
 		return nil, domain.NewConflict("This loan already has payments awaiting approval. Please wait for them to be reviewed.")
 	}
-	p, err := s.repo.Create(ctx, customerID, in, domain.SanitizeFileName(fileName), mime, content, submittedBy)
+	if claimID == nil {
+		if claimID, err = s.repo.PendingClaimForAgent(ctx, in.LoanID, agentID); err != nil {
+			return nil, err
+		}
+		if claimID == nil {
+			return nil, domain.NewConflict("Submit the payment with Collect first — the screenshot is attached to that collection.")
+		}
+	}
+	p, err := s.repo.Create(ctx, customerID, in, domain.SanitizeFileName(fileName), mime, content, submittedBy,
+		&ClaimLink{ClaimID: *claimID, AgentID: agentID})
 	if isCheckViolation(err) {
 		return nil, domain.NewValidation("This upload could not be accepted", nil)
 	}
@@ -146,7 +161,19 @@ func (s *Service) Image(ctx context.Context, id int64, customerID *int64) (*doma
 // day the borrower submitted it, and the proof is marked VERIFIED — all in ONE
 // transaction, so the money lands exactly once or not at all. Accepting an
 // already-accepted proof returns it unchanged (a double-click records nothing).
+//
+// A recovery agent's screenshot attached to a claim records nothing here: see
+// verifyClaimEvidence.
 func (s *Service) Verify(ctx context.Context, id int64, reviewer *int64) (*domain.PaymentProof, []*domain.Collection, error) {
+	claimID, err := s.repo.ClaimIDOf(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if claimID != nil {
+		p, err := s.verifyClaimEvidence(ctx, id, *claimID, reviewer)
+		return p, nil, err
+	}
+
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -163,6 +190,13 @@ func (s *Service) Verify(ctx context.Context, id int64, reviewer *int64) (*domai
 		return p, nil, tx.Commit(ctx)
 	case domain.ProofRejected:
 		return nil, nil, domain.NewConflict("This payment proof was rejected and cannot be accepted")
+	}
+	// A recovery agent's screenshot with no claim (uploaded before screenshots
+	// were attached to claims) may be the same payment as an agent claim, so it
+	// is never booked from here.
+	if locked.SubmitterRole == domain.RoleRecoveryAgent {
+		return nil, nil, domain.NewConflict("This screenshot was uploaded by a recovery agent and is not attached to a collection. " +
+			"Record the agent's payment through the Recovery queue, then reject this screenshot.")
 	}
 
 	receiptDate := domain.ProofReceiptDate(p.SubmittedAt, locked.LoanDate)
@@ -196,6 +230,63 @@ func (s *Service) Verify(ctx context.Context, id int64, reviewer *int64) (*domai
 	}
 	out, err := s.repo.FindByID(ctx, p.ID, nil)
 	return out, colls, err
+}
+
+// verifyClaimEvidence accepts a recovery agent's screenshot attached to a
+// claim. It never records money — the claim does. Approving the claim accepts
+// its screenshot automatically, so this is only reached for a screenshot sent
+// after its claim was approved (e.g. a re-upload of a rejected one): it is
+// marked VERIFIED on the claim's receipt date. While the claim is still
+// pending the screenshot cannot be accepted here; the claim is reviewed in the
+// Recovery queue, and approving it accepts the screenshot with it.
+//
+// Locks claim → proof, the same order as recovery.Service.Approve.
+func (s *Service) verifyClaimEvidence(ctx context.Context, id, claimID int64, reviewer *int64) (*domain.PaymentProof, error) {
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	claim, err := s.repo.LockClaimTx(ctx, tx, claimID)
+	if err != nil {
+		return nil, err
+	}
+	locked, err := s.repo.LockTx(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	switch locked.Proof.Status {
+	case domain.ProofVerified:
+		return locked.Proof, tx.Commit(ctx)
+	case domain.ProofRejected:
+		return nil, domain.NewConflict("This payment proof was rejected and cannot be accepted")
+	}
+	switch claim.Status {
+	case domain.ClaimPending:
+		return nil, domain.NewConflict("This screenshot belongs to " + claim.AgentName + "'s collection of " + claim.Amount.INR() +
+			", which is awaiting approval. Accept that collection in the Recovery queue — the screenshot is accepted with it and the payment is recorded once.")
+	case domain.ClaimRejected:
+		return nil, domain.NewConflict("The collection this screenshot belongs to was rejected. Reject the screenshot too.")
+	}
+	if err := s.repo.MarkVerifiedTx(ctx, tx, id, reviewer, claim.ReceiptDate); err != nil {
+		return nil, err
+	}
+	if s.audits != nil {
+		if err := s.audits.RecordTx(ctx, tx, audit.Entry{
+			EntityType: audit.EntityPaymentProof, EntityID: id, Action: audit.ActionApprove,
+			After: map[string]any{
+				"loan_id": locked.Proof.LoanID, "evidence_for_claim": claimID,
+				"receipts": []string{}, "note": "screenshot accepted as evidence; the claim recorded the payment",
+			},
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.repo.FindByID(ctx, id, nil)
 }
 
 // Reject marks a pending proof REJECTED; no money is recorded. Rejecting an

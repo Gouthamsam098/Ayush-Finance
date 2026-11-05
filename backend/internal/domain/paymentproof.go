@@ -63,7 +63,16 @@ type PaymentProof struct {
 	// Filled on list reads when joined to users (submitted_by).
 	SubmitterName string
 	SubmitterRole Role
+	// ClaimID is set when a recovery agent uploaded the screenshot for their
+	// collection claim. Such a screenshot is evidence only: the claim records
+	// the money, so accepting the screenshot never posts a collection.
+	ClaimID     *int64
+	ClaimStatus string // the linked claim's status; "" when unlinked
 }
+
+// IsClaimEvidence reports whether the proof is a recovery agent's screenshot
+// attached to a collection claim (see ClaimID).
+func (p *PaymentProof) IsClaimEvidence() bool { return p.ClaimID != nil }
 
 // PaymentProofInput is the borrower's upload, validated before storing.
 type PaymentProofInput struct {
@@ -123,7 +132,7 @@ func SplitPortalPayment(l *Loan, collected Collected, amount Paise, now time.Tim
 	if !l.BehavesInterestOnly() {
 		return []PaymentPart{{Kind: KindInterest, Amount: amount}}, nil
 	}
-	interestDue := l.TotalDueForInterestOnly(collected.Interest, now)
+	interestDue := l.TotalDueForInterestOnly(collected, now)
 	if interestDue < 0 {
 		interestDue = 0 // interest paid ahead is not a credit
 	}
@@ -142,8 +151,8 @@ func SplitPortalPayment(l *Loan, collected Collected, amount Paise, now time.Tim
 		return parts, nil
 	}
 	if limit := interestDue.Add(l.InterestPerPeriod()); amount > limit {
-		return nil, NewConflict("Part of this payment (" + amount.String() + ") would repay principal: it is more than the interest due (" +
-			interestDue.String() + ") plus one period ahead, but less than the full balance. Record it from the loan's ledger, " +
+		return nil, NewConflict("Part of this payment (" + amount.INR() + ") would repay principal: it is more than the interest due (" +
+			interestDue.INR() + ") plus one period ahead, but less than the full balance. Record it from the loan's ledger, " +
 			"choosing interest or principal, then reject this request.")
 	}
 	return []PaymentPart{{Kind: KindInterest, Amount: amount}}, nil

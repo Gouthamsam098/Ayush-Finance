@@ -1,12 +1,21 @@
 import { useState, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Lock, Eye, EyeOff, ArrowRight, User, Loader2, Mail, ArrowLeft,
+  Lock, Eye, EyeOff, ArrowRight, User, Loader2, Mail, ArrowLeft, MailCheck, ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
+import { config } from '@/lib/config';
+import { ApiError } from '@/lib/api';
+import { authApi } from '@/services/authApi';
+import { passwordChangeServerErrors, validatePasswordChange } from '@/lib/passwordRules';
 
-export type AuthMode = 'signin' | 'signup';
+export type AuthMode = 'signin' | 'signup' | 'forgot';
+
+/** Same shape the server checks (domain.NormalizeResetEmail). */
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+type FpField = 'email' | 'current' | 'next' | 'confirm';
 
 interface LoginFormProps {
   onSubmit: (u: string, p: string) => void;
@@ -81,8 +90,97 @@ export default function LoginForm({ onSubmit, loading = false, mode, onModeChang
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // Forgot password. The default view changes the password right here with
+  // email + current password + new password. The "request" view (a link under
+  // that form) is for someone who does not know their current password: it
+  // asks an administrator to set a new one instead.
+  const [fpView, setFpView] = useState<'change' | 'request'>('change');
+  const [fpEmail, setFpEmail] = useState('');
+  const [fpCurrent, setFpCurrent] = useState('');
+  const [fpNew, setFpNew] = useState('');
+  const [fpConfirm, setFpConfirm] = useState('');
+  const [fpShow, setFpShow] = useState(false); // one eye reveals all three
+  const [fpErrors, setFpErrors] = useState<Partial<Record<FpField, string>>>({});
+  const [fpSending, setFpSending] = useState(false);
+  const [fpDone, setFpDone] = useState<null | { title: string; text: string; note?: string }>(null);
+
   const [focused, setFocused] = useState<string | null>(null);
   const [pressRipple, setPressRipple] = useState(0);
+
+  const clearFp = (f: FpField) => setFpErrors((e) => (e[f] ? { ...e, [f]: undefined } : e));
+
+  const openForgot = () => {
+    // Carry over what was typed into Username when it is already an email.
+    setFpEmail(EMAIL_RE.test(username.trim()) ? username.trim() : '');
+    setFpCurrent(''); setFpNew(''); setFpConfirm('');
+    setFpErrors({});
+    setFpDone(null);
+    setFpView('change');
+    onModeChange('forgot');
+  };
+
+  const backToSignIn = () => {
+    // After a change, the email is ready in Username for the new password.
+    if (fpDone && EMAIL_RE.test(fpEmail.trim())) { setUsername(fpEmail.trim()); setPassword(''); }
+    onModeChange('signin');
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (fpSending) return;
+    const email = fpEmail.trim();
+    // Same rules the server applies (shared with Settings → Change password).
+    const errs: Partial<Record<FpField, string>> = validatePasswordChange(fpCurrent, fpNew, fpConfirm);
+    if (!EMAIL_RE.test(email)) errs.email = 'Enter a valid email address';
+    setFpErrors(errs);
+    if (Object.keys(errs).length) return;
+    if (!config.useApi) {
+      toast('Password changes need the server — ask your administrator.', 'info');
+      return;
+    }
+    setFpSending(true);
+    try {
+      await authApi.changePasswordWithCredentials(email, fpCurrent, fpNew);
+      setFpCurrent(''); setFpNew(''); setFpConfirm('');
+      setFpDone({ title: 'Password updated', text: 'Your password has been changed. Sign in with your new password.' });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const f = err.fields ?? {};
+        if (err.status !== 401 && Object.keys(f).length) {
+          setFpErrors({ email: f.email, ...passwordChangeServerErrors(f) });
+        } else {
+          // 401 (wrong email/password), 429 (too many tries) …
+          setFpErrors({ current: err.message });
+        }
+      } else {
+        setFpErrors({ current: 'Could not update the password. Check your connection and try again.' });
+      }
+    } finally {
+      setFpSending(false);
+    }
+  };
+
+  const handleRequestReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (fpSending) return;
+    const email = fpEmail.trim();
+    if (!EMAIL_RE.test(email)) { setFpErrors({ email: 'Enter a valid email address' }); return; }
+    setFpErrors({});
+    setFpSending(true);
+    try {
+      const text = config.useApi
+        ? await authApi.requestPasswordReset(email)
+        : 'Ask your administrator to reset your password — they can set a new one in Settings → Users.';
+      setFpDone({
+        title: 'Request sent', text,
+        note: 'No email is sent. Your administrator will confirm it is you before sharing a new password.',
+      });
+    } catch (err) {
+      setFpErrors({ email: err instanceof ApiError ? err.message : 'Could not send the request. Check your connection and try again.' });
+    } finally {
+      setFpSending(false);
+    }
+  };
 
   const handleSignIn = (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,6 +203,118 @@ export default function LoginForm({ onSubmit, loading = false, mode, onModeChang
       toast('Sign-up requests aren’t enabled yet — please contact your administrator for access.', 'info');
     }, 600);
   };
+
+  if (mode === 'forgot') {
+    const primaryBtn = 'group relative flex h-[52px] w-full items-center justify-center gap-2 overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600 via-[#188BFC] to-sky-400 text-[15px] font-semibold text-white shadow-lg shadow-[#188BFC]/30 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-[#188BFC]/45 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0';
+    const linkBtn = 'inline-flex items-center gap-1 text-[13px] font-semibold text-sky-300 transition-colors hover:text-sky-200';
+    const eye = (
+      <button type="button" onClick={() => setFpShow((s) => !s)}
+        className="text-slate-500 transition-colors hover:text-sky-300"
+        aria-label={fpShow ? 'Hide passwords' : 'Show passwords'}>
+        {fpShow ? <EyeOff size={18} /> : <Eye size={18} />}
+      </button>
+    );
+    const anim = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -6 }, transition: { duration: 0.25 } };
+    return (
+      <AnimatePresence mode="wait" initial={false}>
+        {fpDone ? (
+          <motion.div key="done" {...anim} className="space-y-5" role="status" aria-live="polite">
+            <div className="flex flex-col items-center rounded-2xl border border-white/10 bg-white/[.04] px-5 py-6 text-center">
+              <span className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-400/15 text-emerald-300">
+                {fpView === 'change' ? <ShieldCheck size={22} aria-hidden /> : <MailCheck size={22} aria-hidden />}
+              </span>
+              <p className="mt-3 text-[15px] font-semibold text-white">{fpDone.title}</p>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-slate-300">{fpDone.text}</p>
+              {fpDone.note && <p className="mt-2 text-[12px] leading-relaxed text-slate-400">{fpDone.note}</p>}
+            </div>
+            <button type="button" onClick={backToSignIn} className={primaryBtn}>
+              <ArrowLeft size={18} className="relative z-10 transition-transform duration-300 group-hover:-translate-x-1" />
+              <span className="relative z-10">Back to sign in</span>
+            </button>
+          </motion.div>
+        ) : fpView === 'change' ? (
+          <motion.form key="change" {...anim} onSubmit={handleChangePassword} noValidate className="space-y-4">
+            <p className="text-[13px] leading-relaxed text-slate-300">
+              Enter your email and current password, then choose a new password.
+            </p>
+            <AuthField
+              id="forgot-email" label="Email" icon={<Mail size={18} />}
+              focused={focused === 'fp-email'} onFocus={() => setFocused('fp-email')} onBlur={() => setFocused(null)}
+              error={fpErrors.email} type="email" name="email" autoComplete="username" autoFocus required
+              placeholder="you@company.com" value={fpEmail}
+              onChange={(e) => { setFpEmail(e.target.value); clearFp('email'); }} disabled={fpSending}
+            />
+            <AuthField
+              id="forgot-current" label="Current password" icon={<Lock size={18} />}
+              focused={focused === 'fp-cur'} onFocus={() => setFocused('fp-cur')} onBlur={() => setFocused(null)}
+              error={fpErrors.current} type={fpShow ? 'text' : 'password'} name="current-password" autoComplete="current-password" required
+              placeholder="Your current password" value={fpCurrent}
+              onChange={(e) => { setFpCurrent(e.target.value); clearFp('current'); }} disabled={fpSending} right={eye}
+            />
+            <AuthField
+              id="forgot-new" label="New password" icon={<Lock size={18} />}
+              focused={focused === 'fp-new'} onFocus={() => setFocused('fp-new')} onBlur={() => setFocused(null)}
+              error={fpErrors.next} type={fpShow ? 'text' : 'password'} name="new-password" autoComplete="new-password" required
+              placeholder="At least 8 characters" value={fpNew}
+              onChange={(e) => { setFpNew(e.target.value); clearFp('next'); }} disabled={fpSending}
+            />
+            <AuthField
+              id="forgot-confirm" label="Confirm new password" icon={<Lock size={18} />}
+              focused={focused === 'fp-conf'} onFocus={() => setFocused('fp-conf')} onBlur={() => setFocused(null)}
+              error={fpErrors.confirm} type={fpShow ? 'text' : 'password'} name="confirm-new-password" autoComplete="new-password" required
+              placeholder="Re-enter the new password" value={fpConfirm}
+              onChange={(e) => { setFpConfirm(e.target.value); clearFp('confirm'); }} disabled={fpSending}
+            />
+            <button type="submit" disabled={fpSending} className={primaryBtn}>
+              <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-white/0 via-white/15 to-white/0 transition-transform duration-700 group-hover:translate-x-full" />
+              <span className="relative z-10">{fpSending ? 'Updating password…' : 'Update password'}</span>
+              {fpSending
+                ? <Loader2 size={18} className="relative z-10 animate-spin" />
+                : <ArrowRight size={18} className="relative z-10 transition-transform duration-300 group-hover:translate-x-1" />}
+            </button>
+            <div className="flex flex-col items-center gap-2">
+              <button type="button" onClick={backToSignIn} className={linkBtn}><ArrowLeft size={13} /> Back to sign in</button>
+              <p className="text-center text-[12px] text-slate-400">
+                Don&apos;t remember your current password?{' '}
+                <button type="button" onClick={() => { setFpErrors({}); setFpView('request'); }}
+                  className="font-semibold text-sky-300 underline-offset-2 transition-colors hover:text-sky-200 hover:underline">
+                  Ask your administrator
+                </button>
+              </p>
+            </div>
+          </motion.form>
+        ) : (
+          <motion.form key="request" {...anim} onSubmit={handleRequestReset} noValidate className="space-y-5">
+            <p className="text-[13px] leading-relaxed text-slate-300">
+              Enter the email you sign in with. Your administrator will see the request in the app and set a new password for you.
+            </p>
+            <AuthField
+              id="forgot-request-email" label="Email" icon={<Mail size={18} />}
+              focused={focused === 'fp-email'} onFocus={() => setFocused('fp-email')} onBlur={() => setFocused(null)}
+              error={fpErrors.email} type="email" name="email" autoComplete="email" autoFocus required
+              placeholder="you@company.com" value={fpEmail}
+              onChange={(e) => { setFpEmail(e.target.value); clearFp('email'); }} disabled={fpSending}
+            />
+            <button type="submit" disabled={fpSending} className={primaryBtn}>
+              <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-white/0 via-white/15 to-white/0 transition-transform duration-700 group-hover:translate-x-full" />
+              <span className="relative z-10">{fpSending ? 'Sending request…' : 'Ask administrator to reset'}</span>
+              {fpSending
+                ? <Loader2 size={18} className="relative z-10 animate-spin" />
+                : <ArrowRight size={18} className="relative z-10 transition-transform duration-300 group-hover:translate-x-1" />}
+            </button>
+            <div className="flex flex-col items-center gap-2">
+              <button type="button" onClick={() => { setFpErrors({}); setFpView('change'); }} className={linkBtn}>
+                <ArrowLeft size={13} /> I know my current password
+              </button>
+              <button type="button" onClick={backToSignIn} className="text-[12px] font-medium text-slate-400 transition-colors hover:text-slate-200">
+                Back to sign in
+              </button>
+            </div>
+          </motion.form>
+        )}
+      </AnimatePresence>
+    );
+  }
 
   if (mode === 'signup') {
     return (
@@ -259,7 +469,10 @@ export default function LoginForm({ onSubmit, loading = false, mode, onModeChang
             className="h-[18px] w-[18px] cursor-pointer rounded-[5px] border-2 border-white/20 bg-white/5 text-[#188BFC] focus:ring-2 focus:ring-[#188BFC]/30 focus:ring-offset-0 checked:border-[#188BFC] checked:bg-[#188BFC]" />
           <span className="text-[13px] font-medium text-slate-300">Remember me</span>
         </label>
-        <a href="#" className="text-[13px] font-semibold text-sky-300 transition-colors hover:text-sky-200">Forgot password?</a>
+        <button type="button" onClick={openForgot} disabled={loading}
+          className="text-[13px] font-semibold text-sky-300 transition-colors hover:text-sky-200 disabled:opacity-50">
+          Forgot password?
+        </button>
       </div>
 
       <motion.button

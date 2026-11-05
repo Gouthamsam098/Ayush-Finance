@@ -13,6 +13,7 @@ import { CountUp } from '@/components/motion';
 import { inr, inrShort, fmtDate, todayISO, isoLocal } from '@/lib/format';
 import { Plus, Pencil, Trash2, Wallet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { cn } from '@/lib/utils';
 
 const MODES: PayMode[] = ['CASH', 'UPI', 'BANK', 'CHEQUE'];
@@ -80,7 +81,11 @@ export default function Expenses() {
   }, [d.expenses, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k: keyof EForm, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
-  const save = async () => {
+  // One write at a time (Save / Delete): a double click must not post twice.
+  const saveGuard = useSubmitGuard();
+  const deleteGuard = useSubmitGuard();
+  const save = () => saveGuard.run(saveInner);
+  const saveInner = async () => {
     if (!form) return;
     if (!form.name.trim() || !Number(form.amount)) { toast('Name and amount are required', 'error'); return; }
     const payload = { date: form.date, category: form.category, subCategory: form.subCategory || undefined, name: form.name.trim(), amount: Number(form.amount), mode: form.mode, remarks: form.remarks || undefined };
@@ -275,7 +280,7 @@ export default function Expenses() {
       </div>
 
       <Dialog open={!!form} onClose={() => setForm(null)} title={form?.id ? 'Edit expense' : 'Add expense'}
-        footer={<><Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button><Button onClick={save}>{form?.id ? 'Save changes' : 'Save'}</Button></>}>
+        footer={<><Button variant="ghost" onClick={() => setForm(null)}>Cancel</Button><Button onClick={save} loading={saveGuard.busy}>{form?.id ? 'Save changes' : 'Save'}</Button></>}>
         {form && (
           <div className="grid grid-cols-1 gap-4 min-w-0 lg:grid-cols-2">
             <div className="min-w-0"><Input label="Date" type="date" value={form.date} onChange={(e) => set('date', e.target.value)} /></div>
@@ -292,13 +297,11 @@ export default function Expenses() {
 
       <Dialog open={!!confirm} onClose={() => setConfirm(null)} title="Delete expense?" subtitle={confirm ? `${confirm.name} · ${inr(confirm.amount)}` : ''}
         footer={<><Button variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
-          <Button variant="danger" onClick={async () => {
-            if (confirm) {
-              try { await d.deleteExpense(confirm.id); toast('Expense deleted', 'info'); }
-              catch (e) { toast(e instanceof ApiError ? e.message : 'Failed to delete expense', 'error'); }
-            }
-            setConfirm(null);
-          }}>Delete</Button></>}>
+          <Button variant="danger" loading={deleteGuard.busy} onClick={() => deleteGuard.run(async () => {
+            if (!confirm) return;
+            try { await d.deleteExpense(confirm.id); toast('Expense deleted', 'info'); setConfirm(null); }
+            catch (e) { toast(e instanceof ApiError ? e.message : 'Failed to delete expense', 'error'); }
+          })}>Delete</Button></>}>
         <p className="text-sm text-muted">Are you sure you want to delete?</p>
       </Dialog>
     </div>

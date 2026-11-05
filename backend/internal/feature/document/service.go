@@ -3,15 +3,24 @@ package document
 import (
 	"context"
 
+	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 )
 
 type Service struct {
 	repo *Repository
+	// audits records every KYC upload, download and delete (who, which
+	// customer, which document — never the file or its name).
+	audits *audit.Recorder
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, audits *audit.Recorder) *Service {
+	return &Service{repo: repo, audits: audits}
+}
+
+func (s *Service) record(ctx context.Context, id int64, action audit.Action, customerID int64, docType domain.DocumentType) {
+	s.audits.Record(ctx, audit.Entry{EntityType: audit.EntityDocument, EntityID: id, Action: action,
+		After: map[string]any{"customer_id": customerID, "type": string(docType)}})
 }
 
 // UploadInput is a validated upload request.
@@ -69,7 +78,7 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*domain.Document,
 		return nil, domain.NewNotFound("customer")
 	}
 
-	return s.repo.Create(ctx, &domain.Document{
+	doc, err := s.repo.Create(ctx, &domain.Document{
 		CustomerID: in.CustomerID,
 		Type:       in.Type,
 		FileName:   in.FileName,
@@ -77,6 +86,11 @@ func (s *Service) Upload(ctx context.Context, in UploadInput) (*domain.Document,
 		SizeBytes:  int64(len(in.Content)),
 		Content:    in.Content,
 	}, in.UploadedBy)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, doc.ID, audit.ActionCreate, in.CustomerID, in.Type)
+	return doc, nil
 }
 
 func (s *Service) List(ctx context.Context, customerID int64) ([]*domain.Document, error) {
@@ -87,10 +101,19 @@ func (s *Service) List(ctx context.Context, customerID int64) ([]*domain.Documen
 // IDs come from the request path; the ownership check lives in the query so a
 // mismatch is indistinguishable from "does not exist" (NotFound).
 func (s *Service) Download(ctx context.Context, id, customerID int64) (*domain.Document, error) {
-	return s.repo.Download(ctx, id, customerID)
+	doc, err := s.repo.Download(ctx, id, customerID)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, id, audit.ActionDownload, customerID, doc.Type)
+	return doc, nil
 }
 
 // Delete soft-deletes a document only if it belongs to customerID.
 func (s *Service) Delete(ctx context.Context, id, customerID int64) error {
-	return s.repo.SoftDelete(ctx, id, customerID)
+	if err := s.repo.SoftDelete(ctx, id, customerID); err != nil {
+		return err
+	}
+	s.record(ctx, id, audit.ActionDelete, customerID, "")
+	return nil
 }

@@ -45,12 +45,28 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+// RequestPasswordReset files a "Forgot password?" request for the live, active
+// account with this email (same predicate as login). One OPEN request per user:
+// a repeat bumps its count and time instead of adding a row. An unknown or
+// inactive email records nothing. One statement against the partial unique
+// index, so concurrent requests can never create two open rows.
+func (r *Repository) RequestPasswordReset(ctx context.Context, email string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO password_reset_requests (user_id)
+		SELECT id FROM users
+		WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL`+liveCustomerLink+`
+		ON CONFLICT (user_id) WHERE status = 'OPEN'
+		DO UPDATE SET request_count = password_reset_requests.request_count + 1,
+		              last_requested_at = now()`, email)
+	return err
+}
+
 // FindByEmail returns the active user with the given email, or a NotFound
 // domain error. Email is matched in lower case to align with the stored form.
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
 	const query = `
 		SELECT id, email, full_name, password_hash, role, permissions, mfa_enabled, is_active,
-		       last_login_at, created_at, updated_at, customer_id
+		       last_login_at, created_at, updated_at, customer_id, password_changed_at
 		FROM users
 		WHERE email = $1 AND is_active = TRUE AND deleted_at IS NULL` + liveCustomerLink
 
@@ -59,7 +75,7 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.Use
 	var perms []byte
 	err := r.pool.QueryRow(ctx, query, email).Scan(
 		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &role, &perms, &u.MFAEnabled,
-		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID,
+		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID, &u.PasswordChangedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("user")
@@ -76,7 +92,7 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*domain.Use
 func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, error) {
 	const query = `
 		SELECT id, email, full_name, password_hash, role, permissions, mfa_enabled, is_active,
-		       last_login_at, created_at, updated_at, customer_id
+		       last_login_at, created_at, updated_at, customer_id, password_changed_at
 		FROM users
 		WHERE id = $1 AND is_active = TRUE AND deleted_at IS NULL` + liveCustomerLink
 
@@ -85,7 +101,7 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, erro
 	var perms []byte
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&u.ID, &u.Email, &u.FullName, &u.PasswordHash, &role, &perms, &u.MFAEnabled,
-		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID,
+		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.CustomerID, &u.PasswordChangedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.NewNotFound("user")
@@ -96,6 +112,35 @@ func (r *Repository) FindByID(ctx context.Context, id int64) (*domain.User, erro
 	u.Role = domain.Role(role)
 	scanUserPerms(&u, perms)
 	return &u, nil
+}
+
+// UpdatePassword replaces the user's password hash, but only if it is still
+// `oldHash` — the hash the current password was just verified against — so two
+// overlapping changes cannot both succeed. It also closes any open "Forgot
+// password?" request of theirs: they have just proved who they are. One tx.
+// changedAt (the service clock, the same one that stamps tokens) ends every
+// session issued before it.
+func (r *Repository) UpdatePassword(ctx context.Context, id int64, oldHash, newHash string, changedAt time.Time) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
+		UPDATE users SET password_hash = $3, password_changed_at = $4, updated_at = now()
+		WHERE id = $1 AND password_hash = $2 AND is_active = TRUE AND deleted_at IS NULL`, id, oldHash, newHash, changedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.NewConflict("Your password was changed a moment ago. Sign in again and retry if needed.")
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE password_reset_requests SET status = 'RESOLVED', resolved_at = now(), resolved_by = $1
+		WHERE user_id = $1 AND status = 'OPEN'`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // TouchLastLogin records a successful login timestamp.

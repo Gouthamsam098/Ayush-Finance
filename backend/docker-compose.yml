@@ -20,8 +20,11 @@ services:
     #     POSTGRES_HOST_PORT=5434
     # The backend reaches the DB over the internal Docker network at
     # postgres:5432, so this only affects host-side access (psql, a GUI client).
+    # Bound to 127.0.0.1: this file carries repo-known dev credentials, and a
+    # Docker-published port bypasses a host firewall (ufw) — on a server it would
+    # put the database on the internet. Production uses docker-compose.prod.yml.
     ports:
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -33,7 +36,7 @@ services:
   backend:
     build: .
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000" # localhost only (see the postgres note above)
     depends_on:
       postgres:
         condition: service_healthy

@@ -7,6 +7,7 @@ import type { RootState } from '@/store';
 import BrandLogo from '@/components/BrandLogo';
 import { CustomerAvatar } from '@/components/CustomerAvatar';
 import { cn } from '@/lib/utils';
+import { LoadErrorBanner } from '@/components/layout/LoadErrorBanner';
 import { LogOut, Moon, Sun } from 'lucide-react';
 
 export function CustomerPortalShell() {
@@ -86,6 +87,7 @@ export function CustomerPortalShell() {
         </div>
       </header>
       <main className="relative mx-auto w-full max-w-3xl flex-1 px-safe pb-safe pt-4 sm:px-6 sm:py-8 md:max-w-4xl md:py-10 lg:max-w-[52rem]">
+        <LoadErrorBanner />
         <Outlet />
       </main>
     </div>

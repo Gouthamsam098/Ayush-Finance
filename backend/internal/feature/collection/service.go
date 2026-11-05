@@ -2,14 +2,12 @@ package collection
 
 import (
 	"context"
-	"log/slog"
 	"strconv"
 	"time"
 
 	"github.com/anush-capitals/lms-backend/internal/audit"
 	"github.com/anush-capitals/lms-backend/internal/domain"
 	"github.com/anush-capitals/lms-backend/internal/feature/loan"
-	"github.com/anush-capitals/lms-backend/internal/logger"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -110,64 +108,6 @@ func (s *Service) staffCollector(ctx context.Context, postedBy *int64) *domain.C
 		return nil
 	}
 	return domain.StaffCollector(u)
-}
-
-// logger returns the request-scoped logger (carrying request_id) so a money
-// inconsistency can be traced back to the exact request that caused it. Falls
-// back to the default logger outside an HTTP request.
-func (s *Service) logger(ctx context.Context) *slog.Logger {
-	return logger.FromContext(ctx)
-}
-
-// syncLoanStatus auto-closes a loan whose balance has reached zero, or reopens a
-// CLOSED loan whose balance has re-appeared (e.g. a settlement payment was
-// edited down or deleted). Called after every collection mutation so the loan's
-// status always reflects its real outstanding.
-//
-// Failure here is deliberately non-fatal to the collection write — the payment
-// is already persisted and must not be lost — but it is NOT silent: a failed
-// sync leaves the loan's status disagreeing with its real balance (e.g. a
-// settled loan still ACTIVE), which is a money-reporting inconsistency someone
-// has to notice. Every failure path is logged with the loan id.
-//
-// KNOWN LIMITATION (documented, not yet fixed): the read-then-write here is not
-// serialised against a concurrent payment on the same loan, because the feature
-// layer has no transaction plumbing. Two simultaneous settlements can both read
-// a pre-settlement balance and reach inconsistent conclusions. Fixing it
-// properly requires threading a pgx.Tx through the collection and loan
-// repositories and taking `SELECT ... FOR UPDATE` on the loans row — see
-// DEPLOYMENT.md's outstanding-risks table.
-func (s *Service) syncLoanStatus(ctx context.Context, loanID int64) {
-	l, err := s.loans.FindByID(ctx, loanID)
-	if err != nil {
-		s.logger(ctx).Warn("loan status sync skipped: loan lookup failed",
-			"loan_id", loanID, "error", err)
-		return
-	}
-	collected, err := s.repo.SumByLoan(ctx, loanID)
-	if err != nil {
-		s.logger(ctx).Warn("loan status sync skipped: collected sum failed",
-			"loan_id", loanID, "error", err)
-		return
-	}
-	// Status-independent, so a CLOSED loan whose payments were deleted or edited
-	// down is seen to have a balance again and reopens. IsFullyPaid() reads the
-	// status through Outstanding(), which returns 0 for a CLOSED interest-only or
-	// EMI loan — that made the reopen branch below unreachable for every type
-	// except DAILY_COLLECTION.
-	fullyPaid := l.HasNoBalanceIgnoringStatus(collected, s.now())
-	switch {
-	case fullyPaid && l.Status == domain.StatusActive:
-		if _, err := s.loans.SetStatus(ctx, loanID, domain.StatusClosed); err != nil {
-			s.logger(ctx).Error("loan is fully paid but auto-close FAILED — status now disagrees with balance",
-				"loan_id", loanID, "error", err)
-		}
-	case !fullyPaid && l.Status == domain.StatusClosed:
-		if _, err := s.loans.SetStatus(ctx, loanID, domain.StatusActive); err != nil {
-			s.logger(ctx).Error("loan has a balance again but auto-reopen FAILED — status now disagrees with balance",
-				"loan_id", loanID, "error", err)
-		}
-	}
 }
 
 // Record validates and persists a payment against a loan. The loan must exist
@@ -422,10 +362,64 @@ func (s *Service) Get(ctx context.Context, id int64) (*domain.Collection, error)
 	return s.repo.FindByID(ctx, id)
 }
 
-// Update edits a payment. The parent loan is re-fetched to re-validate the date
-// range; loan_id itself is immutable.
+// syncLoanStatusTx auto-closes a loan whose balance has reached zero, or
+// reopens a CLOSED loan whose balance has re-appeared (e.g. a settlement payment
+// was edited down or deleted). Runs inside the edit/delete transaction, after
+// the loan lock, so the payment change and the status it implies commit
+// together — a failure rolls back the change rather than leaving a settled loan
+// ACTIVE (or an owing loan CLOSED).
+func (s *Service) syncLoanStatusTx(ctx context.Context, tx pgx.Tx, l *domain.Loan) error {
+	collected, err := s.repo.SumByLoanTx(ctx, tx, l.ID)
+	if err != nil {
+		return err
+	}
+	// Status-independent, so a CLOSED loan whose payments were deleted or edited
+	// down is seen to have a balance again and reopens. IsFullyPaid() reads the
+	// status through Outstanding(), which returns 0 for a CLOSED interest-only or
+	// EMI loan — that made the reopen branch below unreachable for every type
+	// except DAILY_COLLECTION.
+	fullyPaid := l.HasNoBalanceIgnoringStatus(collected, s.now())
+	switch {
+	case fullyPaid && l.Status == domain.StatusActive:
+		_, err = s.loans.SetStatusTx(ctx, tx, l.ID, domain.StatusClosed)
+	case !fullyPaid && l.Status == domain.StatusClosed:
+		_, err = s.loans.SetStatusTx(ctx, tx, l.ID, domain.StatusActive)
+	}
+	return err
+}
+
+// auditSnapshot is the non-sensitive view of a payment kept in the audit trail.
+func auditSnapshot(c *domain.Collection) map[string]any {
+	return map[string]any{
+		"receipt_no": c.ReceiptNo,
+		"loan_id":    c.LoanID,
+		"amount":     c.Amount.Rupees(),
+		"date":       c.Date.Format("2006-01-02"),
+		"mode":       string(c.Mode),
+		"kind":       string(c.Kind),
+	}
+}
+
+// Update edits a payment. Like Record it runs in ONE transaction that starts by
+// locking the loan: the edit, the auto-close/auto-reopen it causes and its
+// audit entry (before and after) commit together, and a concurrent payment on
+// the same loan cannot interleave. loan_id itself is immutable.
 func (s *Service) Update(ctx context.Context, id int64, in domain.CollectionInput) (*domain.Collection, error) {
-	existing, err := s.repo.FindByID(ctx, id)
+	// Which loan to lock. Re-read under the lock below — the row may change or
+	// disappear before the lock is held.
+	found, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := LockLoanForUpdate(ctx, tx, found.LoanID); err != nil {
+		return nil, err
+	}
+	existing, err := s.repo.FindByIDTx(ctx, tx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +432,7 @@ func (s *Service) Update(ctx context.Context, id int64, in domain.CollectionInpu
 	if in.Kind == "" {
 		in.Kind = existing.Kind
 	}
-	collected, err := s.repo.SumByLoan(ctx, existing.LoanID)
+	collected, err := s.repo.SumByLoanTx(ctx, tx, existing.LoanID)
 	if err != nil {
 		return nil, err
 	}
@@ -451,26 +445,71 @@ func (s *Service) Update(ctx context.Context, id int64, in domain.CollectionInpu
 	if err := in.Validate(l, collected, s.now()); err != nil {
 		return nil, err
 	}
-	c, err := s.repo.Update(ctx, id, in)
+	c, err := s.repo.UpdateTx(ctx, tx, id, in)
 	if err != nil {
 		return nil, err
 	}
-	s.syncLoanStatus(ctx, existing.LoanID) // may auto-close or auto-reopen
+	if err := s.syncLoanStatusTx(ctx, tx, l); err != nil { // may auto-close or auto-reopen
+		return nil, err
+	}
+	if s.audits != nil {
+		if err := s.audits.RecordTx(ctx, tx, audit.Entry{
+			EntityType: audit.EntityCollection,
+			EntityID:   c.ID,
+			Action:     audit.ActionUpdate,
+			Before:     auditSnapshot(existing),
+			After:      auditSnapshot(c),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
-// Delete soft-deletes a payment, then re-syncs the loan's status (a removed
-// settlement payment can reopen a previously auto-closed loan).
+// Delete soft-deletes a payment and re-syncs the loan's status (a removed
+// settlement payment can reopen a previously auto-closed loan) in one locked
+// transaction, with an audit entry holding what was deleted.
 func (s *Service) Delete(ctx context.Context, id int64) error {
-	existing, err := s.repo.FindByID(ctx, id)
+	found, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if err := s.repo.SoftDelete(ctx, id); err != nil {
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
 		return err
 	}
-	s.syncLoanStatus(ctx, existing.LoanID)
-	return nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := LockLoanForUpdate(ctx, tx, found.LoanID); err != nil {
+		return err
+	}
+	existing, err := s.repo.FindByIDTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	l, err := s.loans.FindByID(ctx, existing.LoanID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SoftDeleteTx(ctx, tx, existing.LoanID, id); err != nil {
+		return err
+	}
+	if err := s.syncLoanStatusTx(ctx, tx, l); err != nil {
+		return err
+	}
+	if s.audits != nil {
+		if err := s.audits.RecordTx(ctx, tx, audit.Entry{
+			EntityType: audit.EntityCollection,
+			EntityID:   existing.ID,
+			Action:     audit.ActionDelete,
+			Before:     auditSnapshot(existing),
+		}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // ListForCustomer returns every payment on one customer's loans (borrower portal).

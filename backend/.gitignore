@@ -11,6 +11,12 @@ secrets/
 # The RS256 keypair is generated on first boot, never committed.
 *.key
 
+# Database dumps written by scripts/backup-db.sh. A dump is the whole loan book
+# — unmasked Aadhaar/PAN, KYC files, every payment — and must never reach git.
+backups/
+*.dump
+*.dump.gz
+
 # Build artifacts
 /bin/
 /dist/

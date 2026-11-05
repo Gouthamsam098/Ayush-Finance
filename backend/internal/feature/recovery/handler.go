@@ -44,6 +44,7 @@ func (h *Handler) AgentRoutes() chi.Router {
 	r.Post("/claims", h.submitClaim)
 	r.Patch("/claims/{id}", h.updateClaim)
 	r.Post("/promises", h.submitPromise)
+	r.Post("/promises/{id}/close", h.closePromise)
 	return r
 }
 
@@ -69,6 +70,11 @@ type submissionResponse struct {
 	ReviewedAt     *string  `json:"reviewed_at,omitempty"`
 	ReviewNote     *string  `json:"review_note,omitempty"`
 	Receipts       []string `json:"receipts,omitempty"`
+	// UPI claims: the UPI ID it was paid to (from Settings, stamped on filing).
+	PayeeVPA  *string `json:"payee_vpa,omitempty"`
+	PayeeName *string `json:"payee_name,omitempty"`
+	// When the agent last edited the pending claim.
+	EditedAt *string `json:"edited_at,omitempty"`
 }
 
 func dateStr(t *time.Time) *string {
@@ -101,6 +107,11 @@ func toResponse(s *domain.RecoverySubmission) submissionResponse {
 	if s.ReviewedAt != nil {
 		v := s.ReviewedAt.Format(time.RFC3339)
 		out.ReviewedAt = &v
+	}
+	out.PayeeVPA, out.PayeeName = s.PayeeVPA, s.PayeeName
+	if s.EditedAt != nil {
+		v := s.EditedAt.Format(time.RFC3339)
+		out.EditedAt = &v
 	}
 	return out
 }
@@ -220,7 +231,25 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sub, colls, err := h.service.Approve(r.Context(), id, callerID(r))
+	// What the reviewer saw (optional): the claim is approved only if it still
+	// says exactly that — an agent's edit after the review must be looked at.
+	var req struct {
+		ExpectedAmount      *float64 `json:"expected_amount"`
+		ExpectedReceiptDate *string  `json:"expected_receipt_date"`
+		ExpectedMode        *string  `json:"expected_mode"`
+	}
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(r, &req); err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+	}
+	var seen *ReviewedClaim
+	if req.ExpectedAmount != nil && req.ExpectedReceiptDate != nil && req.ExpectedMode != nil {
+		seen = &ReviewedClaim{Amount: domain.RupeesToPaise(*req.ExpectedAmount),
+			ReceiptDate: *req.ExpectedReceiptDate, Mode: domain.PayMode(*req.ExpectedMode)}
+	}
+	sub, colls, err := h.service.Approve(r.Context(), id, callerID(r), seen)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -429,4 +458,29 @@ func (h *Handler) submitPromise(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.Created(w, toResponse(sub))
+}
+
+// closePromise: POST /agent/promises/{id}/close {"status": "FULFILLED"|"CANCELLED"}.
+func (h *Handler) closePromise(w http.ResponseWriter, r *http.Request) {
+	aid, ok := agentID(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := httpx.DecodeJSON(r, &req); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	sub, err := h.service.ClosePromise(r.Context(), id, aid, strings.TrimSpace(req.Status))
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, toResponse(sub))
 }

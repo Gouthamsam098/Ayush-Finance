@@ -27,6 +27,8 @@ export interface ManagedUser {
   customerId?: number;
   /** RECOVERY_AGENT: the loans assigned to them. */
   assignedLoanIds?: number[];
+  /** Two-factor authentication is on for this account (server-enforced). */
+  mfaEnabled?: boolean;
 }
 
 interface UserWire {
@@ -40,6 +42,7 @@ interface UserWire {
   created_at: string;
   customer_id?: number;
   assigned_loan_ids?: number[];
+  mfa_enabled?: boolean;
 }
 
 function toUser(w: UserWire): ManagedUser {
@@ -54,6 +57,7 @@ function toUser(w: UserWire): ManagedUser {
     createdAt: w.created_at,
     customerId: w.customer_id,
     assignedLoanIds: w.assigned_loan_ids,
+    mfaEnabled: w.mfa_enabled ?? false,
   };
 }
 
@@ -124,4 +128,46 @@ export const userApi = {
   async remove(id: number): Promise<void> {
     await api.delete(`/users/${id}`);
   },
+
+  /** Open "Forgot password?" requests. Setting the user's new password via
+   *  update() closes theirs automatically on the server. */
+  async passwordResetRequests(): Promise<PasswordResetRequest[]> {
+    const rows = (await api.get<PasswordResetRequestWire[]>('/users/password-reset-requests')) ?? [];
+    return rows.map((w) => ({
+      id: w.id, userId: w.user_id, email: w.email, fullName: w.full_name, role: w.role,
+      requestCount: w.request_count, requestedAt: w.requested_at, lastRequestedAt: w.last_requested_at,
+    }));
+  },
+
+  /** Close a request without resetting (it was not them, or handled otherwise). */
+  async dismissPasswordResetRequest(id: number): Promise<void> {
+    await api.post(`/users/password-reset-requests/${id}/dismiss`, {});
+  },
+
+  /** Lost phone: turn another user's two-factor off so they can set it up again. */
+  async resetMfa(id: number): Promise<void> {
+    await api.post(`/users/${id}/mfa/reset`, {});
+  },
 };
+
+export interface PasswordResetRequest {
+  id: number;
+  userId: number;
+  email: string;
+  fullName: string;
+  role: UserRole;
+  requestCount: number;
+  requestedAt: string;
+  lastRequestedAt: string;
+}
+
+interface PasswordResetRequestWire {
+  id: number;
+  user_id: number;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  request_count: number;
+  requested_at: string;
+  last_requested_at: string;
+}

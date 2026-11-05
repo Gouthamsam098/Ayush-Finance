@@ -1,6 +1,10 @@
 /**
- * RFC 6238 TOTP (Google Authenticator compatible) — browser-only, no backend.
+ * RFC 6238 TOTP (Google Authenticator compatible) helpers. API mode: the
+ * server generates and checks the codes; only the QR drawing is used here.
+ * Demo mode (no backend) still checks codes in the browser.
  */
+
+import qrcode from 'qrcode-generator';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -21,8 +25,17 @@ export function buildOtpAuthUri(email: string, secret: string, issuer = 'Anush L
   return `otpauth://totp/${label}?${q.toString()}`;
 }
 
-export function qrCodeImageUrl(otpauthUri: string, size = 200): string {
-  return `https://quickchart.io/qr?size=${size}&margin=2&text=${encodeURIComponent(otpauthUri)}`;
+/**
+ * The QR code for an otpauth:// link, drawn here in the browser as an SVG data
+ * URL. It must never be sent to an outside service: the link carries the
+ * two-factor secret.
+ */
+export function qrCodeImageUrl(otpauthUri: string): string {
+  const qr = qrcode(0, 'M');
+  qr.addData(otpauthUri);
+  qr.make();
+  const svg = qr.createSvgTag({ cellSize: 4, margin: 8, scalable: true });
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 function base32Encode(bytes: Uint8Array): string {
