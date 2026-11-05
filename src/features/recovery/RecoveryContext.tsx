@@ -35,7 +35,7 @@ import { ApiError } from '@/lib/api';
 import { COLLECTIONS_CHANGED_EVENT } from '@/lib/dataEvents';
 import { rememberClaimUpi, rememberCollectionUpi, upiSnapshotFromClaim, enrichCollectionClaim } from '@/lib/recoveryClaimUpi';
 import { setPromiseStatusOverlay, clearPromiseStatusOverlay } from '@/lib/recoveryPtpOverlay';
-import { clearPromiseLocalPatch, setPromiseLocalPatch } from '@/lib/recoveryPtpLocalPatch';
+import { clearPromiseLocalPatch } from '@/lib/recoveryPtpLocalPatch';
 import { recordAgentActivity } from '@/lib/recoveryAgentActivity';
 import { refreshPaymentProofs, settleClaimProofsLocally } from '@/features/customer-portal/paymentProofStore';
 
@@ -299,35 +299,33 @@ export function RecoveryProvider({ children }: { children: React.ReactNode }) {
     const openRows = openPromisesForLoanAgent(input.loanId, input.agentUserId);
     const latestOpen = openRows[0];
 
-    if (latestOpen) {
-      for (const dup of openRows.slice(1)) {
-        cancelOpenPromise(dup);
-      }
-      if (config.useApi) {
-        setPromiseLocalPatch(latestOpen.id, {
-          promiseDate: input.promiseDate,
-          promisedAmount: input.promisedAmount,
-          note,
-        });
-      }
-      updateSubmission(latestOpen.id, patch);
-      refresh();
-      return null;
-    }
-
     if (config.useApi) {
+      // The server keeps one open promise per loan: promising again updates
+      // that promise, so every device and the staff queue see the new date.
       try {
-        upsertCachedSubmission(await recoveryApi.submitPromise({
+        const saved = await recoveryApi.submitPromise({
           loanId: input.loanId,
           promiseDate: input.promiseDate,
           promisedAmount: input.promisedAmount,
           note,
-        }));
+        });
+        for (const row of openRows) clearPromiseLocalPatch(row.id);
+        clearPromiseLocalPatch(saved.id);
+        upsertCachedSubmission(saved);
         refresh();
         return null;
       } catch (e) {
         return saveErrorText(e, OFFLINE_MSG);
       }
+    }
+
+    if (latestOpen) {
+      for (const dup of openRows.slice(1)) {
+        cancelOpenPromise(dup);
+      }
+      updateSubmission(latestOpen.id, patch);
+      refresh();
+      return null;
     }
     const row: PromiseSubmission = {
       id: newId(),

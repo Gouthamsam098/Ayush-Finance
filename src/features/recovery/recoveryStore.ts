@@ -1,6 +1,6 @@
 import type { PromiseSubmission, RecoverySubmission } from './types';
 import { isActiveOpenPromise } from '@/lib/recoveryPtp';
-import { applySubmissionLocalPatches } from '@/lib/recoveryPtpLocalPatch';
+import { applySubmissionLocalPatches, clearPromiseLocalPatch, getPromiseLocalPatch } from '@/lib/recoveryPtpLocalPatch';
 import { clearPromiseStatusOverlay, getPromiseStatusOverlay } from '@/lib/recoveryPtpOverlay';
 import { ApiError } from '@/lib/api';
 import { config } from '@/lib/config';
@@ -148,7 +148,10 @@ export async function refreshRecovery(): Promise<void> {
     if (assignmentsChanged) notifyAssignmentsChanged();
     if (submissionsChanged) notifySubmissionsChanged();
     if (scheduleChanged) window.dispatchEvent(new Event(RECOVERY_SCHEDULE_CHANGED));
-    if (s.scope === 'agent') void pushBrowserOnlyPromiseClosures(submissions);
+    // Closes first: a promise being closed must not be re-saved as open.
+    if (s.scope === 'agent') {
+      void pushBrowserOnlyPromiseClosures(submissions).then(() => pushBrowserOnlyPromiseEdits(submissions));
+    }
   } catch {
     /* no Collections access, or offline — keep the last copy; the next poll retries */
   } finally {
@@ -178,17 +181,62 @@ async function pushBrowserOnlyPromiseClosures(subs: RecoverySubmission[]) {
       if (closed !== 'FULFILLED' && closed !== 'CANCELLED') continue;
       if (sub.status !== 'OPEN') {
         clearPromiseStatusOverlay(sub.id);
+        clearPromiseLocalPatch(sub.id);
         continue;
       }
       try {
         upsertCachedSubmission(await recoveryApi.closePromise(sub.id, closed));
         clearPromiseStatusOverlay(sub.id);
+        clearPromiseLocalPatch(sub.id);
       } catch (e) {
-        if (e instanceof ApiError) clearPromiseStatusOverlay(sub.id);
+        if (e instanceof ApiError) {
+          clearPromiseStatusOverlay(sub.id);
+          clearPromiseLocalPatch(sub.id);
+        }
       }
     }
   } finally {
     pushingClosures = false;
+  }
+}
+
+let pushingEdits = false;
+
+/**
+ * Promise edits made before the server could update a promise live only in this
+ * browser (recoveryPtpLocalPatch). Save each open one on the server once — the
+ * server updates the loan's open promise — then drop it from the browser. A
+ * refusal (e.g. the date is now past, or the loan moved to another agent) also
+ * drops it, so the server's copy shows; a network failure keeps it.
+ */
+async function pushBrowserOnlyPromiseEdits(subs: RecoverySubmission[]) {
+  if (pushingEdits) return;
+  pushingEdits = true;
+  try {
+    for (const sub of subs) {
+      if (sub.type !== 'PROMISE_TO_PAY') continue;
+      const patch = getPromiseLocalPatch(sub.id);
+      if (!patch) continue;
+      // A close still waiting to be saved wins; it drops the edit when it lands.
+      if (getPromiseStatusOverlay(sub.id)) continue;
+      if (sub.status !== 'OPEN') {
+        clearPromiseLocalPatch(sub.id);
+        continue;
+      }
+      try {
+        upsertCachedSubmission(await recoveryApi.submitPromise({
+          loanId: sub.loanId,
+          promiseDate: patch.promiseDate,
+          promisedAmount: patch.promisedAmount,
+          note: patch.note,
+        }));
+        clearPromiseLocalPatch(sub.id);
+      } catch (e) {
+        if (e instanceof ApiError) clearPromiseLocalPatch(sub.id);
+      }
+    }
+  } finally {
+    pushingEdits = false;
   }
 }
 

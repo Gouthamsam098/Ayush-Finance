@@ -351,19 +351,41 @@ func closeClaimProofsTx(ctx context.Context, tx pgx.Tx, claimID int64, claimStat
 	return tag.RowsAffected(), nil
 }
 
-// CreatePromise stores an OPEN promise to pay.
-func (r *Repository) CreatePromise(ctx context.Context, agentID int64, in domain.PromiseInput) (int64, error) {
+// SaveOpenPromise keeps one OPEN promise per loan. With one already open it is
+// updated in place — the new date, amount and note, held by the agent saving
+// it (the loan's current agent) — instead of a second promise being added;
+// otherwise a new OPEN promise is created. created reports which happened. The
+// one-open-promise-per-loan unique index backs this against two saves racing.
+func (r *Repository) SaveOpenPromise(ctx context.Context, agentID int64, in domain.PromiseInput) (id int64, created bool, err error) {
 	var promised *int64
 	if in.PromisedAmount != nil {
 		v := in.PromisedAmount.DBRupees()
 		promised = &v
 	}
-	var id int64
-	err := r.pool.QueryRow(ctx, `
+	update := func() (int64, error) {
+		var id int64
+		err := r.pool.QueryRow(ctx, `
+			UPDATE recovery_submissions
+			SET agent_user_id = $2, promise_date = $3, promised_amount = $4, note = $5,
+			    updated_at = now(), edited_at = now()
+			WHERE loan_id = $1 AND type = 'PROMISE_TO_PAY' AND status = 'OPEN' AND deleted_at IS NULL
+			RETURNING id`,
+			in.LoanID, agentID, in.PromiseDate, promised, nilIfBlank(in.Note)).Scan(&id)
+		return id, err
+	}
+	if id, err = update(); !errors.Is(err, pgx.ErrNoRows) {
+		return id, false, err
+	}
+	err = r.pool.QueryRow(ctx, `
 		INSERT INTO recovery_submissions (type, loan_id, agent_user_id, status, promise_date, promised_amount, note)
 		VALUES ('PROMISE_TO_PAY', $1, $2, 'OPEN', $3, $4, $5) RETURNING id`,
 		in.LoanID, agentID, in.PromiseDate, promised, nilIfBlank(in.Note)).Scan(&id)
-	return id, err
+	if isOpenPromiseConflict(err) {
+		// Another save for this loan created the open promise first: update it.
+		id, err = update()
+		return id, false, err
+	}
+	return id, err == nil, err
 }
 
 // lockSubmissionTx row-locks a submission for review. Two staff approving the
@@ -406,6 +428,10 @@ var errPendingClaim = domain.NewConflict("A collection for this loan is already 
 
 func isPendingClaimConflict(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "idx_recovery_one_pending_claim")
+}
+
+func isOpenPromiseConflict(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "idx_recovery_one_open_promise")
 }
 
 // ── auto-assign settings ─────────────────────────────────────────────────────

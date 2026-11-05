@@ -132,19 +132,22 @@ func (s *Service) UpdateClaim(ctx context.Context, id, agentID int64, in domain.
 	return s.repo.FindSubmission(ctx, id, &agentID)
 }
 
-// SubmitPromise records a promise-to-pay date for an assigned loan.
-func (s *Service) SubmitPromise(ctx context.Context, agentID int64, in domain.PromiseInput) (*domain.RecoverySubmission, error) {
+// SubmitPromise records a promise-to-pay date for an assigned loan. A loan has
+// at most one open promise: promising again updates it (new date, amount and
+// note) rather than adding another. created is false for such an update.
+func (s *Service) SubmitPromise(ctx context.Context, agentID int64, in domain.PromiseInput) (sub *domain.RecoverySubmission, created bool, err error) {
 	if err := in.Validate(s.now()); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := s.requireAssignedActive(ctx, in.LoanID, agentID); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	id, err := s.repo.CreatePromise(ctx, agentID, in)
+	id, created, err := s.repo.SaveOpenPromise(ctx, agentID, in)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return s.repo.FindSubmission(ctx, id, &agentID)
+	sub, err = s.repo.FindSubmission(ctx, id, &agentID)
+	return sub, created, err
 }
 
 // ClosePromise lets the agent close their own open promise: FULFILLED (the

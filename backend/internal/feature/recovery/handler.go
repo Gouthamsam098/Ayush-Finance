@@ -452,9 +452,14 @@ func (h *Handler) submitPromise(w http.ResponseWriter, r *http.Request) {
 		p := domain.RupeesToPaise(*req.PromisedAmount)
 		in.PromisedAmount = &p
 	}
-	sub, err := h.service.SubmitPromise(r.Context(), aid, in)
+	sub, created, err := h.service.SubmitPromise(r.Context(), aid, in)
 	if err != nil {
 		httpx.Error(w, r, err)
+		return
+	}
+	if !created {
+		// The loan's open promise was updated in place (one per loan).
+		httpx.JSON(w, http.StatusOK, toResponse(sub))
 		return
 	}
 	httpx.Created(w, toResponse(sub))
